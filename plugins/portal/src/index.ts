@@ -1113,7 +1113,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   const settingsPath = pathname === "/settings" || pathname.startsWith("/settings/");
-  if (method === "GET" && wantsHtml(req) && !settingsPath) {
+  const surfaceLinkPath = pathname === "/api/mattermost/link";
+  if (method === "GET" && wantsHtml(req) && !settingsPath && !surfaceLinkPath) {
     await surfaceConfigs.refresh(session.t, session.sub);
     if (surfaceConfigs.modelProviderConfigured(session.t) === false) {
       if (await isAdmin(session.sub, session.t)) {

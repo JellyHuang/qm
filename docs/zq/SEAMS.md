@@ -36,7 +36,7 @@ With only Slack configured, every one of these behaves exactly as upstream.
 | `src/api/deps.ts` | `mattermostActions` and `mattermostLinkPage` server deps |
 | `src/api/routes/mattermost.ts`, `src/api/routes/index.ts` | `POST /v1/surfaces/mattermost/actions` (public, HMAC-checked in the module) and `GET /v1/surfaces/mattermost/link` (signed-in browser route) |
 | `src/api/browser-session.ts` | Browser alias `GET /api/mattermost/link` |
-| `plugins/portal/src/index.ts` | Passes `POST /v1/surfaces/mattermost/actions` through to core, like partner-chat events |
+| `plugins/portal/src/index.ts` | Passes `POST /v1/surfaces/mattermost/actions` through to core, like partner-chat events; exempts `/api/mattermost/link` from the "model provider not configured" redirect, which otherwise fires for deployments that only have a custom provider |
 | `test/mattermost-surface.test.ts` | Unit tests (no Postgres needed) |
 
 New durable-map tables are created on first use: `mattermost_links`, `mattermost_link_tokens`, `mattermost_access_requests` and `mattermost_pending_turns`. No existing table changes.
