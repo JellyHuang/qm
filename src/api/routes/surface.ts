@@ -1253,6 +1253,9 @@ async function getSurfaceConfig(ctx: ApiCtx): Promise<void> {
   ]);
   const managedKeys = deps.modelCredentials ? await deps.modelCredentials.availability() : null;
   const providerStatus = managedKeys ?? deps.providerKeys;
+  const customProviderReady = deps.customProviders
+    ? (await deps.customProviders.statuses()).some((p) => !p.disabled && p.hasKey)
+    : false;
   const catalog = managedKeys?.openrouter
     ? await selectableModelCatalog(deps.modelCredentialFetch)
     : builtInModelCatalog();
@@ -1277,6 +1280,7 @@ async function getSurfaceConfig(ctx: ApiCtx): Promise<void> {
         providerStatus.openai ||
         providerStatus.openrouter ||
         providerStatus.modelIds?.size ||
+        customProviderReady ||
         deps.companySubscriptionAuth,
       ),
     }),

@@ -41,6 +41,12 @@ With only Slack configured, every one of these behaves exactly as upstream.
 
 New durable-map tables are created on first use: `mattermost_links`, `mattermost_link_tokens`, `mattermost_access_requests` and `mattermost_pending_turns`. No existing table changes.
 
+## Fix commit: "count a custom model provider as configured"
+
+| File | Change | Why |
+|---|---|---|
+| `src/api/routes/surface.ts` | `modelProviderConfigured` is also true when an enabled custom provider (Admin → Model providers) has a saved key | Upstream only counted Anthropic, OpenAI and OpenRouter keys. With only a custom provider, the portal sent admins to `/settings/onboarding` and showed everyone else "not configured". |
+
 ## Upgrading to a new upstream release
 
 1. Back up QM (`systemctl start qm-backup`).
