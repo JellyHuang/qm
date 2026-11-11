@@ -1,3 +1,4 @@
+import { primaryChatSurface } from "../surfaces/primary-chat.ts";
 import type { Delivery, DeliveryProvenance, Destination, OutgoingAttachment } from "../types.ts";
 import { scopeId as makeScopeId } from "../types.ts";
 import type { DeliveryStore } from "../delivery/delivery-store.ts";
@@ -197,7 +198,7 @@ export async function resolveReachTarget(
     }
     return {
       ok: true,
-      destination: { type: "slack", target: cid, audienceScopeId: makeScopeId("channel", cid) },
+      destination: { type: primaryChatSurface(), target: cid, audienceScopeId: makeScopeId("channel", cid) },
       channel: { channelId: cid, name: r.channel.name },
     };
   }

@@ -1,3 +1,4 @@
+import { primaryChatSurface } from "../../surfaces/primary-chat.ts";
 import type { SurfaceContextQuery, SurfaceContextResult } from "../../reach/reach.ts";
 import { BLOB_TRANSFER_AUD, mintCapabilityToken } from "../../auth/capability-token.ts";
 import { CAPABILITY_HEADER } from "../contract.ts";
@@ -30,7 +31,7 @@ async function resolveSurfaceTarget(
         await notVisible(ctx, cap.actorId, b.channel);
         return null;
       }
-      return { source: "slack", target: { channelId: ref } };
+      return { source: primaryChatSurface(), target: { channelId: ref } };
     }
     const r = await app.resolveChannel(ref);
     if (r.kind === "none") {
@@ -49,7 +50,7 @@ async function resolveSurfaceTarget(
       await notVisible(ctx, cap.actorId, `#${r.channel.name}`);
       return null;
     }
-    return { source: "slack", target: { channelId: r.channel.channelId, channelName: r.channel.name } };
+    return { source: primaryChatSurface(), target: { channelId: r.channel.channelId, channelName: r.channel.name } };
   }
   const dest = cap.destination;
   if (!dest?.target || !app.surfaceMirrored(dest.type)) {

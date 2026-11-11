@@ -1,3 +1,4 @@
+import { isChatSurface } from "../surfaces/primary-chat.ts";
 import { isAgentReply, type Item, proseText } from "./items.ts";
 import { isSessionTurn, sessionTurnOrigin } from "../core/turn-origin.ts";
 import type { SessionMailbox, SessionMessage } from "./session-mailbox.ts";
@@ -55,7 +56,7 @@ export function requiresDelegation(
     request.surfaceOrigin?.audience !== "external" &&
     !request.swarm &&
     !isSubagentThreadRef(request.conversation.threadRef) &&
-    (request.surface === "slack" || request.surfaceTools === true)
+    (isChatSurface(request.surface) || request.surfaceTools === true)
   );
 }
 

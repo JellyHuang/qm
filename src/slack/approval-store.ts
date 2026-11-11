@@ -1,3 +1,4 @@
+import { isChatSurface } from "../surfaces/primary-chat.ts";
 import { swallowAs } from "../util/errors.ts";
 import type { PendingApprovalRecord } from "../types.ts";
 import type { DurableMap } from "../persistence/durable-map.ts";
@@ -15,7 +16,7 @@ export function createApprovalStore(
   deliveries: Pick<DeliveryStore, "enqueue">,
 ) {
   async function deliver(id: string, record: PendingApprovalRecord): Promise<void> {
-    if (record.request?.surface !== "slack") return;
+    if (!record.request || !isChatSurface(record.request.surface)) return;
     const actorId = record.request.actor.externalId;
     const recipient = approvalDeliveryRecipient(record.request);
     if (!actorId || !recipient) return;

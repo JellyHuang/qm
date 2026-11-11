@@ -1,3 +1,5 @@
+import { primaryChatSurface } from "../surfaces/primary-chat.ts";
+import { isChatSurface } from "../surfaces/primary-chat.ts";
 import type { ScopeId } from "../types.ts";
 import { orgId as orgIdOf } from "../config.ts";
 import { parseScopeId, scopeId } from "../types.ts";
@@ -333,8 +335,9 @@ export function createMessagingMethods(
       if (!deps.surfaceCache || !events.length) return { upserted: 0 };
       if (self && (self.name || self.mentionId)) ambientSelf.set(`${orgIdOf()}:${surface}`, self);
       const out = await deps.surfaceCache.ingest(events);
-      if (surface === "slack" && hasRevisionEvents(events)) {
-        void recordMessageRevisions(deps.sessions, deps.runs, events).catch(
+      const candidates = surface === "slack" ? undefined : deps.surfaces.get(surface)?.threadRefCandidates;
+      if ((surface === "slack" || candidates) && hasRevisionEvents(events)) {
+        void recordMessageRevisions(deps.sessions, deps.runs, events, undefined, candidates).catch(
           reportFailureAs("revisions: surface revision record", undefined),
         );
       }
@@ -567,7 +570,7 @@ export function createMessagingMethods(
         "dm",
         recipientScope,
         undefined,
-        "slack",
+        primaryChatSurface(),
       );
       await deps.deliveries.recordRecipientThread(delivery.id, recipientThreadRef, Date.now());
       await deps.sessions.addParticipant(session.id, recipientId);
@@ -608,17 +611,17 @@ export function createMessagingMethods(
         if (r.channel) extra.channel = r.channel;
         if (r.group) extra.group = r.group;
       }
-      if (input.edit && baseDestination.type !== "slack" && baseDestination.type !== "group") {
+      if (input.edit && !isChatSurface(baseDestination.type) && baseDestination.type !== "group") {
         return {
           ok: false,
           status: 400,
           error: "bad_request",
-          message: "edit rewrites a Slack message in a channel, group DM, or this Slack conversation",
+          message: "edit rewrites a chat message in a channel, group DM, or this conversation",
         };
       }
       if (input.threadTs) {
         if (
-          baseDestination.type !== "slack" &&
+          !isChatSurface(baseDestination.type) &&
           baseDestination.type !== "group" &&
           baseDestination.type !== "principal"
         ) {
@@ -626,7 +629,7 @@ export function createMessagingMethods(
             ok: false,
             status: 400,
             error: "bad_request",
-            message: "threadTs requires a Slack channel, group DM, or person DM",
+            message: "threadTs requires a chat channel, group DM, or person DM",
           };
         }
         baseDestination = withThread(baseDestination, input.threadTs);

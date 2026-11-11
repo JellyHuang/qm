@@ -1,3 +1,4 @@
+import { primaryChatSurface } from "../surfaces/primary-chat.ts";
 import { randomUUID } from "node:crypto";
 import { executesOnApprove } from "../core/orchestrator/approvals.ts";
 import { isSubagentThreadRef } from "../sessions/session-syscalls.ts";
@@ -64,7 +65,7 @@ export function createAppHelpers(deps: AppDeps, app: App) {
   const directoryRefresher = createSurfaceContextPuller(app, { waitMs: 4_000 });
 
   async function refreshSurfaceDirectory(): Promise<void> {
-    await directoryRefresher.pull("slack", { syncDirectory: true, count: 1 });
+    await directoryRefresher.pull(primaryChatSurface(), { syncDirectory: true, count: 1 });
   }
   const reachDir: ReachDirectory = {
     resolveRecipient: (q) => deps.directory.resolve(q),
@@ -73,7 +74,7 @@ export function createAppHelpers(deps: AppDeps, app: App) {
     resolveGroup: (parts) => deps.directory.resolveGroupByParticipants(parts),
     groupMember: (g, p) => deps.directory.groupMember(g, p),
     directoryMember: (p) => deps.directory.get(p),
-    openGroup: (parts) => openGroupViaSurface((query) => surfaceContext.pull("slack", query), parts),
+    openGroup: (parts) => openGroupViaSurface((query) => surfaceContext.pull(primaryChatSurface(), query), parts),
     registerGroup: (g, parts) => deps.directory.upsertGroup(g, parts),
   };
   const resolveReachTargetFor = (

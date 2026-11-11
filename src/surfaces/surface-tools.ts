@@ -1,3 +1,4 @@
+import { isChatSurface, primaryChatSurface } from "./primary-chat.ts";
 import { isSessionTurn } from "../core/turn-origin.ts";
 import type {
   Conversation,
@@ -145,7 +146,7 @@ export function createSurfaceToolDeps(ctx: SurfaceToolsContext): SurfaceToolDeps
         ...(deps.surfaceContext
           ? {
               openGroup: (parts: readonly string[]) =>
-                openGroupViaSurface((query) => deps.surfaceContext!.pull("slack", query), parts),
+                openGroupViaSurface((query) => deps.surfaceContext!.pull(primaryChatSurface(), query), parts),
               registerGroup: (g: string, parts: readonly string[]) => deps.directory!.upsertGroup(g, parts),
             }
           : {}),
@@ -306,8 +307,8 @@ export function createSurfaceToolDeps(ctx: SurfaceToolsContext): SurfaceToolDeps
         ...(input.participants !== undefined ? { participants: input.participants } : {}),
       });
       if (!d.ok) return { ok: false, message: d.message };
-      if (d.destination.type !== "slack" && d.destination.type !== "group")
-        return { ok: false, message: "I can only edit a Slack message in a channel, group DM, or this conversation." };
+      if (!isChatSurface(d.destination.type) && d.destination.type !== "group")
+        return { ok: false, message: "I can only edit a chat message in a channel, group DM, or this conversation." };
       return enqueue(withEdit(d.destination, input.ref), input.text, seq);
     },
     delete: async (input: SurfaceDeleteInput) => {

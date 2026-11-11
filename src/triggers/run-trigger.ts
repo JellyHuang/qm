@@ -1,3 +1,4 @@
+import { isChatSurface } from "../surfaces/primary-chat.ts";
 import type { DeliveryProvenance, Destination, Principal, ScopeId, TurnRequest, TurnResult } from "../types.ts";
 import type { CronScript } from "./types.ts";
 import { actsAsScope, parseScopeId } from "../types.ts";
@@ -146,7 +147,7 @@ export async function destinationVisible(
 ): Promise<boolean> {
   if (!deps.directory) return true;
   const id = destination.target.split(":")[0]!;
-  if (destination.type === "slack") {
+  if (isChatSurface(destination.type)) {
     const audience = destination.audienceScopeId ? parseScopeId(destination.audienceScopeId) : undefined;
     if (audience?.kind === "personal") return isVisible(deps.directory, actorId, { kind: "dm", ownerId: audience.ref });
     if (audience?.kind === "group") return isVisible(deps.directory, actorId, { kind: "group", groupId: id });

@@ -1,3 +1,4 @@
+import { isChatSurface } from "../surfaces/primary-chat.ts";
 import { isSubagentThreadRef } from "../sessions/session-syscalls.ts";
 import type { DeliveryProvenance, Destination, OutgoingAttachment } from "../types.ts";
 import { waitForNoRunningRun, type Run, type RunStore } from "../runs/run-store.ts";
@@ -86,7 +87,7 @@ export function runResultDelivery(run: Run, adminUrlFor?: AdminUrlFor, notice?: 
     provenance.sourceRequestId = run.request.idempotencyKey;
   if (webhook) provenance.sourceRunId = run.id;
   if (
-    surface === "slack" &&
+    isChatSurface(surface) &&
     run.result?.status === "refused" &&
     (run.result.refusalKind === "security_quarantine" || run.result.refusalKind === "model_budget") &&
     run.request.addressed
