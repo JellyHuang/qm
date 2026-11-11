@@ -1,3 +1,4 @@
+import { mattermostConfigFromEnv, type MattermostConfig } from "./surfaces/mattermost/config.ts";
 import { isClaudeSubscriptionToken } from "./model/claude-subscription.ts";
 import { isDnsLabel } from "../plugins/chassis/src/dns-label.ts";
 import {
@@ -121,6 +122,7 @@ export interface Config extends SandboxSettings, DeploySettings {
   connectorSecretKey?: string;
   slackEventsPort?: number;
   partnerChat?: { url: string; secret: string; label?: string };
+  mattermost?: MattermostConfig;
   secretsBackend: "env" | "aws";
   secretsPrefix: string;
   apiBaseUrl?: string;
@@ -611,6 +613,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
           },
         }
       : {}),
+    ...(() => {
+      const mattermost = mattermostConfigFromEnv(env, {
+        ...(publicUrl ? { publicUrl } : {}),
+        ...(env.CORE_SIGNING_SECRET ? { signingSecret: env.CORE_SIGNING_SECRET } : {}),
+      });
+      return mattermost ? { mattermost } : {};
+    })(),
     secretsBackend: secretsBackendEnvStrict(env.SECRETS_BACKEND, env.SECRETS_PREFIX ?? ""),
     secretsPrefix: env.SECRETS_PREFIX ?? "",
     layerEnv: { ...env },

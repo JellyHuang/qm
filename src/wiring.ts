@@ -1,3 +1,4 @@
+import { isChatSurface, setPrimaryChatSurface } from "./surfaces/primary-chat.ts";
 import { onTenantLoad, perTenant } from "./tenants/cache.ts";
 import { loadTenantSettings, TENANT_SETTINGS_REFRESH_MS } from "./tenants/settings.ts";
 import { nonDeploymentCredential, withDeploymentCredentials } from "./credentials/deployment-credentials.ts";
@@ -72,6 +73,7 @@ import { createModelOverlayStore, type ModelOverlayStore } from "./model/model-o
 import { mkdirSync } from "node:fs";
 import type { StagedEnvelope } from "./slack/envelope-staging.ts";
 import { randomBytes, randomUUID } from "node:crypto";
+import type { ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
 import {
   baseModelProviders,
@@ -92,7 +94,7 @@ import { createPrincipalLinkService, type PrincipalLinkService } from "./identit
 import { createPostgresUserStore, type UserStore } from "./identity/user-store.ts";
 import type { SlackAccountLink, ComposioReturn } from "./api/routes/composio.ts";
 import { installPrincipalLinks } from "./directory/person.ts";
-import type { ExternalMember } from "./identity/external-members.ts";
+import { externalMemberActive, type ExternalMember } from "./identity/external-members.ts";
 import { resendMailer } from "../plugins/chassis/src/resend.ts";
 import { configStoreMaps, createConfigStore, type ScopedConfigStore } from "./resolution/config-store.ts";
 import { createResolutionService } from "./resolution/resolution-service.ts";
@@ -379,7 +381,12 @@ import {
   resolveDeploymentModel,
   modelSupported,
 } from "./model/pi-models.ts";
-import { createAdminService, parseAdminGrants, type AdminService } from "./admin/admin-service.ts";
+import {
+  adminStatusFromGrants,
+  createAdminService,
+  parseAdminGrants,
+  type AdminService,
+} from "./admin/admin-service.ts";
 import { createAdminGrantStore } from "./admin/admin-grant-store.ts";
 import { createPostgresAdminGrantStore } from "./admin/postgres-admin-grant-store.ts";
 import { createProjectStore, type Project, type ProjectStore } from "./projects/project-store.ts";
@@ -407,6 +414,14 @@ import { sleep, withTimeout } from "./util/async.ts";
 import { createSlackInstallationStore, type SlackInstallationStore } from "./surfaces/slack-installation.ts";
 import { createSurfaceRegistry } from "./surfaces/registry.ts";
 import { createSlackSurface } from "./surfaces/slack/adapter.ts";
+import {
+  createMattermost,
+  createMattermostSurface,
+  MATTERMOST_SURFACE,
+  mattermostOwnsDirectMessages,
+  mattermostRunNotice,
+  type Mattermost,
+} from "./surfaces/mattermost/index.ts";
 import { createPartnerChatSurface } from "./surfaces/partner-chat/adapter.ts";
 import { createPartnerChatInbound } from "./surfaces/partner-chat/inbound.ts";
 import { PARTNER_CHAT_CLAIM_MS, partnerChatSender } from "./surfaces/partner-chat/outbound.ts";
@@ -500,6 +515,8 @@ export interface BuiltApp {
   loops: LoopServiceDeps;
   webhookReceiver: WebhookReceiver;
   partnerChatEvents?: ServerDeps["partnerChatEvents"];
+  mattermostActions?: ServerDeps["mattermostActions"];
+  mattermostLinkPage?: ServerDeps["mattermostLinkPage"];
   loopIngress: LoopIngressService;
   admin: AdminService;
   budget: BudgetTracker | undefined;
@@ -2146,9 +2163,20 @@ export function buildApp(
     },
   });
   const uiState = artifactMap<PersistedUiState>("web_ui_state");
+  if (config.mattermost && mattermostOwnsDirectMessages(config)) setPrimaryChatSurface(MATTERMOST_SURFACE);
+  let mattermost: Mattermost | null = null;
   const surfaces = createSurfaceRegistry({
     surfaces: [
       createSlackSurface({ deliveries }),
+      ...(config.mattermost
+        ? [
+            createMattermostSurface({
+              deliveries,
+              ...(config.mattermost.label ? { label: config.mattermost.label } : {}),
+              usernameOf: (id) => mattermost?.usernameOf(id),
+            }),
+          ]
+        : []),
       ...(config.partnerChat
         ? [
             createPartnerChatSurface({
@@ -2261,7 +2289,7 @@ export function buildApp(
     deliveries,
     recoveryAdminUrlFor,
     sessions,
-    partnerChatRunNotice,
+    (run) => partnerChatRunNotice(run) ?? mattermostRunNotice(run),
   );
   const idempotency = createIdempotencyStore(artifactMap<IdempotencyRecord>("idempotency"));
   const skillFetcher = createGitFetcher(
@@ -2318,8 +2346,9 @@ export function buildApp(
     createdAt: number;
   }> | null> => {
     const puller = orchestratorDeps.surfaceContext;
-    if (!puller || (opts?.surface ?? "slack") !== "slack") return null;
-    const result = await puller.pull("slack", {
+    const pullSurface = opts?.surface ?? "slack";
+    if (!puller || !isChatSurface(pullSurface)) return null;
+    const result = await puller.pull(pullSurface, {
       conversationTarget: container,
       ...(opts?.limit !== undefined ? { count: opts.limit } : {}),
     });
@@ -2548,6 +2577,52 @@ export function buildApp(
         claimMs: PARTNER_CHAT_CLAIM_MS,
       })
     : null;
+  mattermost = config.mattermost
+    ? createMattermost({
+        config: config.mattermost,
+        app,
+        identity,
+        deliveries,
+        blobs: blobTransfer,
+        runs,
+        turnStream,
+        leaderLease,
+        map: (table) => artifactMap(table),
+        admin: {
+          orgAdmins: async () =>
+            (await admin.listGrants()).filter((g) => g.role === "org_admin").map((g) => g.principalId),
+          isOrgAdmin: async (email) => adminStatusFromGrants(await admin.listGrants(), email).isAdmin,
+          grant: async (email, by) => {
+            await identity.refresh(true);
+            const existing = identity.externalMember(email);
+            if (existing && externalMemberActive(existing)) return;
+            const at = Date.now();
+            await admin.users.record({ id: email, source: "invite", at });
+            await identity.putExternalMember({
+              email,
+              role: "member",
+              expiresAt: null,
+              kind: "teammate",
+              inviteId: randomUUID(),
+              invitedBy: by,
+              createdAt: existing?.createdAt ?? at,
+              updatedAt: at,
+            });
+            auditLog.record({
+              at,
+              principalId: by,
+              action: "user.invite",
+              resource: email,
+              scopeLabel: orgScope,
+            });
+          },
+        },
+        ...(config.emailAuthPrincipals ? { allowedEmails: config.emailAuthPrincipals } : {}),
+        ...(config.emailAuthDomain ? { allowedDomain: config.emailAuthDomain } : {}),
+        ...(keychainApprovals ? { keychainApprovals } : {}),
+        claimPrincipalDeliveries: mattermostOwnsDirectMessages(config),
+      })
+    : null;
   const webhookDelivery = createDeliveryRelay(deliveries, {
     type: "webhook",
     send: webhookSender(config.signingSecret),
@@ -2624,7 +2699,7 @@ export function buildApp(
   const resolveRecipient = (query: string) => app.resolveRecipient(query);
   const runTriggered = async (req: TurnRequest): Promise<TurnResult> => {
     const session = req.surfaceOrigin ? undefined : await sessions.getByThread(req.conversation.threadRef);
-    const bound = session?.surface === "slack" ? session.surfaceBinding : undefined;
+    const bound = isChatSurface(session?.surface) ? session?.surfaceBinding : undefined;
     if (!bound) return app.turn(req);
     if (bound.audience === "internal") return app.turn({ ...req, surfaceOrigin: bound });
     const { access: _access, ...internal } = bound;
@@ -2971,6 +3046,7 @@ export function buildApp(
       approvalDeliverySweeper.start();
       webTranscriptSweeper.start();
       partnerChatDelivery?.start();
+      mattermost?.start();
       webhookDelivery.start();
     };
     if (backgroundStopping)
@@ -3008,6 +3084,7 @@ export function buildApp(
       approvalDeliverySweeper.stop(),
       webTranscriptSweeper.stop(),
       partnerChatDelivery?.stop(),
+      mattermost?.stop(),
       preemptionSweeper.stop(),
       worker.stopClaims(),
     ];
@@ -3135,6 +3212,13 @@ export function buildApp(
     loops,
     webhookReceiver,
     ...(partnerChatInbound ? { partnerChatEvents: partnerChatInbound.handle } : {}),
+    ...(mattermost
+      ? {
+          mattermostActions: (raw: string) => mattermost!.handleAction(raw),
+          mattermostLinkPage: (res: ServerResponse, url: URL, signedInAs: string | undefined) =>
+            mattermost!.handleLinkPage(res, url, signedInAs),
+        }
+      : {}),
     loopIngress,
     admin,
     errors,
@@ -3283,6 +3367,8 @@ export function serverDeps(
     scheduler: built.scheduler,
     webhookReceiver: built.webhookReceiver,
     ...(built.partnerChatEvents ? { partnerChatEvents: built.partnerChatEvents } : {}),
+    ...(built.mattermostActions ? { mattermostActions: built.mattermostActions } : {}),
+    ...(built.mattermostLinkPage ? { mattermostLinkPage: built.mattermostLinkPage } : {}),
     loopIngress: built.loopIngress,
     identity: built.identity,
     principalLinks: built.principalLinks,

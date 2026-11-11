@@ -1,3 +1,4 @@
+import type { ServerResponse } from "node:http";
 import type { WebEvents } from "./routes/web-events.ts";
 import type { WebShell } from "../web/shell.ts";
 import type { WebMeConfig } from "./routes/web-me.ts";
@@ -127,6 +128,8 @@ export interface ServerDeps {
     signature: string | undefined,
     rawBody: string,
   ) => Promise<{ status: number; body: Record<string, unknown> }>;
+  mattermostActions?: (rawBody: string) => Promise<{ status: number; body: unknown }>;
+  mattermostLinkPage?: (res: ServerResponse, url: URL, signedInAs: string | undefined) => Promise<void>;
   slackEnvBotToken?: string;
   oauthStateSecret?: string;
   oauthFetch?: FetchLike;

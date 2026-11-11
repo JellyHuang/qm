@@ -942,6 +942,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return proxyToUpstream(req, res, { baseUrl: CORE, path: pathname, search: "" }, ["authorization", "content-type"]);
   }
 
+  if (pathname === "/v1/surfaces/mattermost/actions" && method === "POST") {
+    return proxyToUpstream(req, res, { baseUrl: CORE, path: pathname, search: "" }, ["content-type", "content-length"]);
+  }
+
   if (pathname === "/v1/surfaces/partner-chat/events" && method === "POST") {
     return proxyToUpstream(req, res, { baseUrl: CORE, path: pathname, search: "" }, [
       "content-type",

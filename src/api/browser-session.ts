@@ -16,6 +16,7 @@ import { activePrincipal } from "./routes/shared.ts";
 
 export const API_ALIASES: ReadonlyMap<string, string> = new Map([
   ["GET /api/sessions", "/v1/sessions"],
+  ["GET /api/mattermost/link", "/v1/surfaces/mattermost/link"],
   ["GET /api/sessions/row", "/v1/sessions/row"],
   ["GET /api/sessions/:id/children", "/v1/sessions/:id/children"],
   ["GET /api/sessions/:id/side-chats", "/v1/sessions/:id/side-chats"],
