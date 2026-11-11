@@ -138,13 +138,12 @@ export function createMattermostSender(deps: {
       }
     }
     const root = p.root;
-    const threadUnder = (head: string | undefined): string | undefined => root ?? (head && !p.dm ? head : undefined);
     while (parts.length || fileIds.length) {
       const message = parts.shift() ?? "";
       const post = await rt.client.createPost({
         channel_id: p.channel,
         message,
-        ...(threadUnder(first) ? { root_id: threadUnder(first)! } : {}),
+        ...(root ? { root_id: root } : {}),
         ...(fileIds.length && !parts.length ? { file_ids: fileIds } : {}),
         props: keyed,
       });
