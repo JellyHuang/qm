@@ -121,6 +121,7 @@ export function createMattermostSender(deps: {
     let first: string | undefined;
     let fileIds = files.ids.slice(0, MAX_FILES_PER_POST);
     let rest = files.ids.slice(MAX_FILES_PER_POST);
+    if (opts.editRef) await live.consume(opts.editRef);
     if (!parts.length && !fileIds.length) {
       if (opts.editRef)
         await rt.client.deletePost(opts.editRef).catch(swallowAs("mattermost: drop placeholder", undefined));

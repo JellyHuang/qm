@@ -10,23 +10,23 @@ Browser    → GET  /api/mattermost/link (account linking, behind QM sign-in)
 
 ## Files
 
-| File | Role |
-|---|---|
-| `config.ts` | `MATTERMOST_*` env → config |
-| `client.ts` | Thin REST v4 client; WebSocket with auth, ping, reconnect and backoff |
-| `protocol.ts` | Ids, delivery targets (`<channel>[:<root>]`), thread refs (`mm:dm:…`, `mm:ch:…`, `mm:grp:…`), and the numeric `ts` that encodes a post id for QM's message mirror |
-| `runtime.ts` | Bot identity, user and channel caches, actor and audience resolution |
-| `identity.ts` | Account links, one-time link tokens, access requests, held messages |
-| `onboarding.ts` | First-contact flow: link invite, or admin-approval request; replays the held message after linking |
-| `link-page.ts` | The "Connect Mattermost to QM" confirmation pages |
-| `inbound.ts` | WebSocket events → mirror, mention and thread gating, context, files → `app.turn` |
-| `live.ts` | 👀 acknowledgement, "Working…" placeholder, streaming preview edits, cleanup |
-| `outbound.ts` | Delivery relay for `mattermost`, `principal` and `group` destinations |
-| `cards.ts` | Interactive cards (approvals, credentials, app access, QM access) and button signing |
-| `actions.ts` | Button callbacks |
-| `directory.ts` | People, channel and group sync into QM's directory |
-| `context.ts` | Mid-turn context pulls (`surface-context`), opening group messages |
-| `surface.ts` | The `Surface` object registered with core |
+| File            | Role                                                                                                                                                              |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config.ts`     | `MATTERMOST_*` env → config                                                                                                                                       |
+| `client.ts`     | Thin REST v4 client; WebSocket with auth, ping, reconnect and backoff                                                                                             |
+| `protocol.ts`   | Ids, delivery targets (`<channel>[:<root>]`), thread refs (`mm:dm:…`, `mm:ch:…`, `mm:grp:…`), and the numeric `ts` that encodes a post id for QM's message mirror |
+| `runtime.ts`    | Bot identity, user and channel caches, actor and audience resolution                                                                                              |
+| `identity.ts`   | Account links, one-time link tokens, access requests, held messages                                                                                               |
+| `onboarding.ts` | First-contact flow: link invite, or admin-approval request; replays the held message after linking                                                                |
+| `link-page.ts`  | The "Connect Mattermost to QM" confirmation pages                                                                                                                 |
+| `inbound.ts`    | WebSocket events → mirror, mention and thread gating, context, files → `app.turn`                                                                                 |
+| `live.ts`       | 👀 acknowledgement, "Working…" placeholder, streaming preview edits, cleanup                                                                                      |
+| `outbound.ts`   | Delivery relay for `mattermost`, `principal` and `group` destinations                                                                                             |
+| `cards.ts`      | Interactive cards (approvals, credentials, app access, QM access) and button signing                                                                              |
+| `actions.ts`    | Button callbacks                                                                                                                                                  |
+| `directory.ts`  | People, channel and group sync into QM's directory                                                                                                                |
+| `context.ts`    | Mid-turn context pulls (`surface-context`), opening group messages                                                                                                |
+| `surface.ts`    | The `Surface` object registered with core                                                                                                                         |
 
 ## Behaviour
 
@@ -44,10 +44,10 @@ Browser    → GET  /api/mattermost/link (account linking, behind QM sign-in)
   - Group messages: reach with `participants`.
   - Crons and monitors post the same way.
 - **Approvals.**
-  - Command approvals arrive as a card with *Allow once / session / always / Deny* in the requester's DM. A channel thread shows "waiting for your approval".
+  - Command approvals arrive as a card with _Allow once / session / always / Deny_ in the requester's DM. A channel thread shows "waiting for your approval".
   - Credential (keychain) and app-access requests use cards as well.
 - **Identity.** Mattermost and QM keep separate accounts. On first contact the bot sends a one-time link (15 minutes, single use). The person signs in to QM with the same email as their verified Mattermost email and confirms. The link is stored by Mattermost user id; their held message is then answered.
-  - If the email is not yet allowed in QM, QM org admins get an *Approve / Deny* card in Mattermost.
+  - If the email is not yet allowed in QM, QM org admins get an _Approve / Deny_ card in Mattermost.
   - Approving admits the email as a QM teammate (the same as the Admin → Invite teammate action) and sends the link.
   - `unlink` and `whoami` work in a DM.
 - **Isolation.** These rules come from core:
@@ -66,13 +66,13 @@ These are intentionally out of scope:
 
 ## Configuration
 
-| Env | Meaning |
-|---|---|
-| `MATTERMOST_URL` | Mattermost base URL as core reaches it (here `http://mm-zq-app:8065` over the internal `qm-mm` network) |
-| `MATTERMOST_BOT_TOKEN` | Bot access token (secret, in `.env`, passed via `secretEnv`) |
-| `MATTERMOST_TEAM` | Team name (`zq`) |
-| `MATTERMOST_ACTION_URL` | Base URL Mattermost uses for button callbacks (here `http://qm-zq-core:8000`; must be in Mattermost's `AllowedUntrustedInternalConnections`) |
-| `MATTERMOST_QM_PUBLIC_URL` | Public QM URL for link pages (defaults to `PUBLIC_WEB_URL`) |
-| `MATTERMOST_ACTION_SECRET` | Optional; defaults to a key derived from `CORE_SIGNING_SECRET` |
-| `MATTERMOST_OWNS_DIRECT_MESSAGES` | `0` leaves `principal` and `group` deliveries and channel reach to Slack (default `1`) |
-| `MATTERMOST_LABEL` | Surface label shown to the agent (default "Mattermost") |
+| Env                               | Meaning                                                                                                                                      |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MATTERMOST_URL`                  | Mattermost base URL as core reaches it (here `http://mm-zq-app:8065` over the internal `qm-mm` network)                                      |
+| `MATTERMOST_BOT_TOKEN`            | Bot access token (secret, in `.env`, passed via `secretEnv`)                                                                                 |
+| `MATTERMOST_TEAM`                 | Team name (`zq`)                                                                                                                             |
+| `MATTERMOST_ACTION_URL`           | Base URL Mattermost uses for button callbacks (here `http://qm-zq-core:8000`; must be in Mattermost's `AllowedUntrustedInternalConnections`) |
+| `MATTERMOST_QM_PUBLIC_URL`        | Public QM URL for link pages (defaults to `PUBLIC_WEB_URL`)                                                                                  |
+| `MATTERMOST_ACTION_SECRET`        | Optional; defaults to a key derived from `CORE_SIGNING_SECRET`                                                                               |
+| `MATTERMOST_OWNS_DIRECT_MESSAGES` | `0` leaves `principal` and `group` deliveries and channel reach to Slack (default `1`)                                                       |
+| `MATTERMOST_LABEL`                | Surface label shown to the agent (default "Mattermost")                                                                                      |

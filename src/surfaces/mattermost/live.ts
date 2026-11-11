@@ -22,6 +22,8 @@ export interface LiveTurn {
 
 interface Active {
   placeholder?: string;
+  consumed?: boolean;
+  inflight?: Promise<void>;
   stopped: boolean;
   loop: Promise<void>;
   lastText: string;
@@ -61,7 +63,7 @@ export function createLivePresenter(deps: {
     const run = await deps.runs.get(runId).catch(() => null);
     if (!run || !isTerminal(run.status)) return;
     if (runResultDelivery(run, undefined, deps.notice)) return;
-    if (a.placeholder)
+    if (a.placeholder && !a.consumed)
       await rt.client.deletePost(a.placeholder).catch(swallowAs("mattermost: drop placeholder", undefined));
     if (run.result?.status === "react") {
       for (const name of run.result.reactions ?? []) {
@@ -87,13 +89,14 @@ export function createLivePresenter(deps: {
         await finishWithoutDelivery(runId, a);
         return;
       }
-      if (a.placeholder) {
+      if (a.placeholder && !a.consumed) {
         const text = preview(runId);
         if (text !== a.lastText && !a.stopped) {
           a.lastText = text;
-          await rt.client
+          a.inflight = rt.client
             .patchPost(a.placeholder, { message: text })
-            .catch(swallowAs("mattermost: stream preview", undefined));
+            .then(() => undefined, swallowAs("mattermost: stream preview", undefined));
+          await a.inflight;
         }
       }
       if (++ticks % 8 === 0)
@@ -105,6 +108,13 @@ export function createLivePresenter(deps: {
 
   return {
     ack,
+    async consume(postId: string): Promise<void> {
+      for (const a of active.values()) {
+        if (a.placeholder !== postId) continue;
+        a.consumed = true;
+        await a.inflight;
+      }
+    },
     unack,
     async begin(runId: string, turn: LiveTurn, opts: { placeholder: boolean }): Promise<void> {
       const a: Active = { stopped: false, loop: Promise.resolve(), lastText: WORKING, turn };
