@@ -4,7 +4,7 @@ REPO=$(git rev-parse --show-toplevel)
 DEST=${1:-/opt/zq-ai/git/qm-mattermost.git}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-git clone -q "$DEST" "$WORK/module" 2>/dev/null || git init -q -b main "$WORK/module"
+git clone -q -b main "$DEST" "$WORK/module" 2>/dev/null || git init -q -b main "$WORK/module"
 rsync -a --delete --exclude .git "$REPO/src/surfaces/mattermost/" "$WORK/module/"
 cp "$REPO/test/mattermost-surface.test.ts" "$WORK/module/mattermost-surface.test.ts"
 cp "$REPO/docs/zq/SEAMS.md" "$WORK/module/SEAMS.md"
