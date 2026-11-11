@@ -203,6 +203,8 @@ export function createMattermostSender(deps: {
     if (trigger && reactions.length) {
       for (const t of reactionTargets(reactions, trigger, new Set([trigger]))) await react(t.postId, t.names);
     }
+    if (turn?.placeholder && turn.placeholder !== d.destination.editRef)
+      await rt.client.deletePost(turn.placeholder).catch(swallowAs("mattermost: drop stale placeholder", undefined));
     if (turn) await live.unack(turn);
   }
 

@@ -129,13 +129,13 @@ export function createLivePresenter(deps: {
       }
       a.loop = watch(runId, a).catch(swallowAs("mattermost: live watch", undefined));
     },
-    async settle(runId: string): Promise<LiveTurn | undefined> {
+    async settle(runId: string): Promise<(LiveTurn & { placeholder?: string }) | undefined> {
       const a = active.get(runId);
       if (!a) return undefined;
       a.stopped = true;
       active.delete(runId);
       await a.loop;
-      return a.turn;
+      return { ...a.turn, ...(a.placeholder ? { placeholder: a.placeholder } : {}) };
     },
     async stopAll(): Promise<void> {
       const all = [...active.values()];
