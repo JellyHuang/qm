@@ -26,6 +26,7 @@ Browser    → GET  /api/mattermost/link (account linking, behind QM sign-in)
 | `actions.ts`    | Button callbacks                                                                                                                                                  |
 | `directory.ts`  | People, channel and group sync into QM's directory                                                                                                                |
 | `context.ts`    | Mid-turn context pulls (`surface-context`), opening group messages                                                                                                |
+| `resume.ts`     | Continues a request after the person signs in to a per-user OAuth MCP server (e.g. OpenProject)                                                                   |
 | `surface.ts`    | The `Surface` object registered with core                                                                                                                         |
 
 ## Behaviour
@@ -50,6 +51,7 @@ Browser    → GET  /api/mattermost/link (account linking, behind QM sign-in)
   - If the email is not yet allowed in QM, QM org admins get an _Approve / Deny_ card in Mattermost.
   - Approving admits the email as a QM teammate (the same as the Admin → Invite teammate action) and sends the link.
   - `unlink` and `whoami` work in a DM.
+- **Per-user tools (OAuth MCP servers).** When a request needs the person's own account on a tool such as OpenProject, the bot replies with a _Connect_ link. After they sign in there, the bot continues the same request in the same conversation, as them. A revoked connection is forgotten and asks to connect again.
 - **Isolation.** These rules come from core:
   - a DM uses the person's personal scope;
   - a channel uses `channel:<id>`;

@@ -52,6 +52,13 @@ interface Incoming {
   mentioned: boolean;
   unprompted?: Unprompted;
   text: string;
+  /** Set for a synthetic turn that continues this post after an OAuth sign-in. */
+  resumeKey?: string;
+}
+
+function redeliverySuffix(inc: Incoming): string {
+  if (inc.resumeKey) return `:${inc.resumeKey}`;
+  return inc.unprompted === "reaction" ? ":reaction" : "";
 }
 
 function placeLabel(kind: MattermostKind, groupName: string, channelLabel: string): string {
@@ -69,6 +76,8 @@ export function createInbound(deps: {
   live: LivePresenter;
   onboarding: Onboarding;
   blobs: Pick<BlobTransferStore, "put">;
+  /** A turn started from this post is now queued as runId. */
+  onQueued?: (runId: string, postId: string) => void;
 }) {
   const { rt, live } = deps;
   const rootCreatedAt = new Map<string, number>();
@@ -267,7 +276,9 @@ export function createInbound(deps: {
     const trigger = { channel: post.channel_id, ...(replyRoot ? { root: replyRoot } : {}), triggerPostId: post.id };
     if (addressed) await live.ack(trigger);
     const context = kind !== "dm" || post.root_id ? await conversationContext(inc).catch(() => null) : null;
-    const files = await inboundFiles(post, actor.displayName ?? actor.externalId);
+    const files = inc.resumeKey
+      ? { attachments: [], notes: [] }
+      : await inboundFiles(post, actor.displayName ?? actor.externalId);
     if (inc.unprompted && !inc.text && !files.attachments.length) return;
     const deliveryTarget = encodeTarget({ channel: post.channel_id, ...(replyRoot ? { root: replyRoot } : {}) });
     const channelLabel = view.channel.name ? `~${view.channel.name}` : view.name;
@@ -329,7 +340,7 @@ export function createInbound(deps: {
       ...(files.attachments.length ? { attachments: files.attachments } : {}),
       ...(files.notes.length ? { inboundNotes: files.notes } : {}),
       ...(timezone ? { timezone } : {}),
-      redeliveryKey: `${SURFACE}:${post.id}${inc.unprompted === "reaction" ? ":reaction" : ""}`,
+      redeliveryKey: `${SURFACE}:${post.id}${redeliverySuffix(inc)}`,
       async: true,
     };
     let result;
@@ -344,6 +355,7 @@ export function createInbound(deps: {
       return;
     }
     if (result.status === "queued" && result.runId && !result.steered) {
+      deps.onQueued?.(result.runId, post.id);
       await live.begin(result.runId, trigger, { placeholder: addressed });
       return;
     }
@@ -470,6 +482,20 @@ export function createInbound(deps: {
       }
     },
     replay: (ev: WsEvent) => onPosted(ev, true),
+    /** Continue the request in `postId`'s conversation after its author connected `serverId`. */
+    async resume(postId: string, serverId: string): Promise<void> {
+      const post = await rt.client.post(postId);
+      const view = await rt.channel(post.channel_id);
+      const author = await rt.user(post.user_id);
+      if (author.is_bot || author.delete_at) return;
+      const actor = await rt.actorFor(author);
+      if (!actor) return;
+      const text = `[QM system note, not typed by the user] ${displayNameOf(author)} has just connected their own "${serverId}" account. Continue the request in this conversation that was waiting for that sign-in, using their connection.`;
+      await submit(
+        { post, kind: view.kind, view, author, mentioned: true, text, resumeKey: `resume:${serverId}:${Date.now()}` },
+        actor,
+      );
+    },
     submit,
     reply,
   };

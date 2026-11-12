@@ -517,6 +517,8 @@ export interface PublicOAuthClient {
   tokenUrl: string;
   scopes: string[];
   clientId: string;
+  /** Set for a confidential client (e.g. an OpenProject OAuth app); sent with PKCE on code exchange and refresh. */
+  clientSecret?: string;
   resource?: string;
   label: string;
 }
@@ -586,7 +588,9 @@ export function withPublicOAuthClients(resolve: OAuthClientResolver): OAuthClien
   return async (provider, ctx) => {
     await publicOAuthClientsReady();
     const c = publicOAuth().clients.get(provider);
-    return c ? { id: c.clientId, secret: "", clientRef: `public:${provider}` } : resolve(provider, ctx);
+    return c
+      ? { id: c.clientId, secret: c.clientSecret ?? "", clientRef: `public:${provider}` }
+      : resolve(provider, ctx);
   };
 }
 

@@ -160,6 +160,14 @@ export async function putMcpServer(ctx: ApiCtx): Promise<void> {
   }
   let oauthAuthorizeUrl = httpsUrl(b.oauthAuthorizeUrl) ?? (oauthUser ? existing?.oauthAuthorizeUrl : undefined);
   let oauthTokenUrl = httpsUrl(b.oauthTokenUrl) ?? (oauthUser ? existing?.oauthTokenUrl : undefined);
+  // Optional for oauth-user: a confidential client's secret. Write-only; blank keeps the stored one,
+  // unless the client id changes (a secret belongs to one client).
+  const keepSecret =
+    existing?.auth === "oauth-user" &&
+    (typeof b.clientId !== "string" || !b.clientId.trim() || b.clientId.trim() === existing.clientId);
+  const newSecret = typeof b.clientSecret === "string" ? b.clientSecret.trim() : "";
+  const keptSecret = keepSecret ? existing?.clientSecret : undefined;
+  const oauthClientSecret = oauthUser ? newSecret || keptSecret : undefined;
   const credentialAccountType = b.credentialAccountType ?? existing?.credentialAccountType ?? "default";
   if (!isAccountType(credentialAccountType)) {
     return sendJson(ctx.res, 400, {
@@ -198,6 +206,7 @@ export async function putMcpServer(ctx: ApiCtx): Promise<void> {
     ...(oauthUser
       ? {
           clientId: typeof b.clientId === "string" && b.clientId ? b.clientId.trim() : existing?.clientId,
+          ...(oauthClientSecret ? { clientSecret: oauthClientSecret } : {}),
           oauthAuthorizeUrl,
           oauthTokenUrl,
           oauthScopes: parseScopes(b.oauthScopes) ?? existing?.oauthScopes ?? discovered?.scopes ?? [],

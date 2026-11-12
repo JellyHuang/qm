@@ -174,6 +174,11 @@ async function oauthCallback(ctx: BaseCtx): Promise<void> {
       resource: provider,
       scopeLabel: state.principalId,
     });
+    const connectedPrincipal = state.principalId;
+    if (deps.onConnectorConnected)
+      void Promise.resolve()
+        .then(() => deps.onConnectorConnected!(provider, connectedPrincipal))
+        .catch(swallowAs("connectors: connected hook", undefined));
     if (state.consentLinkId && deps.consentLinks) {
       await deps.consentLinks.redeem(state.consentLinkId).catch(swallowAs("connectors: redeem consent link", null));
     }

@@ -517,6 +517,7 @@ export interface BuiltApp {
   partnerChatEvents?: ServerDeps["partnerChatEvents"];
   mattermostActions?: ServerDeps["mattermostActions"];
   mattermostLinkPage?: ServerDeps["mattermostLinkPage"];
+  onConnectorConnected?: ServerDeps["onConnectorConnected"];
   loopIngress: LoopIngressService;
   admin: AdminService;
   budget: BudgetTracker | undefined;
@@ -1345,6 +1346,7 @@ export function buildApp(
     servers: mcpServers,
     audit: auditLog,
     ...(keychain ? { userTokens: keychain } : {}),
+    onSignInRequired: (ev) => mattermost?.signInRequired(ev),
     ...(config.publicWebUrl
       ? {
           signInUrl: (id: string) =>
@@ -3217,6 +3219,8 @@ export function buildApp(
           mattermostActions: (raw: string) => mattermost!.handleAction(raw),
           mattermostLinkPage: (res: ServerResponse, url: URL, signedInAs: string | undefined) =>
             mattermost!.handleLinkPage(res, url, signedInAs),
+          onConnectorConnected: (provider: string, principalId: string) =>
+            mattermost!.connectorConnected(provider, principalId),
         }
       : {}),
     loopIngress,
@@ -3369,6 +3373,7 @@ export function serverDeps(
     ...(built.partnerChatEvents ? { partnerChatEvents: built.partnerChatEvents } : {}),
     ...(built.mattermostActions ? { mattermostActions: built.mattermostActions } : {}),
     ...(built.mattermostLinkPage ? { mattermostLinkPage: built.mattermostLinkPage } : {}),
+    ...(built.onConnectorConnected ? { onConnectorConnected: built.onConnectorConnected } : {}),
     loopIngress: built.loopIngress,
     identity: built.identity,
     principalLinks: built.principalLinks,

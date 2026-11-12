@@ -825,6 +825,14 @@ export function createKeychain(deps: {
       } catch (e) {
         const message = storedRefreshError(e);
         console.error(`[keychain] connector token refresh failed for ${host}: ${message}`);
+        if (stored.clientRef?.startsWith("public:") && /\binvalid_grant\b/.test(message)) {
+          // An MCP server's per-user OAuth link whose refresh token the issuer rejected (revoked,
+          // expired or already rotated): drop it so the person is asked to connect again.
+          await deleteCredential(id).catch((delErr: unknown) =>
+            console.error(`[keychain] dropping revoked connector token failed for ${host}: ${errMessage(delErr)}`),
+          );
+          return null;
+        }
         const t = now();
         try {
           await deps.creds.update(id, (current) =>

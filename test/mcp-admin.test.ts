@@ -333,3 +333,44 @@ test("MCP admin save stores the server's own description from the probe", async 
   assert.deepEqual(((await res.json()) as { tools: string[] }).tools, ["query", "update"]);
   assert.equal((await store.get("crm"))!.about, "Search and update CRM records.\nAlways query first.");
 });
+
+test("MCP admin stores a confidential oauth-user client secret write-only and drops it when the client changes", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "mcp-admin-secret-"));
+  const built = buildApp(testConfig({ dataDir: dir }));
+  const store = createMcpServerStore(testMap<McpServer>());
+  const server = createInsecureTestServer(built.app, {
+    admin: built.admin,
+    auditLog: built.auditLog,
+    mcpServers: store,
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await rm(dir, { recursive: true, force: true });
+  });
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/admin/mcp-servers/openproject`;
+  const put = (body: object) =>
+    fetch(url, {
+      method: "PUT",
+      headers: ADMIN,
+      body: JSON.stringify({
+        url: "https://mcp.example.com/mcp",
+        auth: "oauth-user",
+        oauthAuthorizeUrl: "https://op.example.com/oauth/authorize",
+        oauthTokenUrl: "https://op.example.com/oauth/token",
+        oauthScopes: "api_v3",
+        ...body,
+      }),
+    });
+  const first = await put({ clientId: "qm-harness", clientSecret: "s3cret" });
+  assert.equal(first.status, 200);
+  const text = await first.text();
+  assert.doesNotMatch(text, /s3cret/);
+  assert.equal(JSON.parse(text).server.hasClientSecret, true);
+  assert.equal((await store.get("openproject"))!.clientSecret, "s3cret");
+  assert.equal((await put({ clientId: "qm-harness" })).status, 200);
+  assert.equal((await store.get("openproject"))!.clientSecret, "s3cret", "blank keeps the stored secret");
+  assert.equal((await put({ clientId: "another-client" })).status, 200);
+  assert.equal((await store.get("openproject"))!.clientSecret, undefined, "a new client id drops the old secret");
+});

@@ -134,3 +134,23 @@ test("a refresh that cannot take its lock still serves the unexpired token", asy
   await k.setConnectorToken(HOST, "U2", { accessToken: "expired", refreshToken: "rt", expiresAt: Date.now() - 1 });
   assert.equal(await k.connectorAccessToken(HOST, "U2"), null);
 });
+
+test("an MCP per-user OAuth link whose refresh is rejected with invalid_grant is dropped; built-in links are kept", async () => {
+  const creds = testMap<KeychainCredential>();
+  const lock = testAdvisoryLock();
+  const rejected: OAuthRefresh = async () => {
+    throw new Error("token refresh failed (400): invalid_grant: revoked");
+  };
+  const kc = keychain(creds, lock, rejected);
+  const expired = { accessToken: "at-0", refreshToken: "rt-0", expiresAt: Date.now() - 1 };
+  await kc.setConnectorToken("op.example.com", "U1", { ...expired, clientRef: "public:openproject" });
+  await kc.setConnectorToken(HOST, "U1", { ...expired, clientRef: "env:google" });
+  assert.equal(await kc.connectorAccessToken("op.example.com", "U1"), null);
+  assert.deepEqual(await kc.connectorTokenStatus("op.example.com", "U1"), { connected: false });
+  assert.equal(await kc.connectorAccessToken(HOST, "U1"), null);
+  assert.equal(
+    (await kc.connectorTokenStatus(HOST, "U1")).needsReconnect,
+    true,
+    "built-in connectors keep upstream behaviour",
+  );
+});

@@ -121,3 +121,42 @@ test("deleting asks first and calls DELETE", async () => {
   assert.deepEqual(deletes, ["/mcp-servers/jira"]);
   admin.close();
 });
+
+test("a per-user OAuth server sends a write-only client secret only when typed", async () => {
+  const saves: unknown[] = [];
+  const admin = await mountPage("/settings/mcp-servers", {
+    "/mcp-servers": { servers: [], tools: [] },
+    "PUT /mcp-servers/openproject": ({ body }) => (saves.push(body), { ok: true }),
+  });
+  await admin.settle();
+  click(admin, "#add-mcp-server");
+  type(admin, "#mcp-server-id", "openproject");
+  type(admin, "#mcp-server-url", "https://mcp.example.com/mcp");
+  choose(admin, "#mcp-server-auth", "oauth-user");
+  await admin.settle();
+  const secret = admin.document.querySelector<HTMLInputElement>("#mcp-server-clientSecret")!;
+  assert.equal(secret.type, "password");
+  type(admin, "#mcp-server-clientId", "qm-harness");
+  type(admin, "#mcp-server-clientSecret", "s3cret");
+  type(admin, "#mcp-server-credentialHost", "op.example.com");
+  type(admin, "#mcp-server-oauthScopes", "api_v3");
+  click(admin, "#mcp-server-save");
+  await admin.settle();
+  assert.deepEqual(plain(saves), [
+    {
+      name: "",
+      url: "https://mcp.example.com/mcp",
+      auth: "oauth-user",
+      credentialScope: "per-user",
+      approval: "annotations",
+      readOnly: false,
+      enabled: true,
+      credentialHost: "op.example.com",
+      credentialAccountType: "default",
+      clientId: "qm-harness",
+      clientSecret: "s3cret",
+      oauthScopes: "api_v3",
+    },
+  ]);
+  admin.close();
+});

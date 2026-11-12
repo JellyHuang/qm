@@ -198,3 +198,66 @@ test("token refresh only matches a provider's exact hosts, never subdomains of a
   assert.equal((await refresh("example.com", { accessToken: "a", refreshToken: "r" })).accessToken, "fresh");
   assert.deepEqual(urls, ["https://id.example.com/token"]);
 });
+
+test("a confidential oauth-user client sends its secret on exchange and refresh", async (t) => {
+  t.after(() => setPublicOAuthClients([]));
+  setPublicOAuthClients(mcpPublicOAuthClients([oauthServer({ clientSecret: "s3cret" })]));
+  const resolve = withPublicOAuthClients(async () => {
+    throw new Error("secret resolver must not be used");
+  });
+  const client = await resolve("orders", {});
+  assert.equal(client.secret, "s3cret");
+  const bodies: URLSearchParams[] = [];
+  const fetchImpl = async (_url: string, init: { body: string }) => {
+    bodies.push(new URLSearchParams(init.body));
+    return { ok: true, status: 200, json: async () => ({ access_token: "a", refresh_token: "r2", expires_in: 7200 }) };
+  };
+  const { token } = await exchangeCode("orders", "code", "https://qm/cb", { client, fetchImpl, codeVerifier: "v" });
+  const fresh = await makeRefresh({ resolveClient: resolve, fetchImpl })(HOST, { ...token, refreshToken: "r1" });
+  assert.equal(fresh.refreshToken, "r2", "the rotated refresh token is kept");
+  for (const b of bodies) assert.equal(b.get("client_secret"), "s3cret");
+  assert.equal(bodies[0]!.get("code_verifier"), "v");
+});
+
+test("a run that needs sign-in is reported, and a rejected personal token is dropped and re-prompted", async (t) => {
+  const store = createMcpServerStore(testMap<McpServer>());
+  const tokens = new Map<string, string>([["internal:alice", "stale-token"]]);
+  const events: unknown[] = [];
+  const mcp = await startMcpTestServer(t, {
+    tools: [{ name: "search", description: "Search", inputSchema: { type: "object" } }],
+    authorize: (authorization) => authorization === "Bearer good-token",
+    call: () => ({ content: [{ type: "text", text: "ok" }] }),
+  });
+  const service = createMcpToolService({
+    fetch: loopbackFetch,
+    servers: store,
+    userTokens: {
+      connectorAccessToken: async (_host, principalId) => tokens.get(principalId) ?? null,
+      connectorTokenStatus: async (_host, principalId) => ({ connected: tokens.has(principalId) }),
+      deleteConnectorToken: async (_host, principalId) => void tokens.delete(principalId),
+    },
+    signInUrl: (id) => `https://qm.example/connect/${id}/self-connect`,
+    onSignInRequired: (ev) => events.push(ev),
+  });
+  t.after(() => {
+    service.close();
+    setPublicOAuthClients([]);
+  });
+  await store.put(
+    oauthServer({ url: `${mcp.url}/mcp`, tools: [{ name: "search", description: "", inputSchema: {} }] }),
+  );
+  await service.refresh();
+  const reply = await service.call("orders_search", {}, "internal:alice", undefined, undefined, undefined, "run-1");
+  assert.match(reply, /no longer valid.*Connect Orders/s);
+  assert.equal(tokens.has("internal:alice"), false, "the rejected token is forgotten");
+  assert.match(
+    await service.call("orders_search", {}, "internal:bob", undefined, undefined, undefined, "run-2"),
+    /Connect Orders/,
+  );
+  assert.deepEqual(events, [
+    { serverId: "orders", principalId: "internal:alice", runId: "run-1" },
+    { serverId: "orders", principalId: "internal:bob", runId: "run-2" },
+  ]);
+  tokens.set("internal:alice", "good-token");
+  assert.equal(await service.call("orders_search", {}, "internal:alice"), "ok");
+});

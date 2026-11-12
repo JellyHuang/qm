@@ -5,7 +5,14 @@ import { setPublicOAuthClientSource, setPublicOAuthClients, type PublicOAuthClie
 import { LRUCache } from "lru-cache";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { onTenantLoad, perTenant } from "../tenants/cache.ts";
-import { createMcpClient, mcpResultText, type McpAuth, type McpClient, type McpListing } from "./mcp-client.ts";
+import {
+  createMcpClient,
+  McpCallError,
+  mcpResultText,
+  type McpAuth,
+  type McpClient,
+  type McpListing,
+} from "./mcp-client.ts";
 import type { McpServer, McpServerStore } from "./mcp-server-store.ts";
 import { attestsInAudience, attestedPerson, OutsideAudience } from "../directory/person.ts";
 import type { AddressFetch } from "../util/network.ts";
@@ -50,6 +57,7 @@ export function mcpPublicOAuthClients(servers: McpServer[]): PublicOAuthClient[]
             tokenUrl: s.oauthTokenUrl,
             scopes: s.oauthScopes ?? [],
             clientId: s.clientId,
+            ...(s.clientSecret ? { clientSecret: s.clientSecret } : {}),
             resource: s.url,
             label: s.name,
           },
@@ -85,6 +93,7 @@ export interface McpToolService {
     approval?: string,
     audienceScopeId?: ScopeId,
     actAsActor?: boolean,
+    runId?: string,
   ): Promise<string>;
   needsApproval(
     name: string,
@@ -187,7 +196,10 @@ function authOf(server: McpServer): McpAuth {
 export function createMcpToolService(opts: {
   servers: McpServerStore;
   audit?: AuditLog;
-  userTokens?: Pick<ConnectorTokenStore, "connectorAccessToken" | "connectorTokenStatus">;
+  userTokens?: Pick<ConnectorTokenStore, "connectorAccessToken" | "connectorTokenStatus"> &
+    Partial<Pick<ConnectorTokenStore, "deleteConnectorToken">>;
+  /** A per-user OAuth server needed the person to sign in during a run (used to resume it afterwards). */
+  onSignInRequired?: (event: { serverId: string; principalId: string; runId?: string }) => void;
   now?: () => number;
   refreshIntervalMs?: number;
   signInUrl?: (serverId: string) => string;
@@ -455,7 +467,7 @@ export function createMcpToolService(opts: {
         throw e;
       }
     },
-    async call(name, args, principalId, approval, audienceScopeId, actAsActor) {
+    async call(name, args, principalId, approval, audienceScopeId, actAsActor, runId) {
       const def = (await loaded()).snapshot.find((t) => t.name === name);
       if (!def) throw new Error(`unknown MCP tool: ${name}`);
       const server = await opts.servers.get(def.serverId);
@@ -475,9 +487,26 @@ export function createMcpToolService(opts: {
         const result = await client.callTool(def.remoteName, args, headersFor(server, principalId, approval));
         record("call", `${def.serverId}/${def.remoteName}`, approval ? "ok approved" : "ok", principalId);
         return resultText(result);
-      } catch (e) {
+      } catch (caught) {
+        let e = caught;
+        if (
+          !(e instanceof SignInRequired) &&
+          e instanceof McpCallError &&
+          e.status === 401 &&
+          server.auth === "oauth-user" &&
+          principalId &&
+          server.credentialHost &&
+          opts.userTokens?.deleteConnectorToken
+        ) {
+          // The server refused this person's own token (revoked or foreign): forget it and ask them to reconnect.
+          await opts.userTokens
+            .deleteConnectorToken(server.credentialHost, principalId, server.credentialAccountType)
+            .catch(reportFailureAs("mcp: drop rejected user token", undefined));
+          e = new SignInRequired(`Your ${server.name} connection is no longer valid. ${signInMessage(server)}`);
+        }
         if (e instanceof SignInRequired) {
           record("call", callResource(def, args), "sign-in required", principalId);
+          if (principalId) opts.onSignInRequired?.({ serverId: server.id, principalId, ...(runId ? { runId } : {}) });
           return e.message;
         }
         record("call", callResource(def, args), `error: ${errMessage(e)}`, principalId);

@@ -15,6 +15,7 @@ import { createLinkRegistry, verifiedEmail, type IdentityStores } from "../src/s
 import { cleanReply, normalizeEmoji, reactionTargets } from "../src/surfaces/mattermost/format.ts";
 import { mattermostConfigFromEnv } from "../src/surfaces/mattermost/config.ts";
 import { createMattermostSurface } from "../src/surfaces/mattermost/surface.ts";
+import { createSignInResume, RESUME_TTL_MS, type SignInResume } from "../src/surfaces/mattermost/resume.ts";
 
 const A = "abcdefghijkmnopqrstuwxyz13";
 const B = "zyxwutsrqponmkjihgfedcba45";
@@ -249,4 +250,26 @@ test("surface threads replies under the given post and lists revision candidates
     surface.mention({ surface: "mattermost", account: "default", id: A, principal: { externalId: "a@x" } }),
     "@alice",
   );
+});
+
+test("a request waiting on an OAuth sign-in resumes once, only for the same person and server, and expires", async () => {
+  let now = 0;
+  const resumed: Array<[string, string]> = [];
+  const r = createSignInResume({
+    store: memoryMap<SignInResume>(),
+    resume: async (postId, serverId) => void resumed.push([postId, serverId]),
+    now: () => now,
+  });
+  r.track("run-1", "post-1");
+  await r.signInRequired({ serverId: "openproject", principalId: "p:alice", runId: "run-1" });
+  await r.signInRequired({ serverId: "openproject", principalId: "p:bob", runId: "run-unknown" });
+  await r.signInRequired({ serverId: "openproject", principalId: "p:carol" });
+  assert.equal(await r.connected("openproject", "p:bob"), false, "no Mattermost message behind that run");
+  assert.equal(await r.connected("other", "p:alice"), false, "a different server does not resume it");
+  assert.equal(await r.connected("openproject", "p:alice"), true);
+  assert.equal(await r.connected("openproject", "p:alice"), false, "resumes once");
+  assert.deepEqual(resumed, [["post-1", "openproject"]]);
+  await r.signInRequired({ serverId: "openproject", principalId: "p:alice", runId: "run-1" });
+  now += RESUME_TTL_MS + 1;
+  assert.equal(await r.connected("openproject", "p:alice"), false, "expired");
 });

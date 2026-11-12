@@ -200,6 +200,7 @@ export function mcpServerBody(d: Record<string, any>): Record<string, unknown> {
   }
   if (oauthUser) {
     if (trimmed(d.clientId)) body.clientId = trimmed(d.clientId);
+    if (trimmed(d.clientSecret)) body.clientSecret = trimmed(d.clientSecret);
     if (trimmed(d.oauthAuthorizeUrl)) body.oauthAuthorizeUrl = trimmed(d.oauthAuthorizeUrl);
     if (trimmed(d.oauthTokenUrl)) body.oauthTokenUrl = trimmed(d.oauthTokenUrl);
     if (trimmed(d.oauthScopes)) body.oauthScopes = trimmed(d.oauthScopes);
@@ -259,6 +260,8 @@ function credentialBadges(s: McpServerView) {
     return badge(s.hasBearerToken ? "Token stored" : "Token missing", s.hasBearerToken ? "ok" : "err");
   if (s.auth === "client-credentials")
     return badge(s.hasClientSecret ? "Secret stored" : "Secret missing", s.hasClientSecret ? "ok" : "err");
+  if (s.auth === "oauth-user")
+    return badge(s.hasClientSecret ? "Confidential client" : "Public client (PKCE)", "muted");
   return nothing;
 }
 
@@ -280,7 +283,8 @@ function serverRows() {
           </div>
           <div class="credential-badges">
             ${badge(s.enabled ? "Enabled" : "Disabled", s.enabled ? "ok" : "warn")}
-            ${s.readOnly ? badge("Read-only", "info") : nothing} ${credentialBadges(s)}
+            ${s.readOnly ? badge("Trusted read-only", "warn", "Every tool is treated as read-only; writes are not blocked") : nothing}
+            ${credentialBadges(s)}
             ${badge(tools.length + " tool" + (tools.length === 1 ? "" : "s"), tools.length ? "info" : "muted")}
           </div>
           ${
@@ -365,7 +369,7 @@ function editorDialog() {
   const oauthUser = d.auth === "oauth-user";
   const perUser = oauthUser || d.credentialScope === "per-user";
   const tokenStored = e?.auth === "bearer" && e.hasBearerToken;
-  const secretStored = e?.auth === "client-credentials" && e.hasClientSecret;
+  const secretStored = (e?.auth === "client-credentials" || e?.auth === "oauth-user") && !!e?.hasClientSecret;
   return html`<dialog
     class="custom-provider-dialog"
     id="mcp-server-dialog"
@@ -409,6 +413,13 @@ function editorDialog() {
       ${
         oauthUser
           ? html`${field("clientId", "OAuth client id", { hint: "blank: use dynamic client registration" })}
+            ${field("clientSecret", "OAuth client secret", {
+              type: "password",
+              placeholder: secretStored ? "•••• stored (leave blank to keep)" : "only for a confidential client",
+              hint: secretStored
+                ? "a secret is stored; it is never shown"
+                : "write-only; leave blank for a public client",
+            })}
             ${field("oauthAuthorizeUrl", "Authorize URL", { placeholder: "discovered when blank" })}
             ${field("oauthTokenUrl", "Token URL", { placeholder: "discovered when blank" })}
             ${field("oauthScopes", "Scopes", { placeholder: "space separated; discovered when blank" })}`
@@ -434,7 +445,8 @@ function editorDialog() {
           : nothing
       }
       ${select("approval", "Approval", APPROVAL_LABEL)}
-      ${check("readOnly", "Read-only (only read-only tools are offered)")} ${check("enabled", "Enabled")}
+      ${check("readOnly", "Trust as read-only: offer all its tools even in read-only sessions. This does NOT block write tools; use only for servers that cannot write.")}
+      ${check("enabled", "Enabled")}
       ${check("validate", oauthUser ? "Test connection on save (not available for per-user OAuth)" : "Test connection on save (lists the server's tools)")}
       <span
         class=${classMap({ status: true, err: state.error, saving: state.saving })}

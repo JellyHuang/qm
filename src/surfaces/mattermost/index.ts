@@ -27,6 +27,7 @@ import {
   type PendingTurn,
 } from "./identity.ts";
 import { createInbound } from "./inbound.ts";
+import { createSignInResume, type SignInResume } from "./resume.ts";
 import { createLinkPage } from "./link-page.ts";
 import { createLivePresenter } from "./live.ts";
 import { createOnboarding, type AccessAdmin } from "./onboarding.ts";
@@ -107,7 +108,17 @@ export function createMattermost(deps: MattermostDeps) {
   });
   const live = createLivePresenter({ rt, runs: deps.runs, turnStream: deps.turnStream, notice: mattermostRunNotice });
   const onboarding = createOnboarding({ rt, admin: deps.admin });
-  const inbound = createInbound({ rt, live, onboarding, blobs: deps.blobs });
+  const resumer = createSignInResume({
+    store: deps.map<SignInResume>("mattermost_signin_resumes"),
+    resume: (postId, serverId) => inbound.resume(postId, serverId),
+  });
+  const inbound = createInbound({
+    rt,
+    live,
+    onboarding,
+    blobs: deps.blobs,
+    onQueued: (runId, postId) => resumer.track(runId, postId),
+  });
   onboarding.attach(inbound);
   const actions = createActions({
     rt,
@@ -185,7 +196,14 @@ export function createMattermost(deps: MattermostDeps) {
     label: "mattermost directory",
     immediate: true,
   });
-  const housekeeping = createSweeper(() => links.sweep(), HOUSEKEEPING_MS, { label: "mattermost housekeeping" });
+  const housekeeping = createSweeper(
+    async () => {
+      await links.sweep();
+      await resumer.sweep();
+    },
+    HOUSEKEEPING_MS,
+    { label: "mattermost housekeeping" },
+  );
 
   let stopped = true;
   let stopSignal: () => void = () => {};
@@ -229,6 +247,14 @@ export function createMattermost(deps: MattermostDeps) {
     },
     async handleLinkPage(res: ServerResponse, url: URL, signedInAs: string | undefined) {
       return linkPage(res, url, signedInAs);
+    },
+    /** Core: a run started here needs the person to sign in to a per-user OAuth MCP server. */
+    signInRequired(ev: { serverId: string; principalId: string; runId?: string }): void {
+      void resumer.signInRequired(ev).catch(swallowAs("mattermost: remember sign-in resume", undefined));
+    },
+    /** Core: the person finished an OAuth connect; continue any Mattermost request waiting on it. */
+    async connectorConnected(provider: string, principalId: string): Promise<void> {
+      await resumer.connected(provider, principalId);
     },
     start(): void {
       if (!stopped) return;

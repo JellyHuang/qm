@@ -129,6 +129,8 @@ export interface ServerDeps {
     rawBody: string,
   ) => Promise<{ status: number; body: Record<string, unknown> }>;
   mattermostActions?: (rawBody: string) => Promise<{ status: number; body: unknown }>;
+  /** Called after a person finishes an OAuth connect (e.g. to resume the chat request that needed it). */
+  onConnectorConnected?: (provider: string, principalId: string) => void | Promise<void>;
   mattermostLinkPage?: (res: ServerResponse, url: URL, signedInAs: string | undefined) => Promise<void>;
   slackEnvBotToken?: string;
   oauthStateSecret?: string;
