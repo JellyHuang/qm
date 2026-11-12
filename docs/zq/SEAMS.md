@@ -47,6 +47,26 @@ New durable-map tables are created on first use: `mattermost_links`, `mattermost
 |---|---|---|
 | `src/api/routes/surface.ts` | `modelProviderConfigured` is also true when an enabled custom provider (Admin → Model providers) has a saved key | Upstream only counted Anthropic, OpenAI and OpenRouter keys. With only a custom provider, the portal sent admins to `/settings/onboarding` and showed everyone else "not configured". |
 
+## Feature commit: "per-model image input for custom providers"
+
+| File | Change | Why |
+|---|---|---|
+| `src/model/custom-providers.ts` | Optional per-model `images` boolean. `true` gives the model `input: ["text", "image"]`, in both the runtime registry and the generated `models.json`; unset or `false` keeps upstream's text-only behaviour | Upstream hard-codes custom models as text-only, so pi strips every image ("image omitted: model does not support images") even for vision models behind a gateway |
+| `plugins/web-ui/src/admin/settings-providers.ts` | The Models textarea takes a sixth column, `images (true/false)` | Switch it per model from Admin → Models → Custom providers |
+| `test/custom-providers.test.ts` | Covers the default, `true`, `false`, and rejected values | |
+
+Saved providers without the field behave exactly as before.
+
+## Feature commit: "admin page for MCP servers"
+
+| File | Change | Why |
+|---|---|---|
+| `plugins/web-ui/src/admin/mcp-servers.ts` (new) | Admin → Organization → **MCP servers**: list, add, edit, delete; test on save; discovered tools; write-only token and secret fields | Upstream has the `/v1/admin/mcp-servers` API but no UI |
+| `plugins/web-ui/src/admin/sections.ts` | Registers the `mcp-servers` view | |
+| `plugins/web-ui/test/admin/mcp-servers-page.test.ts` (new) | Page tests | |
+
+No backend change. The page uses the existing admin browser-session aliases (`/api/admin/mcp-servers`). Registering or changing a server stays portal-only for the agent (`MCP_SERVERS` in `src/api/routes/admin.ts`).
+
 ## Upgrading to a new upstream release
 
 1. Back up QM (`systemctl start qm-backup`).
