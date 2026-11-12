@@ -40,7 +40,9 @@ function openProvider(item: any = null) {
     modelSpecs: item?.models || [],
     models: item
       ? item.models
-          .map((m: any) => [m.id, m.name, m.contextWindow, m.maxTokens, m.reasoning].map((x) => x ?? "").join(" | "))
+          .map((m: any) =>
+            [m.id, m.name, m.contextWindow, m.maxTokens, m.reasoning, m.images].map((x) => x ?? "").join(" | "),
+          )
           .join("\n")
       : "",
     validate: true,
@@ -68,8 +70,9 @@ function providerBody() {
     .map((l: string) => l.trim())
     .filter(Boolean)
     .map((l: string) => {
-      const [id, name, contextWindow, maxTokens, reasoning] = l.split("|").map((p) => p.trim());
+      const [id, name, contextWindow, maxTokens, reasoning, images] = l.split("|").map((p) => p.trim());
       const capability = reasoning === "true" || reasoning === "false" ? reasoning === "true" : reasoning || undefined;
+      const vision = images === "true" || images === "false" ? images === "true" : images || undefined;
       return {
         ...d.modelSpecs?.find((model: any) => model.id === id),
         id,
@@ -77,6 +80,7 @@ function providerBody() {
         contextWindow: contextWindow ? Number(contextWindow) : undefined,
         maxTokens: maxTokens ? Number(maxTokens) : undefined,
         reasoning: capability,
+        images: vision,
       };
     });
   return {
@@ -250,13 +254,14 @@ function providerDialog() {
         ${input("key", "API key", { placeholder: "Write-only; blank on edit keeps the stored key", type: "password", cls: "custom-provider-key" })}
         <label class="custom-provider-models"
           >Models
-          <span class="label-detail">one per line: id | name | context | max tokens | reasoning (true/false)</span
+          <span class="label-detail"
+            >one per line: id | name | context | max tokens | reasoning (true/false) | images (true/false)</span
           ><textarea
             id="custom-provider-models"
             .value=${provider.draft.models || ""}
             @input=${(e: Event) => changeProvider("models", (e.target as HTMLInputElement).value)}
             rows="4"
-            placeholder="deepseek-chat | DeepSeek V3.2 | 128000 | 8192 | true"
+            placeholder="deepseek-chat | DeepSeek V3.2 | 128000 | 8192 | true | false"
           ></textarea>
         </label>
         <label class="inline custom-provider-validation"

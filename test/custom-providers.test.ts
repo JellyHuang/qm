@@ -234,3 +234,34 @@ test("custom provider reasoning rejects non-boolean capabilities", () => {
     );
   }
 });
+
+test("custom models are text-only unless images is set, per model", () => {
+  setCustomProviders([
+    {
+      ...GATEWAY,
+      models: [{ id: "plain" }, { id: "vision", images: true }, { id: "off", images: false }],
+    },
+  ]);
+  assert.deepEqual(resolveCustomModel("custom/acme-gateway/plain")?.input, ["text"]);
+  assert.deepEqual(resolveCustomModel("custom/acme-gateway/vision")?.input, ["text", "image"]);
+  assert.deepEqual(resolveCustomModel("custom/acme-gateway/off")?.input, ["text"]);
+  assert.deepEqual(resolveModel("custom/acme-gateway/vision")?.input, ["text", "image"]);
+  const json = customModelsJson()?.providers["acme-gateway"] as { models: Array<{ id: string; input: string[] }> };
+  assert.deepEqual(
+    json.models.map((m) => [m.id, m.input]),
+    [
+      ["custom/acme-gateway/plain", ["text"]],
+      ["custom/acme-gateway/vision", ["text", "image"]],
+      ["custom/acme-gateway/off", ["text"]],
+    ],
+  );
+});
+
+test("custom provider images rejects non-boolean values", () => {
+  for (const images of ["true", 1, null, {}]) {
+    assert.throws(
+      () => validateCustomProviderSpec({ ...GATEWAY, models: [{ id: "acme-large", images } as never] }),
+      /images must be a boolean/,
+    );
+  }
+});
