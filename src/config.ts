@@ -73,6 +73,8 @@ export interface Config extends SandboxSettings, DeploySettings {
   sharingPosture: SharingPosture;
   egressServiceHosts?: string[];
   privateNetworkAllowedOrigins: ReadonlySet<string>;
+  /** Most tools read from one MCP server's tools/list (MCP_MAX_TOOLS; default 64, at most 5000). */
+  mcpMaxTools?: number;
   brandingDefault?: OrgBranding;
   modelId?: string;
   codexAuthCredential?: string;
@@ -496,6 +498,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error("SLACK_EVENTS_PORT must be an integer from 1 through 65535");
   }
   const privateNetworkAllowedOrigins = parsePrivateNetworkOrigins(env.PRIVATE_NETWORK_ALLOWED_ORIGINS);
+  const mcpMaxTools = numEnvStrict("MCP_MAX_TOOLS", env.MCP_MAX_TOOLS);
+  if (mcpMaxTools !== undefined && (!Number.isSafeInteger(mcpMaxTools) || mcpMaxTools < 1 || mcpMaxTools > 5_000))
+    throw new Error("MCP_MAX_TOOLS must be an integer from 1 through 5000");
   const memoryProviderConfig = parseMemoryProviderConfig(env.MEMORY_PROVIDER_CONFIG, env);
   return {
     suggestedActivitiesEnabled: boolEnvStrict("SUGGESTED_ACTIVITIES_ENABLED", env.SUGGESTED_ACTIVITIES_ENABLED) ?? true,
@@ -647,6 +652,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     memoryStrategy: parseMemoryStrategyKind(env.MEMORY_STRATEGY),
     ...(memoryProviderConfig ? { memoryProviderConfig } : {}),
     privateNetworkAllowedOrigins,
+    ...(mcpMaxTools !== undefined ? { mcpMaxTools } : {}),
     memoryCaptureQuietMs:
       numEnvStrict("MEMORY_CAPTURE_QUIET_MS", env.MEMORY_CAPTURE_QUIET_MS) ?? DEFAULT_CAPTURE_QUIET_MS,
     ...optNum(env, "MEMORY_CAPTURE_MAX_TURNS", "memoryCaptureMaxTurns"),

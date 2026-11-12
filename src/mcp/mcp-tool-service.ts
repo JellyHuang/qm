@@ -198,6 +198,8 @@ export function createMcpToolService(opts: {
   audit?: AuditLog;
   userTokens?: Pick<ConnectorTokenStore, "connectorAccessToken" | "connectorTokenStatus"> &
     Partial<Pick<ConnectorTokenStore, "deleteConnectorToken">>;
+  /** Most tools read from one server's tools/list outside catalog mode (default: the client's 64). */
+  maxTools?: number;
   /** A per-user OAuth server needed the person to sign in during a run (used to resume it afterwards). */
   onSignInRequired?: (event: { serverId: string; principalId: string; runId?: string }) => void;
   now?: () => number;
@@ -230,6 +232,7 @@ export function createMcpToolService(opts: {
       : `Sign in to ${server.name} from the Connectors page first, then try again.`;
   }
   let closed = false;
+  const listCap = opts.maxTools ? { maxTools: Math.min(opts.maxTools, CATALOG_MAX_TOOLS) } : {};
 
   function record(action: string, resource: string, status: string, principalId?: string): void {
     opts.audit?.record({
@@ -358,7 +361,7 @@ export function createMcpToolService(opts: {
         tools = server.tools ?? [];
         if (!tools.length) return next;
       } else {
-        const listing = await clientFor(server).listTools({ headers: headersFor(server, undefined) });
+        const listing = await clientFor(server).listTools({ headers: headersFor(server, undefined), ...listCap });
         tools = listing.tools;
         about = listing.about ?? about;
       }
@@ -477,7 +480,7 @@ export function createMcpToolService(opts: {
         if (def.catalog) return await callCatalog(server, args, principalId, approval);
         const client = await callerClient(server, principalId);
         if (def.signIn) {
-          const { tools, about } = await client.listTools();
+          const { tools, about } = await client.listTools(listCap);
           const current = await opts.servers.get(server.id);
           if (current) await opts.servers.put({ ...current, tools, about: about ?? current.about });
           await refresh();
@@ -517,7 +520,7 @@ export function createMcpToolService(opts: {
     async probe(server, principalId) {
       return createMcpClient({ url: server.url, auth: authOf(server), fetch: opts.fetch }).listTools({
         headers: headersFor(server, principalId),
-        ...(server.catalog ? { maxTools: CATALOG_MAX_TOOLS } : {}),
+        ...(server.catalog ? { maxTools: CATALOG_MAX_TOOLS } : listCap),
       });
     },
     close() {

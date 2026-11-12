@@ -261,3 +261,33 @@ test("a run that needs sign-in is reported, and a rejected personal token is dro
   tokens.set("internal:alice", "good-token");
   assert.equal(await service.call("orders_search", {}, "internal:alice"), "ok");
 });
+
+test("sign-in lists more than 64 tools when the service cap is raised", async (t) => {
+  const many = Array.from({ length: 125 }, (_, i) => ({
+    name: `tool_${i}`,
+    description: `Tool ${i}`,
+    inputSchema: { type: "object" as const },
+  }));
+  const mcp = await startMcpTestServer(t, { tools: many, call: () => ({ content: [{ type: "text", text: "ok" }] }) });
+  for (const [maxTools, expected] of [
+    [undefined, 64],
+    [500, 125],
+  ] as const) {
+    const store = createMcpServerStore(testMap<McpServer>());
+    const service = createMcpToolService({
+      fetch: loopbackFetch,
+      servers: store,
+      userTokens: {
+        connectorAccessToken: async () => "alice-token",
+        connectorTokenStatus: async () => ({ connected: true }),
+      },
+      ...(maxTools ? { maxTools } : {}),
+    });
+    t.after(() => service.close());
+    await store.put(oauthServer({ url: `${mcp.url}/mcp` }));
+    await service.refresh();
+    await service.call("orders_sign_in", {}, "internal:alice");
+    assert.equal((await store.get("orders"))!.tools?.length, expected);
+  }
+  setPublicOAuthClients([]);
+});

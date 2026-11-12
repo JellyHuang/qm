@@ -1347,6 +1347,7 @@ export function buildApp(
     audit: auditLog,
     ...(keychain ? { userTokens: keychain } : {}),
     onSignInRequired: (ev) => mattermost?.signInRequired(ev),
+    ...(config.mcpMaxTools ? { maxTools: config.mcpMaxTools } : {}),
     ...(config.publicWebUrl
       ? {
           signInUrl: (id: string) =>

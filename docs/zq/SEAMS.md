@@ -84,6 +84,13 @@ For MCP servers that act as each person with their own OAuth token, for example 
 
 Tests: `test/mcp-oauth-user.test.ts`, `test/mcp-admin.test.ts`, `test/keychain-connector-refresh.test.ts`, `test/mattermost-surface.test.ts`, `plugins/web-ui/test/admin/mcp-servers-page.test.ts`.
 
+## Feature commit: "configurable MCP tool-list cap"
+
+| File                                           | Change                                                                                                             | Why                                                                                                         |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `src/config.ts`                                | `MCP_MAX_TOOLS` (1 to 5000; unset keeps upstream's 64)                                                             | Servers with more than 64 tools were silently cut off                                                       |
+| `src/mcp/mcp-tool-service.ts`, `src/wiring.ts` | The cap applies to the shared listing, the per-user sign-in listing and the admin probe. Catalog mode is unchanged | MCP tools reach the model deferred (`tool_search` / `mcp_call`), so a larger list doesn't grow every prompt |
+
 ## Upgrading to a new upstream release
 
 1. Back up QM (`systemctl start qm-backup`).
