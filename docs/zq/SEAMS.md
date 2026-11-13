@@ -106,6 +106,18 @@ The module lives in `src/integrations/openagents/`; see its README.
 
 New tables: `openagents_threads`, `openagents_state`, `openagents_seen`. With no `OA_*` env set, nothing changes.
 
+## Feature commit: "read-only build metadata endpoint"
+
+| File                                                            | Change                                                                                                                                                                               | Why                                                                   |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| `src/api/routes/build-info.ts` (new), `src/api/routes/index.ts` | `GET /v1/build-info` (auth `either`: control-plane capability token or signed portal) returns `{commit, builtAt, startedAt, uptimeSeconds, health}`. No config, env or secrets       | Lets operators and the agent check which build is live after a deploy |
+| `src/api/deps.ts`, `src/wiring.ts`, `src/config.ts`             | `QM_BUILD_COMMIT` (a 7–40 character hex value) and `QM_BUILD_TIME` (ISO) go into `config.buildCommit` and `config.buildTime`, then into `deps.buildInfo`. Invalid values are dropped |                                                                       |
+| `src/api/agent-api-catalog.ts`                                  | Lists the route for the agent                                                                                                                                                        |                                                                       |
+| `src/agent/diagnostics.ts` (new), `src/agent/agent-run.ts`      | Opt-in `QM_LOG_OUTBOUND_TOOLS=1` logs the tool names on the final model request (names and count only)                                                                               | Diagnosing "tool missing" reports                                     |
+| `test/build-info-route.test.ts` (new)                           | Route and config tests                                                                                                                                                               |                                                                       |
+
+Deployment: `/opt/zq-ai/qm/bin/qm` writes `QM_BUILD_COMMIT` and `QM_BUILD_TIME` into `.env` when the commit changes, and `secretEnv` passes them to core. The secret mechanism is used only because `env.core` is static; neither value is secret.
+
 ## Upgrading to a new upstream release
 
 1. Back up QM (`systemctl start qm-backup`).

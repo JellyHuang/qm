@@ -28,6 +28,16 @@ const CONVERSATION_UPDATE =
 
 const FAMILIES: AgentApiFamily[] = [
   {
+    routes: [
+      {
+        method: "GET",
+        path: "/v1/build-info",
+        summary:
+          "which build is live: {commit, builtAt, startedAt, uptimeSeconds, health: ok|degraded}; check this after a deploy",
+      },
+    ],
+  },
+  {
     guidance:
       "Use the composio skill for backend app access. Never load a Composio project key or call its SDK directly. Execution binds accounts to your identity and sharing permissions.",
     routes: [

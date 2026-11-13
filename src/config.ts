@@ -127,6 +127,9 @@ export interface Config extends SandboxSettings, DeploySettings {
   partnerChat?: { url: string; secret: string; label?: string };
   mattermost?: MattermostConfig;
   openAgents?: OpenAgentsConfig;
+  /** Build metadata set by the deploy wrapper (QM_BUILD_COMMIT, QM_BUILD_TIME); served by /v1/build-info. */
+  buildCommit?: string;
+  buildTime?: string;
   /** Diagnostic: log the tool names on every outbound model request (QM_LOG_OUTBOUND_TOOLS=1). */
   logOutboundTools?: boolean;
   secretsBackend: "env" | "aws";
@@ -630,6 +633,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       return mattermost ? { mattermost } : {};
     })(),
     ...(env.QM_LOG_OUTBOUND_TOOLS === "1" ? { logOutboundTools: true } : {}),
+    ...(/^[0-9a-f]{7,40}$/.test(env.QM_BUILD_COMMIT?.trim() ?? "") ? { buildCommit: env.QM_BUILD_COMMIT!.trim() } : {}),
+    ...(env.QM_BUILD_TIME?.trim() && !Number.isNaN(Date.parse(env.QM_BUILD_TIME.trim()))
+      ? { buildTime: new Date(env.QM_BUILD_TIME.trim()).toISOString() }
+      : {}),
     ...(() => {
       const openAgents = openAgentsConfigFromEnv(env);
       return openAgents ? { openAgents } : {};

@@ -3319,6 +3319,14 @@ export function serverDeps(
     modelRoutes: built.modelRoutes,
     production: config.production,
     checkReadiness: built.checkReadiness,
+    ...(config.buildCommit || config.buildTime
+      ? {
+          buildInfo: {
+            ...(config.buildCommit ? { commit: config.buildCommit } : {}),
+            ...(config.buildTime ? { builtAt: config.buildTime } : {}),
+          },
+        }
+      : {}),
     ...(config.backgroundDeploymentId && config.backgroundWorkEnabled
       ? {
           deploymentControlSecret: config.deploymentControlSecret,

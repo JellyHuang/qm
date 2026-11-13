@@ -1,3 +1,4 @@
+import { buildInfoRoutes } from "./build-info.ts";
 import { bootTenant, inBootTenant } from "../../tenants/boot.ts";
 import { browserModelRoutes } from "./browser-model.ts";
 import { sandboxModelRoutes } from "./sandbox-model.ts";
@@ -120,6 +121,7 @@ function closedToNotebookOnly(routes: ReadonlyArray<Route<ApiCtx>>): Route<ApiCt
 
 export const apiRoutes: ReadonlyArray<Route<ApiCtx>> = [
   ...mattermostRoutes,
+  ...buildInfoRoutes,
   ...browserModelRoutes,
   ...browserUploadRoutes,
   ...sandboxModelRoutes,
