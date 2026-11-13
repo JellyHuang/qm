@@ -1,3 +1,4 @@
+import { setLogOutboundTools } from "./agent/diagnostics.ts";
 import { createOaClient } from "./integrations/openagents/client.ts";
 import { createOpenAgentsService, setOpenAgentsService, type OaThreadLink } from "./integrations/openagents/service.ts";
 import { isChatSurface, setPrimaryChatSurface } from "./surfaces/primary-chat.ts";
@@ -2647,6 +2648,7 @@ export function buildApp(
       })
     : undefined;
   setOpenAgentsService(openAgents);
+  setLogOutboundTools(config.logOutboundTools === true);
   const webhookDelivery = createDeliveryRelay(deliveries, {
     type: "webhook",
     send: webhookSender(config.signingSecret),

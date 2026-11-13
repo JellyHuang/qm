@@ -127,6 +127,8 @@ export interface Config extends SandboxSettings, DeploySettings {
   partnerChat?: { url: string; secret: string; label?: string };
   mattermost?: MattermostConfig;
   openAgents?: OpenAgentsConfig;
+  /** Diagnostic: log the tool names on every outbound model request (QM_LOG_OUTBOUND_TOOLS=1). */
+  logOutboundTools?: boolean;
   secretsBackend: "env" | "aws";
   secretsPrefix: string;
   apiBaseUrl?: string;
@@ -627,6 +629,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       });
       return mattermost ? { mattermost } : {};
     })(),
+    ...(env.QM_LOG_OUTBOUND_TOOLS === "1" ? { logOutboundTools: true } : {}),
     ...(() => {
       const openAgents = openAgentsConfigFromEnv(env);
       return openAgents ? { openAgents } : {};
