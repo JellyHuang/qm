@@ -1,3 +1,5 @@
+import { openAgentsTools } from "./agent-tools/openagents.ts";
+import { openAgentsService } from "../integrations/openagents/service.ts";
 import type { DocumentInput } from "../core/documents.ts";
 import type { TurnHandoff } from "./runtime-types.ts";
 import { type ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -152,6 +154,7 @@ export function createAgentTools(ref: ToolContextRef, opts?: AgentToolsOptions):
   const { createGoal, getGoal, updateGoal } = goalTools(kit);
   const { clientTools } = pageClientTools(kit);
   const { attach, finishSilently, context, runtime, withdrawApproval } = turnTools(kit);
+  const { openagents } = openAgentsTools(kit);
 
   const tools = [
     ...(!delegateWork ? [{ ...execute, handlesAbort: true }] : []),
@@ -192,6 +195,7 @@ export function createAgentTools(ref: ToolContextRef, opts?: AgentToolsOptions):
       : []),
     ...(controlTools || surfaceTools ? [guidance] : []),
     ...(surfaceTools ? [surface] : [attach]),
+    ...(surfaceTools && !opts?.readOnly && openAgentsService() ? [openagents] : []),
     finishSilently,
     withdrawApproval,
     { ...resourceTool("goal", { create: createGoal, get: getGoal, update: updateGoal }), handlesAbort: true },

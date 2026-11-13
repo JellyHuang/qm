@@ -1,3 +1,5 @@
+import { createOaClient } from "./integrations/openagents/client.ts";
+import { createOpenAgentsService, setOpenAgentsService, type OaThreadLink } from "./integrations/openagents/service.ts";
 import { isChatSurface, setPrimaryChatSurface } from "./surfaces/primary-chat.ts";
 import { onTenantLoad, perTenant } from "./tenants/cache.ts";
 import { loadTenantSettings, TENANT_SETTINGS_REFRESH_MS } from "./tenants/settings.ts";
@@ -2626,6 +2628,25 @@ export function buildApp(
         claimPrincipalDeliveries: mattermostOwnsDirectMessages(config),
       })
     : null;
+  const openAgents = config.openAgents
+    ? createOpenAgentsService({
+        cfg: config.openAgents,
+        client: createOaClient(config.openAgents),
+        threads: artifactMap<OaThreadLink>("openagents_threads"),
+        state: artifactMap<{ cursor?: string }>("openagents_state"),
+        seen: artifactMap<{ at: number }>("openagents_seen"),
+        leaderLease,
+        chat: () =>
+          mattermost
+            ? {
+                anchorForRun: (runId: string) => mattermost!.anchorForRun(runId),
+                deliver: (postId: string, text: string, key: string) => mattermost!.deliver(postId, text, key),
+              }
+            : undefined,
+        isOrgAdmin: async (principalId) => adminStatusFromGrants(await admin.listGrants(), principalId).isAdmin,
+      })
+    : undefined;
+  setOpenAgentsService(openAgents);
   const webhookDelivery = createDeliveryRelay(deliveries, {
     type: "webhook",
     send: webhookSender(config.signingSecret),
@@ -3050,6 +3071,7 @@ export function buildApp(
       webTranscriptSweeper.start();
       partnerChatDelivery?.start();
       mattermost?.start();
+      openAgents?.start();
       webhookDelivery.start();
     };
     if (backgroundStopping)
@@ -3088,6 +3110,7 @@ export function buildApp(
       webTranscriptSweeper.stop(),
       partnerChatDelivery?.stop(),
       mattermost?.stop(),
+      openAgents?.stop(),
       preemptionSweeper.stop(),
       worker.stopClaims(),
     ];

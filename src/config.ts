@@ -1,4 +1,5 @@
 import { mattermostConfigFromEnv, type MattermostConfig } from "./surfaces/mattermost/config.ts";
+import { openAgentsConfigFromEnv, type OpenAgentsConfig } from "./integrations/openagents/config.ts";
 import { isClaudeSubscriptionToken } from "./model/claude-subscription.ts";
 import { isDnsLabel } from "../plugins/chassis/src/dns-label.ts";
 import {
@@ -125,6 +126,7 @@ export interface Config extends SandboxSettings, DeploySettings {
   slackEventsPort?: number;
   partnerChat?: { url: string; secret: string; label?: string };
   mattermost?: MattermostConfig;
+  openAgents?: OpenAgentsConfig;
   secretsBackend: "env" | "aws";
   secretsPrefix: string;
   apiBaseUrl?: string;
@@ -624,6 +626,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         ...(env.CORE_SIGNING_SECRET ? { signingSecret: env.CORE_SIGNING_SECRET } : {}),
       });
       return mattermost ? { mattermost } : {};
+    })(),
+    ...(() => {
+      const openAgents = openAgentsConfigFromEnv(env);
+      return openAgents ? { openAgents } : {};
     })(),
     secretsBackend: secretsBackendEnvStrict(env.SECRETS_BACKEND, env.SECRETS_PREFIX ?? ""),
     secretsPrefix: env.SECRETS_PREFIX ?? "",

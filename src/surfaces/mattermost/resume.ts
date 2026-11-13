@@ -35,6 +35,10 @@ export function createSignInResume(deps: {
       if (runs.size >= RUN_TRACK_MAX) runs.delete(runs.keys().next().value!);
       runs.set(runId, postId);
     },
+    /** The Mattermost post a still-tracked run was started from. */
+    postFor(runId: string): string | undefined {
+      return runs.get(runId);
+    },
     async signInRequired(ev: { serverId: string; principalId: string; runId?: string }): Promise<void> {
       const postId = ev.runId ? runs.get(ev.runId) : undefined;
       if (!postId) return;

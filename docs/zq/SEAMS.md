@@ -91,6 +91,21 @@ Tests: `test/mcp-oauth-user.test.ts`, `test/mcp-admin.test.ts`, `test/keychain-c
 | `src/config.ts`                                | `MCP_MAX_TOOLS` (1 to 5000; unset keeps upstream's 64)                                                             | Servers with more than 64 tools were silently cut off                                                       |
 | `src/mcp/mcp-tool-service.ts`, `src/wiring.ts` | The cap applies to the shared listing, the per-user sign-in listing and the admin probe. Catalog mode is unchanged | MCP tools reach the model deferred (`tool_search` / `mcp_call`), so a larger list doesn't grow every prompt |
 
+## Feature commit: "qm-oa-connector: QM as the OpenAgents master"
+
+The module lives in `src/integrations/openagents/`; see its README.
+
+| File                                                                    | Change                                                                                                                                                                                       | Why                                                            |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `src/integrations/openagents/*` (new)                                   | Config, REST client, connector service (tool actions, inbound poll loop, mapping store)                                                                                                      |                                                                |
+| `src/agent/agent-tools/openagents.ts` (new), `src/agent/agent-tools.ts` | The `openagents` agent tool. It's offered on chat-surface turns that aren't read-only, and only when the service is configured                                                               | QM delegates to and coordinates the workers                    |
+| `src/tools/primitives.ts`                                               | Optional `ToolContext.callOpenAgents`, which passes the turn's `runId` and actor to the service                                                                                              | Lets the tool map a thread to the turn's conversation and user |
+| `src/config.ts`, `src/wiring.ts`                                        | `OA_*` env goes into `config.openAgents`. Wiring creates and starts/stops the service and bridges it to Mattermost. The service is also set as a process-wide handle, like `primary-chat.ts` |                                                                |
+| `src/surfaces/mattermost/inbound.ts`, `index.ts`, `resume.ts`           | `anchorForRun(runId)` and `deliver(postId, text, key)`. These generalize the sign-in resume into `inject()`                                                                                  | OA messages continue the original conversation as its author   |
+| `test/openagents-connector.test.ts` (new)                               | Unit tests                                                                                                                                                                                   |                                                                |
+
+New tables: `openagents_threads`, `openagents_state`, `openagents_seen`. With no `OA_*` env set, nothing changes.
+
 ## Upgrading to a new upstream release
 
 1. Back up QM (`systemctl start qm-backup`).

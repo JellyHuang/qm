@@ -252,6 +252,14 @@ export function createMattermost(deps: MattermostDeps) {
     signInRequired(ev: { serverId: string; principalId: string; runId?: string }): void {
       void resumer.signInRequired(ev).catch(swallowAs("mattermost: remember sign-in resume", undefined));
     },
+    /** The Mattermost post a run in this process was started from (OpenAgents delegation anchor). */
+    anchorForRun(runId: string): string | undefined {
+      return resumer.postFor(runId);
+    },
+    /** Continue `postId`'s conversation as its author, with `text` as a system note. */
+    async deliver(postId: string, text: string, key: string): Promise<void> {
+      await inbound.inject(postId, text, key);
+    },
     /** Core: the person finished an OAuth connect; continue any Mattermost request waiting on it. */
     async connectorConnected(provider: string, principalId: string): Promise<void> {
       await resumer.connected(provider, principalId);

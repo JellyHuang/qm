@@ -389,6 +389,19 @@ export function createInbound(deps: {
     return false;
   }
 
+  async function inject(postId: string, note: (authorName: string) => string, key: string): Promise<void> {
+    const post = await rt.client.post(postId);
+    const view = await rt.channel(post.channel_id);
+    const author = await rt.user(post.user_id);
+    if (author.is_bot || author.delete_at) return;
+    const actor = await rt.actorFor(author);
+    if (!actor) return;
+    await submit(
+      { post, kind: view.kind, view, author, mentioned: true, text: note(displayNameOf(author)), resumeKey: key },
+      actor,
+    );
+  }
+
   async function onPosted(ev: WsEvent, replay = false): Promise<void> {
     const parsed = postedEventData.safeParse(ev.data);
     if (!parsed.success) return;
@@ -484,17 +497,16 @@ export function createInbound(deps: {
     replay: (ev: WsEvent) => onPosted(ev, true),
     /** Continue the request in `postId`'s conversation after its author connected `serverId`. */
     async resume(postId: string, serverId: string): Promise<void> {
-      const post = await rt.client.post(postId);
-      const view = await rt.channel(post.channel_id);
-      const author = await rt.user(post.user_id);
-      if (author.is_bot || author.delete_at) return;
-      const actor = await rt.actorFor(author);
-      if (!actor) return;
-      const text = `[QM system note, not typed by the user] ${displayNameOf(author)} has just connected their own "${serverId}" account. Continue the request in this conversation that was waiting for that sign-in, using their connection.`;
-      await submit(
-        { post, kind: view.kind, view, author, mentioned: true, text, resumeKey: `resume:${serverId}:${Date.now()}` },
-        actor,
+      await inject(
+        postId,
+        (name) =>
+          `[QM system note, not typed by the user] ${name} has just connected their own "${serverId}" account. Continue the request in this conversation that was waiting for that sign-in, using their connection.`,
+        `resume:${serverId}:${Date.now()}`,
       );
+    },
+    /** Start a turn in `postId`'s conversation, as that post's author, with a system note as its text. */
+    async inject(postId: string, note: string, key: string): Promise<void> {
+      await inject(postId, () => note, key);
     },
     submit,
     reply,

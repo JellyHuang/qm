@@ -1,3 +1,4 @@
+import { openAgentsService } from "../integrations/openagents/service.ts";
 import { trialCronScript, type CronScriptTrial } from "../cron/script.ts";
 import type { AdminToolAccess } from "./admin.ts";
 import type { SelfApiCall } from "./self-api.ts";
@@ -251,6 +252,7 @@ export interface ToolContext extends SurfaceToolDeps {
   history(q: string, limit?: number): Promise<string[]>;
   historyOpen(seq: number): Promise<string | null>;
   callMcpTool(name: string, args: Record<string, unknown>, approval?: string): Promise<string>;
+  callOpenAgents?(args: Record<string, unknown>): Promise<string>;
   mcpToolNeedsApproval(name: string, args: Record<string, unknown>): Promise<boolean>;
   awaitClientResult(
     callId: string,
@@ -1182,6 +1184,15 @@ export function createToolContext(deps: ToolContextDeps): ToolContext {
     async callMcpTool(name: string, args: Record<string, unknown>, approval?: string): Promise<string> {
       if (!deps.mcp) throw new Error("no MCP connectors are configured");
       return deps.mcp.call(name, args, deps.createdBy, approval, deps.audienceScopeId, deps.actAsActor, deps.runId);
+    },
+
+    async callOpenAgents(args: Record<string, unknown>): Promise<string> {
+      const service = openAgentsService();
+      if (!service) throw new Error("OpenAgents is not configured on this deployment");
+      return service.call(args, {
+        ...(runId !== undefined ? { runId } : {}),
+        ...(deps.createdBy ? { principalId: deps.createdBy } : {}),
+      });
     },
 
     async mcpToolNeedsApproval(name: string, args: Record<string, unknown>): Promise<boolean> {
