@@ -115,13 +115,19 @@ export function createOpenAgentsService(deps: {
     if (action === "agents") {
       if (!cfg.workers.length) return "No worker agents are configured for QM (OA_WORKERS).";
       // Agents only see agents they were granted, so status may be unknown; routing does not need it.
-      const seen = new Map(
-        (await client.agents().catch(() => [])).map((a) => [a.address.replace(/^openagents:/, ""), a] as const),
-      );
+      let failure = "";
+      const listed = await client.agents().catch((e) => {
+        failure = errMessage(e);
+        return [];
+      });
+      const seen = new Map(listed.map((a) => [a.address.replace(/^openagents:/, ""), a] as const));
+      const hidden = failure
+        ? `status unavailable (${failure})`
+        : "not visible to QM (absent from the discover list; likely not granted to the QM agent)";
       return cfg.workers
         .map((w) => {
           const a = seen.get(w);
-          return `- ${w}${a ? ` (${a.agent_type ?? "agent"}): ${a.status ?? "unknown"}${a.presence_state ? `, ${a.presence_state}` : ""}` : ": status not visible to QM"}`;
+          return `- ${w}${a ? ` (${a.agent_type ?? "agent"}): ${a.status ?? "unknown"}${a.presence_state ? `, ${a.presence_state}` : ""}` : `: ${hidden}`}`;
         })
         .join("\n");
     }

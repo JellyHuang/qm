@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { DurableMap } from "../src/persistence/durable-map.ts";
 import { createOpenAgentsService, type OaThreadLink } from "../src/integrations/openagents/service.ts";
-import type { OaClient, OaEvent } from "../src/integrations/openagents/client.ts";
+import { OaError, type OaClient, type OaEvent } from "../src/integrations/openagents/client.ts";
 import { openAgentsConfigFromEnv } from "../src/integrations/openagents/config.ts";
 
 function memoryMap<T>(): DurableMap<T> {
@@ -31,7 +31,7 @@ const CFG = openAgentsConfigFromEnv({
   OA_WORKERS: "qm-dev-worker,op-dev-worker",
 })!;
 
-function fakeClient() {
+function fakeClient(agents?: () => Promise<Array<{ address: string; status?: string }>>) {
   const posted: Array<{ channel: string; content: string; targets: string[] }> = [];
   let inbox: OaEvent[] = [];
   let n = 0;
@@ -40,12 +40,12 @@ function fakeClient() {
     async join() {},
     async heartbeat() {},
     async leave() {},
-    async agents() {
-      return [
+    agents:
+      agents ??
+      (async () => [
         { address: "openagents:qm-master" },
         { address: "openagents:qm-dev-worker", status: "online", agent_type: "claude" },
-      ];
-    },
+      ]),
     async createThread() {
       return `channel-${++n}`;
     },
@@ -69,8 +69,8 @@ function fakeClient() {
   return { client: client as unknown as OaClient, posted, setInbox: (e: OaEvent[]) => (inbox = e) };
 }
 
-function setup(opts: { admin?: boolean; anchor?: string } = {}) {
-  const fake = fakeClient();
+function setup(opts: { admin?: boolean; anchor?: string; agents?: Parameters<typeof fakeClient>[0] } = {}) {
+  const fake = fakeClient(opts.agents);
   const delivered: Array<{ postId: string; text: string; key: string }> = [];
   const threads = memoryMap<OaThreadLink>();
   const svc = createOpenAgentsService({
@@ -130,6 +130,27 @@ test("delegation is refused outside Mattermost, for non-admins, and for unknown 
   );
   const b = setup({ admin: false });
   await assert.rejects(b.svc.call({ action: "agents" }, { principalId: "x@igg.com" }), /limited to QM org admins/);
+});
+
+test("agents distinguishes a failed discover call from workers that are simply not listed", async () => {
+  const ctx = { principalId: "x@igg.com" };
+  const failed = setup({
+    agents: async () => {
+      throw new OaError("OpenAgents GET /v1/discover failed (403): forbidden", 403);
+    },
+  });
+  const failedOut = await failed.svc.call({ action: "agents" }, ctx);
+  assert.match(failedOut, /- qm-dev-worker: status unavailable \(.*403.*forbidden/);
+  assert.match(failedOut, /- op-dev-worker: status unavailable/);
+
+  const empty = setup({ agents: async () => [{ address: "openagents:qm-master" }] });
+  const emptyOut = await empty.svc.call({ action: "agents" }, ctx);
+  assert.match(emptyOut, /- qm-dev-worker: not visible to QM/);
+  assert.doesNotMatch(emptyOut, /unavailable|403/);
+
+  const found = await setup().svc.call({ action: "agents" }, ctx);
+  assert.match(found, /- qm-dev-worker \(claude\): online/);
+  assert.match(found, /- op-dev-worker: not visible to QM/);
 });
 
 test("threads stay isolated per QM user", async () => {
