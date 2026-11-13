@@ -195,7 +195,8 @@ export function createAgentTools(ref: ToolContextRef, opts?: AgentToolsOptions):
       : []),
     ...(controlTools || surfaceTools ? [guidance] : []),
     ...(surfaceTools ? [surface] : [attach]),
-    ...(surfaceTools && !opts?.readOnly && openAgentsService() ? [openagents] : []),
+    // Offered on any non-read-only turn; the service itself only accepts turns started from Mattermost.
+    ...(!opts?.readOnly && openAgentsService() ? [openagents] : []),
     finishSilently,
     withdrawApproval,
     { ...resourceTool("goal", { create: createGoal, get: getGoal, update: updateGoal }), handlesAbort: true },

@@ -4984,3 +4984,18 @@ test("a connector note over its budget shows every server, fills shorter tool li
   assert.ok(note.length <= 2_000 * 4 + 400);
   assert.equal(connectorToolsNote([...small, ...big]), note);
 });
+
+test("the openagents tool is offered on chat turns with or without surface tools once the service is set, never read-only", async () => {
+  const { setOpenAgentsService } = await import("../src/integrations/openagents/service.ts");
+  const has = (opts: Parameters<typeof createAgentTools>[1]) =>
+    createAgentTools({ current: fakeToolContext() }, opts).some((tool) => tool.name === "openagents");
+  assert.equal(has({}), false, "not configured");
+  setOpenAgentsService({ call: async () => "ok" } as never);
+  try {
+    assert.equal(has({}), true, "a Mattermost DM turn without surface tools");
+    assert.equal(has({ surfaceTools: true }), true);
+    assert.equal(has({ readOnly: true }), false);
+  } finally {
+    setOpenAgentsService(undefined);
+  }
+});
