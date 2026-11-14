@@ -1,3 +1,4 @@
+import type { ZqIdentityAdmin } from "../zq/runtime.ts";
 import type { PersonaHandover } from "../personas/persona-handover.ts";
 import type { PersonaService } from "../personas/persona-service.ts";
 import type { TeamStore } from "../teams/teams.ts";
@@ -682,6 +683,7 @@ export interface AppDeps {
   modelCredentials?: ModelCredentialStore;
   userModelCredentials?: UserModelCredentialStore;
   mcpServers?: McpServerStore;
+  zqIdentity?: ZqIdentityAdmin;
   mcpToolService?: McpToolService;
   modelCredentialFetch?: typeof fetch;
   modelRegistry?: ModelOverlayStore;

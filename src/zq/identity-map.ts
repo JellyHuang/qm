@@ -31,6 +31,7 @@ export interface ZqIdentityMap {
   byMattermost(mmUserId: string): Promise<ZqIdentityLink | undefined>;
   byOpenProject(opUserId: string): Promise<ZqIdentityLink | undefined>;
   pending(): Promise<ZqIdentityLink[]>;
+  list(): Promise<ZqIdentityLink[]>;
   unlink(mmUserId: string): Promise<void>;
 }
 
@@ -79,6 +80,10 @@ export function createZqIdentityMap(opts: {
     async byOpenProject(opUserId) {
       if (!opts.enabled) return undefined;
       return (await confirmed()).find((l) => l.opUserId === opUserId);
+    },
+    async list() {
+      if (!opts.enabled) return [];
+      return (await opts.map.all()).sort((a, b) => a.mmUserId.localeCompare(b.mmUserId));
     },
     async pending() {
       if (!opts.enabled) return [];

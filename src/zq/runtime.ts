@@ -2,7 +2,7 @@ import type { DurableMap } from "../persistence/durable-map.ts";
 import type { LeaderLease } from "../persistence/leader-lease.ts";
 import type { Sweeper } from "../util/sweeper.ts";
 import type { ZqConfig } from "./config.ts";
-import { createZqIdentityMap, type ZqIdentityLink } from "./identity-map.ts";
+import { createZqIdentityMap, type ZqIdentityLink, type ZqIdentityMap } from "./identity-map.ts";
 import { createMcpOpReader, type OpCall } from "./op-reader.ts";
 import { createZqReminderStore, type ZqReminder } from "./reminders.ts";
 import { createZqReports, type ReportInput, type ZqReportDraft } from "./reports.ts";
@@ -30,7 +30,10 @@ export interface ZqChat {
   principalOf(mmUserId: string): Promise<string | undefined>;
 }
 
+export type ZqIdentityAdmin = Pick<ZqIdentityMap, "enabled" | "list" | "confirm" | "unlink">;
+
 export interface ZqRuntime {
+  identityAdmin: ZqIdentityAdmin;
   start(): void;
   stop(): Promise<void>;
   decide(op: "report" | "link", id: string, approve: boolean, clickerMmUserId: string): Promise<string>;
@@ -108,6 +111,7 @@ export function createZqRuntime(deps: {
   );
 
   return {
+    identityAdmin: identity,
     start() {
       if (config.scanner.enabled || config.reports.enabled) sweeper.start();
     },

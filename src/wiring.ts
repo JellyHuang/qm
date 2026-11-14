@@ -1,4 +1,4 @@
-import { createZqRuntime, type ZqRuntime } from "./zq/runtime.ts";
+import { createZqRuntime, type ZqIdentityAdmin, type ZqRuntime } from "./zq/runtime.ts";
 import { createOaClient } from "./integrations/openagents/client.ts";
 import { createOpenAgentsService, setOpenAgentsService, type OaThreadLink } from "./integrations/openagents/service.ts";
 import { isChatSurface, setPrimaryChatSurface } from "./surfaces/primary-chat.ts";
@@ -507,6 +507,7 @@ export interface BuiltApp {
   customProviders: CustomProviderStore;
   refreshCustomProviders: () => Promise<void>;
   mcpServers: McpServerStore;
+  zqIdentity?: ZqIdentityAdmin;
   mcpToolService: McpToolService;
   memoryRegistry: MemoryRegistryStore;
   acl: AclStore;
@@ -3257,6 +3258,7 @@ export function buildApp(
     customProviders,
     refreshCustomProviders,
     mcpServers,
+    ...(zq ? { zqIdentity: zq.identityAdmin } : {}),
     mcpToolService,
     memoryRegistry,
     acl,
@@ -3382,6 +3384,7 @@ export function serverDeps(
     customProviders: built.customProviders,
     refreshCustomProviders: built.refreshCustomProviders,
     mcpServers: built.mcpServers,
+    ...(built.zqIdentity ? { zqIdentity: built.zqIdentity } : {}),
     mcpToolService: built.mcpToolService,
     memoryRegistry: built.memoryRegistry,
     ...(config.brandingDefault ? { brandingDefault: config.brandingDefault } : {}),

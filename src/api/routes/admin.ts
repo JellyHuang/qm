@@ -53,6 +53,7 @@ import {
 } from "./admin/slack-installation.ts";
 import { deleteModelProvider, getModelProviders, putModelProvider } from "./admin/model-providers.ts";
 import { deleteCustomProvider, getCustomProviders, putCustomProvider } from "./admin/custom-providers.ts";
+import { confirmIdentityLink, deleteIdentityLink, getIdentityLinks } from "./admin/zq-identity.ts";
 import { deleteMcpServer, getMcpServers, putMcpServer } from "./admin/mcp-servers.ts";
 import {
   deleteMemoryBinding,
@@ -128,6 +129,21 @@ const routes: Route<ApiCtx>[] = [
       handle: putMcpServer,
     },
     { method: "DELETE", path: "/v1/admin/mcp-servers/:id", auth: "either", handle: deleteMcpServer },
+    { method: "GET", path: "/v1/admin/zq/identity-links", auth: "either", handle: getIdentityLinks },
+    {
+      method: "PUT",
+      path: "/v1/admin/zq/identity-links/:mmUserId",
+      auth: "either",
+      admin: { agent: { portalOnly: MCP_SERVERS } },
+      handle: confirmIdentityLink,
+    },
+    {
+      method: "DELETE",
+      path: "/v1/admin/zq/identity-links/:mmUserId",
+      auth: "either",
+      admin: { agent: { portalOnly: MCP_SERVERS } },
+      handle: deleteIdentityLink,
+    },
     { method: "DELETE", path: "/v1/admin/model-providers/:provider", auth: "either", handle: deleteModelProvider },
     { method: "POST", path: "/v1/admin/model-registry/lookup", auth: "either", handle: lookupRegistryModel },
     { method: "POST", path: "/v1/admin/model-registry/:model/enable", auth: "either", handle: enableBuiltinModel },

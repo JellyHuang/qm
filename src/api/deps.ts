@@ -1,3 +1,4 @@
+import type { ZqIdentityAdmin } from "../zq/runtime.ts";
 import type { ServerResponse } from "node:http";
 import type { WebEvents } from "./routes/web-events.ts";
 import type { WebShell } from "../web/shell.ts";
@@ -158,6 +159,7 @@ export interface ServerDeps {
   modelCredentials?: ModelCredentialStore;
   userModelCredentials?: UserModelCredentialStore;
   mcpServers?: McpServerStore;
+  zqIdentity?: ZqIdentityAdmin;
   mcpToolService?: McpToolService;
   memoryRegistry?: MemoryRegistryStore;
   modelCredentialFetch?: typeof fetch;
