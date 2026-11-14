@@ -18,6 +18,7 @@ import {
   registerPublicClient,
   type DiscoveredOAuth,
 } from "../../../mcp/oauth-discovery.ts";
+import { McpContractError, parseToolContract } from "../../../mcp/tool-contract.ts";
 import { errMessage } from "../../../util/errors.ts";
 import { sendJson } from "../../http.ts";
 import type { ApiCtx } from "../route.ts";
@@ -119,6 +120,14 @@ export async function putMcpServer(ctx: ApiCtx): Promise<void> {
   if (oauthUser && PROVIDERS[id]) {
     return sendJson(ctx.res, 400, { error: "bad_request", message: `id ${id} is reserved by a built-in connector` });
   }
+  const parsedContract = parseToolContract(b.toolContract);
+  if (parsedContract === "invalid") {
+    return sendJson(ctx.res, 400, {
+      error: "bad_request",
+      message: "toolContract must be { required?: string[], forbidden?: string[] } with disjoint tool names",
+    });
+  }
+  const toolContract = b.toolContract === undefined ? existing?.toolContract : parsedContract;
   const credentialScope = oauthUser ? "per-user" : (b.credentialScope ?? existing?.credentialScope ?? "shared");
   if (credentialScope !== "shared" && credentialScope !== "per-user") {
     return sendJson(ctx.res, 400, { error: "bad_request", message: "credentialScope must be shared or per-user" });
@@ -220,6 +229,7 @@ export async function putMcpServer(ctx: ApiCtx): Promise<void> {
       : {}),
     ...(approval === "annotations" ? {} : { approval }),
     ...(catalog ? { catalog } : {}),
+    ...(toolContract ? { toolContract } : {}),
     ...(attestActor ? { attestActor } : {}),
     ...(attestAudience === "any" ? { attestAudience } : {}),
     readOnly: (b.readOnly ?? existing?.readOnly) === true,
@@ -261,6 +271,9 @@ export async function putMcpServer(ctx: ApiCtx): Promise<void> {
       toolNames = listing.tools.map((t) => t.name);
       if (listing.about) server.about = listing.about;
     } catch (e) {
+      if (e instanceof McpContractError) {
+        return sendJson(ctx.res, 400, { error: "contract_violation", message: e.message, ...e.violation });
+      }
       return sendJson(ctx.res, 400, {
         error: "unreachable",
         message: `tools/list against ${parsed.host} failed: ${errMessage(e)}`,

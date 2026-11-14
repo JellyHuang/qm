@@ -61,6 +61,14 @@ URLs. Pass `clientId` (and the authorize/token URLs if discovery fails) only for
 servers without dynamic registration. People sign in on first use through the
 `<id>_sign_in` tool.
 
+`toolContract` (`{ "required": [...], "forbidden": [...] }`, exact tool names) pins what a
+server must and must not expose. A server whose `tools/list` lacks a required tool or
+exposes a forbidden one fails loudly: an admin save through the probe returns
+`400 contract_violation` with the `missing` and `forbidden` names; for `oauth-user` servers
+the first `<id>_sign_in` raises the error instead of storing tools; at every refresh the
+violating server's tools are withdrawn and the failure is audited and logged. Omit the field on
+update to keep it; send `null` to clear it.
+
 `readOnly: true` marks every tool on the server as safe for read-only turns. Without
 it, only tools annotated `readOnlyHint: true` are.
 

@@ -8,6 +8,7 @@
 import type { DurableMap } from "../persistence/durable-map.ts";
 import { tenantListeners } from "../tenants/cache.ts";
 import type { AttestAudience } from "../directory/person.ts";
+import type { McpToolContract } from "./tool-contract.ts";
 
 export type McpServerAuthMode = "none" | "bearer" | "client-credentials" | "oauth-user";
 
@@ -36,6 +37,7 @@ export interface McpServer {
   about?: string;
   approval?: McpApprovalPolicy;
   catalog?: boolean;
+  toolContract?: McpToolContract;
   attestActor?: boolean;
   attestAudience?: AttestAudience;
   readOnly: boolean;

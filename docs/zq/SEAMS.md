@@ -130,3 +130,14 @@ New tables: `openagents_threads`, `openagents_state`, `openagents_seen`. With no
    - `@qm` in a channel and in a thread;
    - check that an approval button works.
 7. Rollback: run `QM_UPSTREAM=1 qm up` to go back to the published upstream images. No schema migration has to be undone.
+
+## Feature commit: "MCP tool contracts"
+
+| File                                                                         | Change                                                                                                       | Why                                                                                |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `src/mcp/tool-contract.ts` (new)                                             | `McpToolContract`, `contractViolation`, `assertToolContract`, `parseToolContract`                            | Pure check of `tools/list` against required and forbidden tool names               |
+| `src/mcp/mcp-server-store.ts`                                                | Optional `toolContract` field on `McpServer`                                                                 | Stored in the existing `mcp_servers` map as JSON; servers without it are unchanged |
+| `src/mcp/mcp-tool-service.ts`, `src/api/routes/admin/mcp-servers.ts`         | The contract is enforced at probe, at `oauth-user` sign-in and at refresh; admin PUT validates and stores it | A server that drops a required tool or exposes a forbidden one fails loudly        |
+| `test/mcp-tool-contract.test.ts`, `test/fixtures/openproject-mcp-tools.json` | Tests with a mock listing                                                                                    |                                                                                    |
+
+See `docs/zq/openproject-mcp.md` for registration.

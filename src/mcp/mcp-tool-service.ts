@@ -15,6 +15,7 @@ import {
 } from "./mcp-client.ts";
 import type { McpServer, McpServerStore } from "./mcp-server-store.ts";
 import { attestsInAudience, attestedPerson, OutsideAudience } from "../directory/person.ts";
+import { assertToolContract, McpContractError } from "./tool-contract.ts";
 import type { AddressFetch } from "../util/network.ts";
 import type { ScopeId } from "../types.ts";
 
@@ -360,8 +361,10 @@ export function createMcpToolService(opts: {
         });
         tools = server.tools ?? [];
         if (!tools.length) return next;
+        assertToolContract(server.name, tools, server.toolContract);
       } else {
         const listing = await clientFor(server).listTools({ headers: headersFor(server, undefined), ...listCap });
+        assertToolContract(server.name, listing.tools, server.toolContract);
         tools = listing.tools;
         about = listing.about ?? about;
       }
@@ -381,6 +384,7 @@ export function createMcpToolService(opts: {
       record("list", server.id, `ok tools=${tools.length}`);
     } catch (e) {
       record("list", server.id, `error: ${errMessage(e)}`);
+      if (e instanceof McpContractError) reportFailureAs("mcp: tool contract", undefined)(e);
     }
     return next;
   }
@@ -481,6 +485,7 @@ export function createMcpToolService(opts: {
         const client = await callerClient(server, principalId);
         if (def.signIn) {
           const { tools, about } = await client.listTools(listCap);
+          assertToolContract(server.name, tools, server.toolContract);
           const current = await opts.servers.get(server.id);
           if (current) await opts.servers.put({ ...current, tools, about: about ?? current.about });
           await refresh();
@@ -518,10 +523,12 @@ export function createMcpToolService(opts: {
     },
     refresh,
     async probe(server, principalId) {
-      return createMcpClient({ url: server.url, auth: authOf(server), fetch: opts.fetch }).listTools({
+      const listing = await createMcpClient({ url: server.url, auth: authOf(server), fetch: opts.fetch }).listTools({
         headers: headersFor(server, principalId),
         ...(server.catalog ? { maxTools: CATALOG_MAX_TOOLS } : listCap),
       });
+      assertToolContract(server.name, listing.tools, server.toolContract);
+      return listing;
     },
     close() {
       closed = true;
