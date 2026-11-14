@@ -15,16 +15,20 @@ PUT /v1/admin/mcp-servers/openproject
   "clientId": "<OpenProject OAuth application uid>",
   "clientSecret": "<OpenProject OAuth application secret>",
   "oauthScopes": ["api_v3"],
-  "toolContract": {
-    "required": ["list_projects", "list_work_packages", "get_work_package", "update_work_package", "add_comment"],
-    "forbidden": ["delete_work_package", "bulk_update_work_packages"]
-  }
+  "toolContract": <contents of the contract below>
 }
 ```
 
 The internal CA of the OpenProject host must be trusted by core (`NODE_EXTRA_CA_CERTS`, see the deployment config). Each person signs in on first use through the `openproject_sign_in` tool. QM then acts with that person's own token, so OpenProject's audit log shows the real actor.
 
-The tool names above are provisional until the OpenProject side publishes its contract; change `required` and `forbidden` to match it. Registering with the contract is what turns a silent server change into a loud failure.
+The contract follows OpenProject contract v0.1 (`test/fixtures/openproject-tool-contract.json` holds the exact lists):
+
+- Required reads: `get_current_user`, `list_projects`, `get_project`, `list_types`, `get_type`, `list_statuses`, `get_status`, `get_project_work_package_context`, `list_work_packages`, `search_work_packages`, `get_work_package`, `get_work_packages`, `get_work_package_activities`, `get_work_package_relations`, `list_project_memberships`, `list_roles`, `list_meetings`, `get_meeting`, `list_meeting_agenda_items`, `list_meeting_outcomes`, `list_meeting_sections`, `get_job_status`.
+- Required writes: `create_work_package`, `create_subtask`, `update_work_package`, `add_work_package_comment`, `create_work_package_relation`, `create_meeting`, `update_meeting`, `create_meeting_agenda_item`, `update_meeting_agenda_item`, `create_meeting_outcome`, `update_meeting_outcome`, `create_meeting_section`. Writes need `confirm=true` and the person's own OAuth; the shared token is read-only. Keep the default `approval: annotations` so every write still gets an approval card.
+- Forbidden: `delete_*` (a trailing `*` matches any tool name with that prefix), `bulk_update_work_packages`, `cancel_recurring_meeting_occurrence`.
+- The proposed `zq_*` tools are not in `required` until they exist.
+
+Registering with the contract is what turns a silent server change into a loud failure.
 
 ## What fails and how
 
@@ -36,4 +40,12 @@ The tool names above are provisional until the OpenProject side publishes its co
 
 ## Tests
 
-`test/mcp-tool-contract.test.ts` runs against a mock MCP server that replays `test/fixtures/openproject-mcp-tools.json`, a hand-written listing shaped like the OpenProject server. It uses no real OpenProject, no real tokens and performs no writes.
+`test/mcp-tool-contract.test.ts` runs against a mock MCP server that replays `test/fixtures/openproject-mcp-tools.json`, a hand-written listing with the 34 required tools of contract v0.1. It uses no real OpenProject, no real tokens and performs no writes.
+
+## Follow-up rules and identity (`src/zq/`)
+
+- Status keys are `<family>.<suffix>` (`pm`, `fm`, `dv`, `qa`, `mt`) plus `new`. `DEFAULT_FOLLOW_UP_POLICY` classifies each into open, active, blocked (`*.suspended`) or closed. The sets are not the transition graph.
+- OpenProject has no status-changed time. `latestStatusChangeAt` derives it from the latest `get_work_package_activities` entry into the current status.
+- Community OpenProject does not enforce exit checks, so `exitBlockers` lists the empty custom fields (by name, resolved at runtime, never by id) that must be filled before QM proposes a transition such as `fm.qa` to `fm.formal`.
+- `get_current_user` returns id, name and login but no email, and work package summaries carry only the assignee's display name. The identity map therefore records a pending link on first OpenProject sign-in, which an admin or the person confirms; only confirmed links resolve. Email is an optional hint.
+- Meeting follow-up is done by scanning `list_meetings`; webhooks are not a source of truth.

@@ -155,7 +155,7 @@ Everything here is additive and unused by the running system until a later chang
 
 New durable-map tables, created on first use like the Mattermost ones (`id TEXT` key, `json JSONB` value):
 
-- `zq_identity_map`, key `mmUserId`: `{ mmUserId, opUserId, opLogin, email, source: "email-match" | "admin", linkedAt, linkedBy }`. Example (invented): `mm1 → { "opUserId": "42", "opLogin": "alice", "email": "alice@example.com", "source": "admin", "linkedAt": 1763000000000, "linkedBy": "internal:admin" }`.
-- `zq_reminders`, key = dedupe key such as `7:stale:0`: `{ id, kind: "remind-stale" | "remind-overdue" | "escalate-blocked", workPackageId, assigneeOpUserId?, reason, status: "pending" | "sent" | "cancelled", dueAt, createdAt, sentAt? }`.
+- `zq_identity_map`, key `mmUserId`: `{ mmUserId, opUserId, opLogin, opName?, emailHint?, source: "signin" | "admin", status: "pending" | "confirmed", proposedAt, proposedBy, confirmedAt?, confirmedBy? }`. Example (invented): `mm1 → { "opUserId": "42", "opLogin": "alice", "opName": "Alice A", "source": "signin", "status": "confirmed", "proposedAt": 1763000000000, "proposedBy": "internal:alice", "confirmedAt": 1763000100000, "confirmedBy": "internal:admin" }`. Lookups return only confirmed rows. This replaces the shape of the previous commit, which nothing wrote.
+- `zq_reminders`, key = dedupe key such as `7:stale:0`: `{ id, kind: "remind-stale" | "remind-overdue" | "escalate-blocked", workPackageId, assigneeOpUserId?, assigneeName?, reason, status: "pending" | "sent" | "cancelled", dueAt, createdAt, sentAt? }`.
 
 Rollout: nothing writes to either table yet, so there is nothing to migrate or back-fill and rollback is a no-op.

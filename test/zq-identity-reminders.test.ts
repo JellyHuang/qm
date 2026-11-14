@@ -1,18 +1,18 @@
 import { tenantTest as test } from "./support/tenant-test.ts";
 import assert from "node:assert/strict";
 import { zqConfigFromEnv } from "../src/zq/config.ts";
-import { createZqIdentityMap, matchByEmail, type ZqIdentityLink } from "../src/zq/identity-map.ts";
+import { createZqIdentityMap, hintByEmail, type ZqIdentityLink } from "../src/zq/identity-map.ts";
 import { createZqReminderStore, type ZqReminder } from "../src/zq/reminders.ts";
 import type { FollowUpAction } from "../src/zq/follow-up-rules.ts";
 import { testMap } from "./support/test-database.ts";
 
-const LINK = {
+const PROPOSAL = {
   mmUserId: "mm1",
   opUserId: "42",
   opLogin: "alice",
-  email: "alice@example.com",
-  source: "admin" as const,
-  linkedBy: "internal:admin",
+  opName: "Alice A",
+  source: "signin" as const,
+  proposedBy: "internal:alice",
 };
 
 test("identity mapping is off unless ZQ_IDENTITY_MAP=1", async () => {
@@ -20,35 +20,60 @@ test("identity mapping is off unless ZQ_IDENTITY_MAP=1", async () => {
   assert.equal(zqConfigFromEnv({ ZQ_IDENTITY_MAP: "0" }).identityMap, false);
   assert.equal(zqConfigFromEnv({ ZQ_IDENTITY_MAP: "1" }).identityMap, true);
   const off = createZqIdentityMap({ map: testMap<ZqIdentityLink>(), enabled: false });
-  await assert.rejects(off.link(LINK), /ZQ_IDENTITY_MAP/);
+  await assert.rejects(off.propose(PROPOSAL), /ZQ_IDENTITY_MAP/);
+  await assert.rejects(off.confirm("mm1", "x"), /ZQ_IDENTITY_MAP/);
   assert.equal(await off.byMattermost("mm1"), undefined);
+  assert.deepEqual(await off.pending(), []);
 });
 
-test("links resolve both ways, relink replaces, and one OpenProject user maps to one Mattermost user", async () => {
-  const map = createZqIdentityMap({ map: testMap<ZqIdentityLink>(), enabled: true, now: () => 5 });
-  const linked = await map.link(LINK);
-  assert.equal(linked.linkedAt, 5);
+test("a sign-in proposal is invisible to lookups until someone confirms it", async () => {
+  let clock = 5;
+  const map = createZqIdentityMap({ map: testMap<ZqIdentityLink>(), enabled: true, now: () => clock });
+  const proposed = await map.propose(PROPOSAL);
+  assert.equal(proposed.status, "pending");
+  assert.equal(await map.byMattermost("mm1"), undefined);
+  assert.equal(await map.byOpenProject("42"), undefined);
+  assert.deepEqual(
+    (await map.pending()).map((l) => l.mmUserId),
+    ["mm1"],
+  );
+  clock = 9;
+  const confirmed = await map.confirm("mm1", "internal:admin");
+  assert.deepEqual(
+    [confirmed.status, confirmed.confirmedAt, confirmed.confirmedBy],
+    ["confirmed", 9, "internal:admin"],
+  );
   assert.equal((await map.byMattermost("mm1"))?.opLogin, "alice");
   assert.equal((await map.byOpenProject("42"))?.mmUserId, "mm1");
-  await assert.rejects(map.link({ ...LINK, mmUserId: "mm2" }), /already linked/);
-  await map.link({ ...LINK, opUserId: "43", opLogin: "alice2" });
-  assert.equal(await map.byOpenProject("42"), undefined);
-  await assert.rejects(map.link({ ...LINK, mmUserId: "mm2", opUserId: "43" }), /already linked/);
-  assert.equal((await map.link({ ...LINK, mmUserId: "mm2" })).opUserId, "42");
+  assert.deepEqual(await map.pending(), []);
+  clock = 20;
+  assert.equal((await map.confirm("mm1", "someone-else")).confirmedAt, 9);
+  await assert.rejects(map.confirm("nobody", "internal:admin"), /no proposed link/);
+});
+
+test("one OpenProject user maps to one Mattermost user, and a new proposal needs confirming again", async () => {
+  const map = createZqIdentityMap({ map: testMap<ZqIdentityLink>(), enabled: true });
+  await map.propose(PROPOSAL);
+  await map.confirm("mm1", "internal:admin");
+  await assert.rejects(map.propose({ ...PROPOSAL, mmUserId: "mm2" }), /already linked/);
+  await map.propose({ ...PROPOSAL, opUserId: "43", opLogin: "alice2" });
+  assert.equal(await map.byMattermost("mm1"), undefined);
+  await map.confirm("mm1", "internal:admin");
+  assert.equal((await map.propose({ ...PROPOSAL, mmUserId: "mm2" })).status, "pending");
   await map.unlink("mm1");
   assert.equal(await map.byMattermost("mm1"), undefined);
 });
 
-test("email matching links only an unambiguous OpenProject user", () => {
+test("an email is only a hint and only an unambiguous match counts", () => {
   const users = [
     { id: "1", login: "a", email: "Alice@Example.com" },
     { id: "2", login: "b", email: "bob@example.com" },
     { id: "3", login: "b2", email: "bob@example.com" },
     { id: "4", login: "nomail" },
   ];
-  assert.deepEqual(matchByEmail(" alice@example.com", users), { id: "1", login: "a" });
-  assert.equal(matchByEmail("bob@example.com", users), undefined);
-  assert.equal(matchByEmail("carol@example.com", users), undefined);
+  assert.deepEqual(hintByEmail(" alice@example.com", users), { id: "1", login: "a" });
+  assert.equal(hintByEmail("bob@example.com", users), undefined);
+  assert.equal(hintByEmail("carol@example.com", users), undefined);
 });
 
 const ACTION: FollowUpAction = {

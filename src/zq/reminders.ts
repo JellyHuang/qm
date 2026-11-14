@@ -6,6 +6,7 @@ export interface ZqReminder {
   kind: FollowUpAction["kind"];
   workPackageId: number;
   assigneeOpUserId?: string;
+  assigneeName?: string;
   reason: string;
   status: "pending" | "sent" | "cancelled";
   dueAt: number;
@@ -29,6 +30,7 @@ export function createZqReminderStore(opts: { map: DurableMap<ZqReminder>; now?:
         kind: action.kind,
         workPackageId: action.workPackageId,
         ...(action.assigneeOpUserId ? { assigneeOpUserId: action.assigneeOpUserId } : {}),
+        ...(action.assigneeName ? { assigneeName: action.assigneeName } : {}),
         reason: action.reason,
         status: "pending",
         dueAt,
