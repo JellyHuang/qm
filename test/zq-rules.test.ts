@@ -74,7 +74,9 @@ test("staffing asks the planner for trades when there are no child orders, and t
 test("the briefing stage needs a meeting, and follows up ten minutes after the planned end unless it is closed", () => {
   const f = feature("feature.briefing");
   assert.deepEqual(ids(rules({ feature: f, children: [] })), [], "no meeting link available: nothing is claimed");
-  assert.deepEqual(ids(rules({ feature: f, children: [], meetings: [] })), ["briefing-meeting-missing"]);
+  const missing = rules({ feature: f, children: [], meetings: [] });
+  assert.deepEqual(ids(missing), ["briefing-meeting-missing"]);
+  assert.deepEqual(missing[0]!.to, [{ kind: "field", field: "responsiblePlanner" }], "the planner only, not the PM");
   assert.deepEqual(
     ids(rules({ feature: f, children: [], meetings: [{ id: "m", title: "t", endAt: NOW, state: "cancelled" }] })),
     ["briefing-meeting-missing"],
@@ -212,4 +214,15 @@ test("a missing planner is reported once per field even when several rules would
     },
   );
   assert.deepEqual(ids(out), ["responsibility-not-set"]);
+});
+
+test("an unclosed meeting is reminded again on every scan day until OpenProject says it is closed, to the planner only", () => {
+  const f = feature("feature.briefing");
+  const meeting = (state: string) => ({ id: "m", title: "宣讲", endAt: NOW - 3 * DAY, state });
+  for (const state of ["open", "in_progress", "draft"]) {
+    const out = rules({ feature: f, children: [], meetings: [meeting(state)] });
+    assert.deepEqual(ids(out), ["meeting-follow-up"], state);
+    assert.deepEqual(out[0]!.to, [{ kind: "field", field: "responsiblePlanner" }]);
+  }
+  assert.deepEqual(ids(rules({ feature: f, children: [], meetings: [meeting("closed")] })), []);
 });

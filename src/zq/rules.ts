@@ -176,7 +176,7 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
       out.push(
         at(
           "briefing-meeting-missing",
-          stageOwners(contract, stage),
+          [{ kind: "field", field: "responsiblePlanner" }],
           `功能${where(feature)}在「${stageName}」,OpenProject 里还没有宣讲会议。请安排会议。`,
         ),
       );
