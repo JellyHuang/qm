@@ -32,15 +32,12 @@ test("the prompt carries only the recorded facts", () => {
   const prompt = reportPrompt(INPUT);
   assert.match(prompt, /#7 Boss intro: fm\.review -> fm\.rework/);
   assert.match(prompt, /#7 Boss intro: 2\.5h \(storyboard\)/);
-  assert.match(
-    reportPrompt({ ...INPUT, statusChanges: [], timeEntries: [] }),
-    /Status changes:\n- none\nTime entries:\n- none/,
-  );
+  assert.match(reportPrompt({ ...INPUT, statusChanges: [], timeEntries: [] }), /状态变化:\n- 无\n工时记录:\n- 无/);
 });
 
 test("without a writer the draft is a plain template, with one the writer's text is used", async () => {
   const plain = await reports().draft(INPUT);
-  assert.match(plain.text, /Time logged: 3\.5h/);
+  assert.match(plain.text, /已记工时:3\.5 小时/);
   assert.equal(plain.status, "pending");
   const prompts: string[] = [];
   const written = await reports({
@@ -52,7 +49,7 @@ test("without a writer the draft is a plain template, with one the writer's text
   assert.equal(written.text, "Alice finished the storyboard.");
   assert.equal(prompts.length, 1);
   const empty = await reports({ write: async () => "   " }).draft(INPUT);
-  assert.match(empty.text, /Daily report for Alice A/);
+  assert.match(empty.text, /Alice A的日报草稿/);
 });
 
 test("a draft for the same person and period is made once", async () => {
@@ -68,7 +65,7 @@ test("only the person can decide, an approval writes back exactly once, and a di
   const written: ZqReportDraft[] = [];
   const store = reports({ written });
   const draft = await store.draft(INPUT);
-  await assert.rejects(store.decide(draft.id, true, "mm2", "mm2"), /only the person/);
+  await assert.rejects(store.decide(draft.id, true, "mm2", "mm2"), /只有报告对应的本人/);
   assert.deepEqual(written, []);
   const decisions = await Promise.all([
     store.decide(draft.id, true, "mm1", "mm1"),
@@ -83,17 +80,18 @@ test("only the person can decide, an approval writes back exactly once, and a di
   const other = await store.draft({ ...INPUT, until: 2 * 86_400_000 });
   assert.equal((await store.decide(other.id, false, "mm1", "mm1")).status, "discarded");
   assert.equal(written.length, 1);
-  await assert.rejects(store.decide("nope", true, "mm1", "mm1"), /no longer exists/);
+  await assert.rejects(store.decide("nope", true, "mm1", "mm1"), /已经不存在/);
 });
 
 test("the service sends each person a report card at the report time, and not before", async () => {
-  const config = zqConfigFromEnv({ ZQ_REPORTS: "1" });
-  const clock = { now: Date.UTC(2026, 10, 13, 8, 0) };
+  const config = zqConfigFromEnv({ ZQ_REPORTS: "1", ZQ_REPORT_DAILY_AT: "18:30", ZQ_REPORT_WEEKLY_AT: "17:00" });
+  const clock = { now: Date.UTC(2026, 10, 11, 8, 0) };
   const cards: Array<{ to: string; id: string; text: string }> = [];
   const store = reports();
   const service = createZqService({
     config,
-    reader: { workPackages: async () => [], meetings: async () => [] },
+    reader: { features: async () => [], dutyHolders: async () => undefined },
+    mmUserIdOfOpUser: async () => undefined,
     people: async () => [{ mmUserId: "mm1", principalId: "internal:alice", opName: "Alice A" }],
     reminders: createZqReminderStore({ map: testMap<ZqReminder>() }),
     state: testMap<ZqRunState>(),
@@ -108,14 +106,14 @@ test("the service sends each person a report card at the report time, and not be
     now: () => clock.now,
   });
   assert.equal((await service.tick()).reportsSent, 0, "the first tick only starts the clock");
-  clock.now = Date.UTC(2026, 10, 13, 10, 29);
+  clock.now = Date.UTC(2026, 10, 11, 10, 29);
   assert.equal(
     (await service.tick()).reportsSent,
     1,
-    "Friday 17:00 Shanghai: the weekly report, not yet the daily one",
+    "Wednesday 18:29 Shanghai: the weekly report (17:00) is due, the daily one (18:30) not yet",
   );
-  clock.now = Date.UTC(2026, 10, 13, 10, 31);
-  assert.equal((await service.tick()).reportsSent, 1, "Friday 18:30 Shanghai: the daily report");
+  clock.now = Date.UTC(2026, 10, 11, 10, 31);
+  assert.equal((await service.tick()).reportsSent, 1, "Wednesday 18:31 Shanghai: the daily report");
   assert.deepEqual(
     cards.map((c) => c.to),
     ["mm1", "mm1"],

@@ -81,13 +81,12 @@ test("an email is only a hint and only an unambiguous match counts", () => {
 });
 
 const DRAFT: ZqReminderDraft = {
-  id: "wp:7:stale:0",
-  kind: "remind-stale",
+  id: "task-overdue:wp:7:mm1:2026-11-14",
+  rule: "task-overdue",
   subjectId: "wp:7",
   subjectTitle: "Boss intro cutscene",
   recipientMmUserId: "mm1",
-  reason: "no update for 6 day(s) while fm.in_progress",
-  blockers: [],
+  text: "「Boss intro cutscene」(#7)已超过计划结束时间 3 天。",
   dayKey: "2026-11-14",
   dueAt: 2_000,
 };
@@ -114,24 +113,22 @@ test("a reminder is stored once per id, dry-run ones are never due, and going li
   assert.equal((await store.schedule(DRAFT, "live")).created, false);
 });
 
-test("counts, last time and cancellation are per recipient and per subject", async () => {
+test("counts and cancellation are per recipient and per subject", async () => {
   let clock = 10;
   const store = createZqReminderStore({ map: testMap<ZqReminder>(), now: () => clock });
   await store.schedule(DRAFT, "live");
   clock = 20;
-  await store.schedule({ ...DRAFT, id: "wp:7:stale:1" }, "live");
-  await store.schedule({ ...DRAFT, id: "wp:8:stale:0", subjectId: "wp:8", recipientMmUserId: "mm2" }, "live");
-  await store.schedule({ ...DRAFT, id: "wp:7:stale:old", dayKey: "2026-11-13" }, "live");
+  await store.schedule({ ...DRAFT, id: "other-1" }, "live");
+  await store.schedule({ ...DRAFT, id: "other-2", subjectId: "wp:8", recipientMmUserId: "mm2" }, "live");
+  await store.schedule({ ...DRAFT, id: "other-old", dayKey: "2026-11-13" }, "live");
   assert.equal(await store.countForDay("mm1", "2026-11-14"), 2);
   assert.equal(await store.countForDay("mm2", "2026-11-14"), 1);
-  assert.equal(await store.lastLiveAt("wp:7"), 20);
-  assert.equal(await store.lastLiveAt("wp:9"), undefined);
-  assert.equal(await store.has("wp:8:stale:0"), true);
+  assert.equal(await store.has("other-2"), true);
   await store.markSent(DRAFT.id);
   assert.equal(await store.cancelForSubject("wp:7"), 2);
   assert.equal(await store.countForDay("mm1", "2026-11-14"), 1);
   assert.deepEqual(
     (await store.pendingFor("mm2")).map((r) => r.id),
-    ["wp:8:stale:0"],
+    ["other-2"],
   );
 });

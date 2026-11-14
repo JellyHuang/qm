@@ -4,6 +4,8 @@ import type { ZqConfig } from "./config.ts";
 import { deliverDue } from "./delivery.ts";
 import type { ReminderMode, ZqReminderStore } from "./reminders.ts";
 import type { ReportInput, ZqReports } from "./reports.ts";
+import type { ZqContract } from "./contract.ts";
+import type { ZqGroups } from "./groups.ts";
 import { scanIsDue, scanOnce, type OpReader, type ScanPerson, type ScanReport } from "./scanner.ts";
 
 export interface ZqRunState {
@@ -18,6 +20,9 @@ export interface ReportSource {
 export interface ZqServiceDeps {
   config: ZqConfig;
   reader: OpReader;
+  contract?: ZqContract;
+  mmUserIdOfOpUser: (opUserId: string) => Promise<string | undefined>;
+  groups?: { store: ZqGroups; create: (name: string, memberMmUserIds: string[]) => Promise<string> };
   people: () => Promise<ScanPerson[]>;
   reminders: ZqReminderStore;
   state: DurableMap<ZqRunState>;
@@ -56,6 +61,7 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
       ["daily", config.reports.dailyCron, DAY],
       ["weekly", config.reports.weeklyCron, 7 * DAY],
     ] as const) {
+      if (!cron) continue;
       if (!(await claim(`report:${period}`, cron, at, false))) continue;
       for (const person of await deps.people()) {
         try {
@@ -75,17 +81,21 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
     async tick() {
       const at = now();
       const out: Awaited<ReturnType<ZqService["tick"]>> = { reportsSent: 0 };
-      if (config.scanner.enabled) {
+      if (config.scanner.enabled && deps.contract) {
         if (await claim("scanner", config.scanner.cron, at, true)) {
           const mode: ReminderMode = config.deliverReminders ? "live" : "dry-run";
           out.scanned = await scanOnce({
             reader: deps.reader,
+            contract: deps.contract,
             people: await deps.people(),
+            mmUserIdOfOpUser: deps.mmUserIdOfOpUser,
             reminders: deps.reminders,
+            ...(deps.groups ? { groups: deps.groups } : {}),
             mode,
             now: at,
             timezone: config.scanner.timezone,
-            dailyCap: config.reminderDailyCap,
+            dailyCeiling: config.reminderDailyCeiling,
+            escalation: config.escalation,
           });
           await deps.state.merge("scanner", { lastReport: out.scanned });
         }

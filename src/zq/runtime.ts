@@ -3,6 +3,9 @@ import type { LeaderLease } from "../persistence/leader-lease.ts";
 import type { Sweeper } from "../util/sweeper.ts";
 import type { ZqConfig } from "./config.ts";
 import { createZqIdentityMap, type ZqIdentityLink, type ZqIdentityMap } from "./identity-map.ts";
+import { loadZqContract } from "./config.ts";
+import type { ZqContract } from "./contract.ts";
+import { createZqGroups, type ZqGroup } from "./groups.ts";
 import { createMcpOpReader, type OpCall } from "./op-reader.ts";
 import { createZqReminderStore, type ZqReminder } from "./reminders.ts";
 import { createZqReports, type ReportInput, type ZqReportDraft } from "./reports.ts";
@@ -28,6 +31,7 @@ export interface ZqChat {
   ): Promise<void>;
   mmUserIdOf(principalId: string): Promise<string | undefined>;
   principalOf(mmUserId: string): Promise<string | undefined>;
+  createGroup?(name: string, memberMmUserIds: string[]): Promise<string>;
 }
 
 export type ZqIdentityAdmin = Pick<ZqIdentityMap, "enabled" | "list" | "confirm" | "unlink">;
@@ -40,6 +44,11 @@ export interface ZqRuntime {
   connectorConnected(provider: string, principalId: string): Promise<void>;
 }
 
+const noReader = {
+  features: async () => [],
+  dutyHolders: async () => undefined,
+};
+
 export function createZqRuntime(deps: {
   config: ZqConfig;
   call: OpCall;
@@ -47,6 +56,7 @@ export function createZqRuntime(deps: {
   map: <T>(table: string) => DurableMap<T>;
   leaderLease: LeaderLease;
   createSweeper: (work: () => unknown, intervalMs: number, opts?: { label?: string }) => Sweeper;
+  contract?: ZqContract;
   reportSource?: (
     person: ScanPerson,
     period: ReportInput["period"],
@@ -79,9 +89,18 @@ export function createZqRuntime(deps: {
     return resolved.flat();
   }
 
+  const contract = deps.contract ?? (config.contractFile ? loadZqContract(config.contractFile) : undefined);
+  const groups = chat.createGroup
+    ? { store: createZqGroups({ map: deps.map<ZqGroup>("zq_groups") }), create: chat.createGroup }
+    : undefined;
+
   const service = createZqService({
     config,
-    reader: createMcpOpReader({ call: deps.call, serverId: OPENPROJECT_SERVER }),
+    ...(contract
+      ? { contract, reader: createMcpOpReader({ call: deps.call, contract, serverId: OPENPROJECT_SERVER }) }
+      : { reader: noReader }),
+    mmUserIdOfOpUser: async (opUserId) => (await identity.byOpenProject(opUserId))?.mmUserId,
+    ...(groups ? { groups } : {}),
     people,
     reminders,
     state: deps.map<ZqRunState>("zq_run_state"),
@@ -93,8 +112,8 @@ export function createZqRuntime(deps: {
             source: { build: deps.reportSource },
             sendCard: (to: string, draftId: string, text: string) =>
               chat.sendButtons(to, text, [
-                { id: "approve", name: "Looks right", style: "good", op: "report", ref: draftId, approve: true },
-                { id: "discard", name: "Discard", op: "report", ref: draftId, approve: false },
+                { id: "approve", name: "没问题,提交", style: "good", op: "report", ref: draftId, approve: true },
+                { id: "discard", name: "放弃", op: "report", ref: draftId, approve: false },
               ]),
           },
         }
@@ -119,15 +138,15 @@ export function createZqRuntime(deps: {
     async decide(op, id, approve, clickerMmUserId) {
       if (op === "report") {
         const draft = await reports.decide(id, approve, clickerMmUserId, clickerMmUserId);
-        return draft.status === "confirmed" ? "Report confirmed." : "Report discarded.";
+        return draft.status === "confirmed" ? "已确认日报。" : "已放弃这份草稿。";
       }
-      if (id !== clickerMmUserId) throw new Error("only the person being linked can answer this");
+      if (id !== clickerMmUserId) throw new Error("只有被关联的本人可以回答");
       if (!approve) {
         await identity.unlink(id);
-        return "OpenProject account not linked.";
+        return "已取消,没有关联 OpenProject 账号。";
       }
       await identity.confirm(id, clickerMmUserId);
-      return "OpenProject account linked.";
+      return "已关联 OpenProject 账号。";
     },
     async connectorConnected(provider, principalId) {
       if (!config.identityMap || provider !== OPENPROJECT_SERVER) return;
@@ -145,9 +164,9 @@ export function createZqRuntime(deps: {
         proposedBy: principalId,
       });
       if (link.status === "pending")
-        await chat.sendButtons(mmUserId, `Link this Mattermost account to OpenProject user ${me.login}?`, [
-          { id: "link", name: "Yes, that's me", style: "good", op: "link", ref: mmUserId, approve: true },
-          { id: "unlink", name: "Not me", op: "link", ref: mmUserId, approve: false },
+        await chat.sendButtons(mmUserId, `把这个 Mattermost 账号关联到 OpenProject 用户 ${me.login} 吗?`, [
+          { id: "link", name: "是我本人", style: "good", op: "link", ref: mmUserId, approve: true },
+          { id: "unlink", name: "不是我", op: "link", ref: mmUserId, approve: false },
         ]);
     },
   };

@@ -1,50 +1,93 @@
+import { readFileSync } from "node:fs";
 import { Cron } from "croner";
+import { DUTIES, parseContract, type Duty, type ZqContract } from "./contract.ts";
 
 export interface ZqConfig {
   identityMap: boolean;
   scanner: { enabled: boolean; cron: string; timezone: string };
   deliverReminders: boolean;
-  reminderDailyCap: number;
-  reports: { enabled: boolean; dailyCron: string; weeklyCron: string };
+  reminderDailyCeiling: number;
+  contractFile?: string;
+  escalation: { duties: readonly Duty[]; afterDays: number };
+  reports: { enabled: boolean; dailyCron?: string; weeklyCron?: string };
 }
 
 const DEFAULT_CRON = "*/5 * * * *";
 const DEFAULT_TIMEZONE = "Asia/Shanghai";
-const DEFAULT_DAILY_CAP = 3;
-const DEFAULT_REPORT_DAILY_CRON = "30 18 * * 1-5";
-const DEFAULT_REPORT_WEEKLY_CRON = "0 17 * * 5";
+const DEFAULT_DAILY_CEILING = 200;
+const DEFAULT_ESCALATION_DAYS = 2;
+const WEDNESDAY = 3;
 
 const on = (value: string | undefined) => value?.trim() === "1";
+
+function clock(name: string, raw: string | undefined, weekday: string): string | undefined {
+  const value = raw?.trim();
+  if (!value) return undefined;
+  const match = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(value);
+  if (!match) throw new Error(`${name} must look like 09:30`);
+  return `${Number(match[2])} ${Number(match[1])} * * ${weekday}`;
+}
+
+function integer(name: string, raw: string | undefined, fallback: number, min: number, max: number): number {
+  const n = Number(raw?.trim() || fallback);
+  if (!Number.isSafeInteger(n) || n < min || n > max)
+    throw new Error(`${name} must be an integer from ${min} through ${max}`);
+  return n;
+}
+
+function duties(raw: string | undefined): Duty[] {
+  const list = (raw ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const duty of list)
+    if (!(DUTIES as readonly string[]).includes(duty))
+      throw new Error(`ZQ_ESCALATION_DUTIES names an unknown duty: ${duty}`);
+  return list as Duty[];
+}
 
 export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   const cron = env.ZQ_SCANNER_CRON?.trim() || DEFAULT_CRON;
   const timezone = env.ZQ_SCANNER_TZ?.trim() || DEFAULT_TIMEZONE;
-  const dailyCron = env.ZQ_REPORT_DAILY_CRON?.trim() || DEFAULT_REPORT_DAILY_CRON;
-  const weeklyCron = env.ZQ_REPORT_WEEKLY_CRON?.trim() || DEFAULT_REPORT_WEEKLY_CRON;
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: timezone });
   } catch {
     throw new Error(`ZQ_SCANNER_TZ is not an IANA timezone: ${timezone}`);
   }
-  for (const [name, expression] of [
-    ["ZQ_SCANNER_CRON", cron],
-    ["ZQ_REPORT_DAILY_CRON", dailyCron],
-    ["ZQ_REPORT_WEEKLY_CRON", weeklyCron],
-  ] as const) {
-    try {
-      new Cron(expression, { timezone, paused: true, mode: "5-part" });
-    } catch (e) {
-      throw new Error(`${name} or ZQ_SCANNER_TZ is invalid`, { cause: e });
-    }
+  try {
+    new Cron(cron, { timezone, paused: true, mode: "5-part" });
+  } catch (e) {
+    throw new Error("ZQ_SCANNER_CRON or ZQ_SCANNER_TZ is invalid", { cause: e });
   }
-  const cap = Number(env.ZQ_REMINDER_DAILY_CAP?.trim() || DEFAULT_DAILY_CAP);
-  if (!Number.isSafeInteger(cap) || cap < 1 || cap > 50)
-    throw new Error("ZQ_REMINDER_DAILY_CAP must be an integer from 1 through 50");
+  const dailyCron = clock("ZQ_REPORT_DAILY_AT", env.ZQ_REPORT_DAILY_AT, "*");
+  const weeklyCron = clock("ZQ_REPORT_WEEKLY_AT", env.ZQ_REPORT_WEEKLY_AT, String(WEDNESDAY));
+  const contractFile = env.ZQ_CONTRACT_FILE?.trim();
+  const scannerEnabled = on(env.ZQ_SCANNER);
+  if (scannerEnabled && !contractFile) throw new Error("ZQ_SCANNER needs ZQ_CONTRACT_FILE (the contract key table)");
   return {
     identityMap: on(env.ZQ_IDENTITY_MAP),
-    scanner: { enabled: on(env.ZQ_SCANNER), cron, timezone },
+    scanner: { enabled: scannerEnabled, cron, timezone },
     deliverReminders: on(env.ZQ_REMINDER_DELIVERY),
-    reminderDailyCap: cap,
-    reports: { enabled: on(env.ZQ_REPORTS), dailyCron, weeklyCron },
+    reminderDailyCeiling: integer(
+      "ZQ_REMINDER_DAILY_CEILING",
+      env.ZQ_REMINDER_DAILY_CEILING,
+      DEFAULT_DAILY_CEILING,
+      1,
+      10_000,
+    ),
+    ...(contractFile ? { contractFile } : {}),
+    escalation: {
+      duties: duties(env.ZQ_ESCALATION_DUTIES),
+      afterDays: integer("ZQ_ESCALATION_AFTER_DAYS", env.ZQ_ESCALATION_AFTER_DAYS, DEFAULT_ESCALATION_DAYS, 1, 365),
+    },
+    reports: {
+      enabled: on(env.ZQ_REPORTS),
+      ...(dailyCron ? { dailyCron } : {}),
+      ...(weeklyCron ? { weeklyCron } : {}),
+    },
   };
+}
+
+export function loadZqContract(path: string): ZqContract {
+  return parseContract(JSON.parse(readFileSync(path, "utf8")));
 }

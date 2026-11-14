@@ -44,8 +44,9 @@ Registering with the contract is what turns a silent server change into a loud f
 
 ## Follow-up rules and identity (`src/zq/`)
 
-- Status keys are `<family>.<suffix>` (`pm`, `fm`, `dv`, `qa`, `mt`) plus `new`. `DEFAULT_FOLLOW_UP_POLICY` classifies each into open, active, blocked (`*.suspended`) or closed. The sets are not the transition graph.
-- OpenProject has no status-changed time. `latestStatusChangeAt` derives it from the latest `get_work_package_activities` entry into the current status.
-- Community OpenProject does not enforce exit checks, so `exitBlockers` lists the empty custom fields (by name, resolved at runtime, never by id) that must be filled before QM proposes a transition such as `fm.qa` to `fm.formal`.
-- `get_current_user` returns id, name and login but no email, and work package summaries carry only the assignee's display name. The identity map therefore records a pending link on first OpenProject sign-in, which an admin or the person confirms; only confirmed links resolve. Email is an optional hint.
-- Meeting follow-up is done by scanning `list_meetings`; webhooks are not a source of truth.
+- QM never defines stage names. `ZQ_CONTRACT_FILE` points at the contract key table that OpenProject supplies (`docs/zq/contract-keys.md`): stage keys with their Chinese labels, the four lifecycle keys, the duty keys, the field keys, which duty owns which type of order, and who is responsible per stage.
+- The scan axis is the parent feature: the scanner reads the paged `list_work_packages`, reads each changed order once with `zq_get_work_package` (cached per person until `updated_at` changes), groups child orders under their parent feature, then applies the rules in `src/zq/rules.ts` and resolves each stage's responsible person from the table.
+- Suspended and cancelled features and orders get no reminders; a delayed one still does.
+- Exit checks are OpenProject's. QM calls the tool named in the table (`tools.exitCheck`) and shows the result; without it no "ready to advance" message is sent. The same holds for `tools.meetingsForFeature` (meeting rules) and `tools.dutyHolders` (duty recipients).
+- Reminders are deduplicated per rule, target and Shanghai day. `ZQ_REMINDER_DAILY_CEILING` is only a safety ceiling.
+- `get_current_user` returns id, name and login but no email, so the identity map records a pending link on first OpenProject sign-in, which the person confirms; only confirmed links resolve. Email is an optional hint.

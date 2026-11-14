@@ -1,0 +1,68 @@
+{
+  "version": "draft-0",
+  "featureType": "feature",
+  "typeDuties": {
+    "character_art": "art_lead",
+    "scene_art": "art_lead",
+    "ui": "art_lead",
+    "character_model": "art_lead",
+    "scene_model": "art_lead",
+    "terrain": "art_lead",
+    "animation": "art_lead",
+    "vfx": "art_lead",
+    "frontend": "client_lead",
+    "fgui": "client_lead",
+    "backend": "server_lead",
+    "planning": "planning_lead",
+    "acceptance": "planning_lead",
+    "config_table": "planning_lead"
+  },
+  "stages": {
+    "feature": {
+      "feature.planner_unassigned": "待分配策划",
+      "feature.planning": "策划编写中",
+      "feature.review_pending": "待审核",
+      "feature.staffing": "人员安排",
+      "feature.briefing": "宣讲对齐",
+      "feature.in_production": "研发制作中",
+      "feature.acceptance": "策划验收",
+      "feature.qa_testing": "QA 测试中",
+      "feature.formal_assets_pending": "待正式资源",
+      "feature.done": "已完成"
+    },
+    "task": {
+      "task.unassigned": "待分配",
+      "task.waiting": "等待开发",
+      "task.in_progress": "进行中",
+      "task.integration": "联调中",
+      "task.done": "已完成"
+    }
+  },
+  "stageOwners": {
+    "feature.planner_unassigned": ["duty:producer", "duty:pm"],
+    "feature.planning": ["field:responsiblePlanner"],
+    "feature.review_pending": ["duty:producer"],
+    "feature.staffing": ["field:responsiblePlanner", "duty:pm"],
+    "feature.briefing": ["field:responsiblePlanner", "duty:pm"],
+    "feature.in_production": ["field:responsiblePlanner", "duty:pm"],
+    "feature.acceptance": ["field:responsiblePlanner"],
+    "feature.qa_testing": ["duty:qa_lead"],
+    "feature.formal_assets_pending": ["duty:art_lead", "duty:pm", "duty:qa_lead"],
+    "feature.done": ["field:responsiblePlanner", "duty:pm", "duty:producer"]
+  },
+  "fields": {
+    "responsiblePlanner": "responsible_planner",
+    "estimate": "estimated_hours",
+    "plannedStart": "planned_start",
+    "plannedEnd": "planned_end"
+  },
+  "duties": {
+    "producer": "producer",
+    "pm": "pm",
+    "art_lead": "art_lead",
+    "client_lead": "client_lead",
+    "server_lead": "server_lead",
+    "planning_lead": "planning_lead",
+    "qa_lead": "qa_lead"
+  }
+}

@@ -51,30 +51,30 @@ export function reportPrompt(input: ReportInput): string {
     (e) => `- #${e.workPackageId} ${e.subject}: ${e.hours}h${e.comment ? ` (${e.comment})` : ""}`,
   );
   return [
-    `Write a short ${input.period} work report for ${input.opName}. Use only the facts below.`,
-    "Status changes:",
-    ...(changes.length ? changes : ["- none"]),
-    "Time entries:",
-    ...(entries.length ? entries : ["- none"]),
+    `请为 ${input.opName} 写一份简短的${input.period === "daily" ? "日报" : "周报"}。只使用下面的事实,不要补充推测。`,
+    "状态变化:",
+    ...(changes.length ? changes : ["- 无"]),
+    "工时记录:",
+    ...(entries.length ? entries : ["- 无"]),
   ].join("\n");
 }
 
 function templateReport(input: ReportInput): string {
   const hours = input.timeEntries.reduce((sum, e) => sum + e.hours, 0);
-  const lines = [`${input.period === "daily" ? "Daily" : "Weekly"} report for ${input.opName}`];
+  const lines = [`${input.opName}的${input.period === "daily" ? "日报" : "周报"}草稿`];
   if (input.statusChanges.length) {
     lines.push(
-      "Progress:",
+      "进展:",
       ...input.statusChanges.map((c) => `- #${c.workPackageId} ${c.subject}: ${c.from ? `${c.from} -> ` : ""}${c.to}`),
     );
   }
   if (input.timeEntries.length) {
     lines.push(
-      `Time logged: ${hours}h`,
+      `已记工时:${hours} 小时`,
       ...input.timeEntries.map((e) => `- #${e.workPackageId} ${e.subject}: ${e.hours}h`),
     );
   }
-  if (lines.length === 1) lines.push("No recorded activity in this period.");
+  if (lines.length === 1) lines.push("这段时间在 OpenProject 里没有记录。");
   return lines.join("\n");
 }
 
@@ -111,8 +111,8 @@ export function createZqReports(opts: {
     },
     async decide(id, approve, decidedBy, clickerMmUserId) {
       const draft = await opts.map.get(id);
-      if (!draft) throw new Error("that report draft no longer exists");
-      if (draft.mmUserId !== clickerMmUserId) throw new Error("only the person the report is about can decide it");
+      if (!draft) throw new Error("这份草稿已经不存在");
+      if (draft.mmUserId !== clickerMmUserId) throw new Error("只有报告对应的本人可以确认");
       if (draft.status !== "pending") return draft;
       const claimToken = randomUUID();
       const claimed = await opts.map.update(id, (d) =>
@@ -120,7 +120,7 @@ export function createZqReports(opts: {
           ? { ...d, status: approve ? "confirmed" : "discarded", decidedAt: now(), decidedBy, claimToken }
           : d,
       );
-      if (!claimed) throw new Error("that report draft no longer exists");
+      if (!claimed) throw new Error("这份草稿已经不存在");
       if (approve && claimed.claimToken === claimToken) {
         await opts.writeBack(claimed);
         return (await opts.map.merge(id, { writtenBack: true })) ?? claimed;

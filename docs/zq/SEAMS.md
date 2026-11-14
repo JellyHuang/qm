@@ -158,17 +158,20 @@ See `docs/zq/openproject-mcp.md` for registration.
 
 Everything here is additive and unused by the running system until a later change wires it in. No existing table, config key or payload changes.
 
-| File                        | Change                                                                                                                                     |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `src/zq/config.ts`          | `ZQ_IDENTITY_MAP=1` turns identity mapping on; unset or any other value leaves it off                                                      |
-| `src/zq/identity-map.ts`    | Mattermost user ↔ OpenProject user links, one OpenProject user per Mattermost user. Off: `link` and `unlink` throw, lookups return nothing |
-| `src/zq/reminders.ts`       | Reminder store with one row per dedupe key                                                                                                 |
-| `src/zq/follow-up-rules.ts` | Pure status-driven rules: given a work package's state and the time, returns reminder and escalation actions. No I/O                       |
+| File                     | Change                                                                                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/zq/config.ts`       | `ZQ_IDENTITY_MAP=1` turns identity mapping on; unset or any other value leaves it off                                                      |
+| `src/zq/identity-map.ts` | Mattermost user ↔ OpenProject user links, one OpenProject user per Mattermost user. Off: `link` and `unlink` throw, lookups return nothing |
+| `src/zq/reminders.ts`    | Reminder store with one row per dedupe key                                                                                                 |
+| `src/zq/rules.ts`        | Pure rules for the follow-ups of V1.1 §10 and V1.0 QM-02: a feature's facts and the time in, reminder actions out. No I/O                  |
+| `src/zq/contract.ts`     | The contract key table: stage, lifecycle, duty and field keys that OpenProject supplies. QM never hard-codes stage names                   |
+| `src/zq/groups.ts`       | One discussion group per feature, claimed before it is created so a rescan or a second instance cannot make another                        |
 
 New durable-map tables, created on first use like the Mattermost ones (`id TEXT` key, `json JSONB` value):
 
 - `zq_identity_map`, key `mmUserId`: `{ mmUserId, opUserId, opLogin, opName?, emailHint?, source: "signin" | "admin", status: "pending" | "confirmed", proposedAt, proposedBy, confirmedAt?, confirmedBy? }`. Example (invented): `mm1 → { "opUserId": "42", "opLogin": "alice", "opName": "Alice A", "source": "signin", "status": "confirmed", "proposedAt": 1763000000000, "proposedBy": "internal:alice", "confirmedAt": 1763000100000, "confirmedBy": "internal:admin" }`. Lookups return only confirmed rows. This replaces the shape of the previous commit, which nothing wrote.
-- `zq_reminders`, key = dedupe key such as `wp:7:stale:0` or `meeting:m1:follow-up`: `{ id, kind: "remind-stale" | "remind-overdue" | "escalate-blocked" | "meeting-follow-up", subjectId ("wp:<id>" | "meeting:<id>"), subjectTitle?, recipientMmUserId, reason, blockers: string[], dayKey ("YYYY-MM-DD" in the scanner timezone), dueAt, mode: "dry-run" | "live", status: "pending" | "sent" | "cancelled", createdAt, sentAt? }`. This replaces the previous commit's shape, which nothing wrote. Example (invented): `{ "id": "wp:8:stale:0", "kind": "remind-stale", "subjectId": "wp:8", "subjectTitle": "Menu art", "recipientMmUserId": "mm-alice", "reason": "no update for 6 day(s) while fm.qa", "blockers": ["qa_result"], "dayKey": "2026-11-14", "dueAt": 1763092800000, "mode": "dry-run", "status": "pending", "createdAt": 1763092800000 }`.
+- `zq_reminders`, key `<rule>:<subjectId>:<recipientMmUserId>:<dayKey>` (one row per rule, target and Shanghai day): `{ id, rule, subjectId ("wp:<id>" | "meeting:<id>"), subjectTitle?, recipientMmUserId, text, dayKey, dueAt, mode: "dry-run" | "live", status: "pending" | "sent" | "cancelled", createdAt, sentAt? }`. Example (invented): `task-overdue:wp:22:mm-bob:2026-11-14 → { "rule": "task-overdue", "text": "「单22」(#22)已超过计划结束时间 3 天。请说明进度、风险和阻塞。", "mode": "live", "status": "sent" }`. The earlier fields `kind`, `reason` and `blockers` are gone; no released code wrote them.
+- `zq_groups`, key `feature:<featureId>`: `{ featureId, groupRef, memberMmUserIds, createdAt }`. `groupRef` is empty while a creation is claimed and filled once the group exists; a claim older than ten minutes with no `groupRef` is treated as abandoned.
 - `zq_report_drafts`, key `<mmUserId>:<period>:<until>`: `{ id, mmUserId, period: "daily" | "weekly", since, until, text, status: "pending" | "confirmed" | "discarded", createdAt, decidedAt?, decidedBy?, claimToken?, writtenBack? }`.
 - `zq_run_state`, keys `scanner`, `report:daily`, `report:weekly`: `{ lastRunAt, lastReport? }`.
 
@@ -176,14 +179,16 @@ Rollout: with every switch off (the default) nothing writes to any of these tabl
 
 Configuration added (all default off or to the value shown; `src/zq/config.ts` refuses invalid cron, timezone or cap at startup):
 
-| Setting                                                       | Default                            | Meaning                                                                                                                                            |
-| ------------------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ZQ_IDENTITY_MAP`                                             | off (`1` enables)                  | Propose a Mattermost to OpenProject link when a person signs in to the `openproject` MCP server, and confirm it with a Mattermost button           |
-| `ZQ_SCANNER`                                                  | off (`1` enables)                  | Run the read-only scan. Without `ZQ_REMINDER_DELIVERY` it only stores `dry-run` reminders                                                          |
-| `ZQ_SCANNER_CRON` / `ZQ_SCANNER_TZ`                           | `*/5 * * * *` / `Asia/Shanghai`    | When the scan runs, evaluated every minute by a sweeper held under one leader lease. It does not use the pg-boss cron, which only fires agent runs |
-| `ZQ_REMINDER_DELIVERY`                                        | off (`1` enables)                  | Second switch: store `live` reminders and send them as Mattermost direct messages, with the exit-blocker names                                     |
-| `ZQ_REMINDER_DAILY_CAP`                                       | `3`                                | Reminders per person per calendar day in the scanner timezone, dry-run ones included                                                               |
-| `ZQ_REPORTS`, `ZQ_REPORT_DAILY_CRON`, `ZQ_REPORT_WEEKLY_CRON` | off, `30 18 * * 1-5`, `0 17 * * 5` | Report drafts as a Mattermost card; approving calls a write-back stub that writes nothing to OpenProject                                           |
+| Setting                                                   | Default                         | Meaning                                                                                                                                               |
+| --------------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ZQ_IDENTITY_MAP`                                         | off (`1` enables)               | Propose a Mattermost to OpenProject link when a person signs in to the `openproject` MCP server, and confirm it with a Mattermost button              |
+| `ZQ_SCANNER`                                              | off (`1` enables)               | Run the read-only scan. Without `ZQ_REMINDER_DELIVERY` it only stores `dry-run` reminders                                                             |
+| `ZQ_SCANNER_CRON` / `ZQ_SCANNER_TZ`                       | `*/5 * * * *` / `Asia/Shanghai` | When the scan runs, evaluated every minute by a sweeper held under one leader lease. It does not use the pg-boss cron, which only fires agent runs    |
+| `ZQ_REMINDER_DELIVERY`                                    | off (`1` enables)               | Second switch: store `live` reminders and send them as Mattermost direct messages, as Chinese-language texts                                          |
+| `ZQ_CONTRACT_FILE`                                        | unset                           | Path of the contract key table JSON (see `docs/zq/contract-keys.md`). `ZQ_SCANNER=1` without it refuses startup                                       |
+| `ZQ_REMINDER_DAILY_CEILING`                               | `200`                           | Safety ceiling of reminders per person per Shanghai day (1 to 10000). Replaces `ZQ_REMINDER_DAILY_CAP`; normal dedup is per rule, target and day      |
+| `ZQ_ESCALATION_DUTIES`, `ZQ_ESCALATION_AFTER_DAYS`        | unset, `2`                      | Duties (for example `pm,planning_lead`) that get `向负责人升级提醒` once an order is that many days overdue. Unset means no escalation                |
+| `ZQ_REPORTS`, `ZQ_REPORT_DAILY_AT`, `ZQ_REPORT_WEEKLY_AT` | off, unset, unset               | Report drafts as a Mattermost card. `HH:MM` Shanghai time; the weekly one is always Wednesday. A report with no time set is off. Write-back is a stub |
 
 Mattermost seam: `ActionPayload` gains `{ k: "zq", op: "report" | "link", id, approve }`, `createActions` takes an optional `zqDecision`, and `createMattermost` exposes `directMessage`, `mmUserIdOf` and `principalOf`. The runtime in `src/zq/runtime.ts` is created in `src/wiring.ts` only when Mattermost is configured and a switch is on.
 

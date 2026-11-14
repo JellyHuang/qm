@@ -48,17 +48,17 @@ test("signing in to OpenProject proposes a link that only its owner can confirm"
   assert.deepEqual(calls, ["openproject_get_current_user@internal:alice"]);
   assert.equal(buttons.length, 1);
   assert.equal(buttons[0]!.to, "mm-alice");
-  assert.match(buttons[0]!.text, /OpenProject user alice/);
+  assert.match(buttons[0]!.text, /OpenProject 用户 alice/);
   assert.deepEqual(buttons[0]!.refs, ["link:mm-alice:true", "link:mm-alice:false"]);
-  await assert.rejects(runtime.decide("link", "mm-alice", true, "mm-bob"), /only the person being linked/);
-  assert.equal(await runtime.decide("link", "mm-alice", true, "mm-alice"), "OpenProject account linked.");
+  await assert.rejects(runtime.decide("link", "mm-alice", true, "mm-bob"), /只有被关联的本人/);
+  assert.equal(await runtime.decide("link", "mm-alice", true, "mm-alice"), "已关联 OpenProject 账号。");
   await runtime.connectorConnected("openproject", "internal:alice");
   assert.equal(buttons.length, 1, "a confirmed link is not proposed again");
 });
 
-test("answering Not me removes the proposal", async () => {
+test("answering 不是我 removes the proposal", async () => {
   const { runtime } = setup({ ZQ_IDENTITY_MAP: "1" });
   await runtime.connectorConnected("openproject", "internal:alice");
-  assert.equal(await runtime.decide("link", "mm-alice", false, "mm-alice"), "OpenProject account not linked.");
+  assert.equal(await runtime.decide("link", "mm-alice", false, "mm-alice"), "已取消,没有关联 OpenProject 账号。");
   await assert.rejects(runtime.decide("link", "mm-alice", true, "mm-alice"), /no proposed link/);
 });

@@ -128,7 +128,7 @@ export function createActions(deps: {
           return { status: 200, body: settled(text, payload.approve ? "#2eb67d" : "#8d8d8d") };
         }
         case "zq": {
-          if (!deps.zqDecision) return { status: 200, body: { ephemeral_text: "This isn't available." } };
+          if (!deps.zqDecision) return { status: 200, body: { ephemeral_text: "这个功能没有开启。" } };
           const text = await deps.zqDecision(payload.op, payload.id, payload.approve, clickerId);
           return { status: 200, body: settled(text, payload.approve ? "#2eb67d" : "#8d8d8d") };
         }

@@ -1,14 +1,16 @@
 import { Cron } from "croner";
+import { paused, type Duty, type ZqContract } from "./contract.ts";
+import type { ZqGroups } from "./groups.ts";
+import { reminderId, type ReminderMode, type ZqReminderStore } from "./reminders.ts";
 import {
-  DEFAULT_FOLLOW_UP_POLICY,
-  evaluateFollowUp,
-  evaluateMeetingFollowUp,
-  pendingExitFields,
-  type FollowUpPolicy,
-  type MeetingState,
-  type WorkPackageState,
-} from "./follow-up-rules.ts";
-import type { ReminderMode, ZqReminderDraft, ZqReminderStore } from "./reminders.ts";
+  DEFAULT_RULE_OPTIONS,
+  evaluateRules,
+  STAGE,
+  type FeatureFacts,
+  type OpUserRef,
+  type RuleOptions,
+  type Target,
+} from "./rules.ts";
 
 export interface ScanPerson {
   mmUserId: string;
@@ -17,37 +19,36 @@ export interface ScanPerson {
   opName: string;
 }
 
-export interface ScannedWorkPackage extends WorkPackageState {
-  subject: string;
-  fields: Record<string, string | undefined>;
-}
-
 export interface OpReader {
-  workPackages(person: ScanPerson): Promise<ScannedWorkPackage[]>;
-  meetings(person: ScanPerson): Promise<MeetingState[]>;
+  features(person: ScanPerson): Promise<FeatureFacts[]>;
+  dutyHolders(person: ScanPerson, projectId: string, duty: Duty): Promise<OpUserRef[] | undefined>;
 }
 
 export interface ScanOptions {
   reader: OpReader;
+  contract: ZqContract;
   people: readonly ScanPerson[];
+  mmUserIdOfOpUser: (opUserId: string) => Promise<string | undefined>;
   reminders: ZqReminderStore;
+  groups?: { store: ZqGroups; create: (name: string, memberMmUserIds: string[]) => Promise<string> };
   mode: ReminderMode;
   now: number;
   timezone: string;
-  dailyCap: number;
-  policy?: FollowUpPolicy;
+  dailyCeiling: number;
+  escalation: { duties: readonly Duty[]; afterDays: number };
 }
 
 export interface ScanReport {
   mode: ReminderMode;
   peopleScanned: number;
   peopleFailed: number;
-  workPackagesSeen: number;
-  meetingsSeen: number;
+  featuresSeen: number;
   created: number;
   alreadyKnown: number;
-  cappedOut: number;
-  unassigned: number;
+  ceilingHit: number;
+  noHolder: number;
+  unlinked: number;
+  groupsCreated: number;
 }
 
 export function dayKeyIn(timezone: string, at: number): string {
@@ -65,106 +66,115 @@ export function scanIsDue(cron: string, timezone: string, lastRunAt: number | un
   return next !== null && next.getTime() <= now;
 }
 
-function isAssignee(wp: ScannedWorkPackage, person: ScanPerson): boolean {
-  if (wp.assigneeOpUserId && person.opUserId) return wp.assigneeOpUserId === person.opUserId;
-  return Boolean(wp.assigneeName) && wp.assigneeName?.trim().toLowerCase() === person.opName.trim().toLowerCase();
-}
-
-function isPlanner(meeting: MeetingState, person: ScanPerson): boolean {
-  if (meeting.plannerOpUserId && person.opUserId) return meeting.plannerOpUserId === person.opUserId;
-  return (
-    Boolean(meeting.plannerName) && meeting.plannerName?.trim().toLowerCase() === person.opName.trim().toLowerCase()
-  );
-}
+const DAY = 86_400_000;
 
 export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
   const report: ScanReport = {
     mode: opts.mode,
     peopleScanned: 0,
     peopleFailed: 0,
-    workPackagesSeen: 0,
-    meetingsSeen: 0,
+    featuresSeen: 0,
     created: 0,
     alreadyKnown: 0,
-    cappedOut: 0,
-    unassigned: 0,
+    ceilingHit: 0,
+    noHolder: 0,
+    unlinked: 0,
+    groupsCreated: 0,
   };
   const dayKey = dayKeyIn(opts.timezone, opts.now);
-  const policy = opts.policy ?? DEFAULT_FOLLOW_UP_POLICY;
-  const handledSubjects = new Set<string>();
-
-  async function offer(draft: Omit<ZqReminderDraft, "dayKey" | "dueAt">): Promise<void> {
-    const { created } = await opts.reminders.schedule({ ...draft, dayKey, dueAt: opts.now }, opts.mode);
-    if (created) report.created++;
-    else report.alreadyKnown++;
-  }
-
-  async function admitted(id: string, mmUserId: string): Promise<boolean> {
-    if (await opts.reminders.has(id)) return true;
-    if ((await opts.reminders.countForDay(mmUserId, dayKey)) < opts.dailyCap) return true;
-    report.cappedOut++;
-    return false;
-  }
+  const ruleOptions: RuleOptions = {
+    ...DEFAULT_RULE_OPTIONS,
+    now: opts.now,
+    escalateAfterMs: opts.escalation.afterDays * DAY,
+    escalationDuties: opts.escalation.duties,
+  };
+  const handled = new Set<number>();
 
   for (const person of opts.people) {
-    let workPackages: ScannedWorkPackage[];
-    let meetings: MeetingState[];
+    let facts: FeatureFacts[];
     try {
-      [workPackages, meetings] = await Promise.all([opts.reader.workPackages(person), opts.reader.meetings(person)]);
+      facts = await opts.reader.features(person);
     } catch {
       report.peopleFailed++;
       continue;
     }
     report.peopleScanned++;
+    const holders = new Map<string, OpUserRef[] | undefined>();
 
-    for (const wp of workPackages) {
-      const subjectId = `wp:${wp.id}`;
-      if (handledSubjects.has(subjectId) || !isAssignee(wp, person)) continue;
-      handledSubjects.add(subjectId);
-      report.workPackagesSeen++;
-      const lastFollowUpAt = await opts.reminders.lastLiveAt(subjectId);
-      const actions = evaluateFollowUp(
-        { ...wp, ...(lastFollowUpAt !== undefined ? { lastFollowUpAt } : {}) },
-        opts.now,
-        policy,
-      );
-      for (const action of actions) {
-        if (!(await admitted(action.dedupeKey, person.mmUserId))) continue;
-        await offer({
-          id: action.dedupeKey,
-          kind: action.kind,
-          subjectId,
-          subjectTitle: wp.subject,
-          recipientMmUserId: person.mmUserId,
-          reason: action.reason,
-          blockers: pendingExitFields(wp.status, wp.fields),
-        });
-      }
+    async function holdersOf(projectId: string | undefined, duty: Duty): Promise<OpUserRef[] | undefined> {
+      if (!projectId) return undefined;
+      const key = `${projectId}:${duty}`;
+      if (!holders.has(key))
+        holders.set(key, await opts.reader.dutyHolders(person, projectId, duty).catch(() => undefined));
+      return holders.get(key);
     }
 
-    for (const meeting of meetings) {
-      const subjectId = `meeting:${meeting.id}`;
-      if (handledSubjects.has(subjectId)) continue;
-      if (!isPlanner(meeting, person)) {
-        if (meeting.plannerName || meeting.plannerOpUserId) continue;
-        report.unassigned++;
-        continue;
+    async function usersOf(target: Target, fact: FeatureFacts): Promise<OpUserRef[]> {
+      if (target.kind === "user") return [target.user];
+      if (target.kind === "field")
+        return target.field === "responsiblePlanner" && fact.feature.responsiblePlanner
+          ? [fact.feature.responsiblePlanner]
+          : [];
+      const found = await holdersOf(fact.feature.projectId, target.duty);
+      if (!found?.length) report.noHolder++;
+      return found ?? [];
+    }
+
+    for (const fact of facts) {
+      if (handled.has(fact.feature.id)) continue;
+      handled.add(fact.feature.id);
+      report.featuresSeen++;
+      for (const action of evaluateRules(fact, opts.contract, ruleOptions)) {
+        const users = (await Promise.all(action.to.map((t) => usersOf(t, fact)))).flat();
+        const recipients = new Set<string>();
+        for (const u of users) {
+          const mm = await opts.mmUserIdOfOpUser(u.id);
+          if (mm) recipients.add(mm);
+          else report.unlinked++;
+        }
+        for (const mm of recipients) {
+          const id = reminderId(action.rule, action.subjectId, mm, dayKey);
+          if (!(await opts.reminders.has(id)) && (await opts.reminders.countForDay(mm, dayKey)) >= opts.dailyCeiling) {
+            report.ceilingHit++;
+            continue;
+          }
+          const { created } = await opts.reminders.schedule(
+            {
+              id,
+              rule: action.rule,
+              subjectId: action.subjectId,
+              subjectTitle: action.subjectTitle,
+              recipientMmUserId: mm,
+              text: action.text,
+              dayKey,
+              dueAt: opts.now,
+            },
+            opts.mode,
+          );
+          if (created) report.created++;
+          else report.alreadyKnown++;
+        }
       }
-      handledSubjects.add(subjectId);
-      report.meetingsSeen++;
-      const action = evaluateMeetingFollowUp(meeting, opts.now);
-      if (!action) continue;
-      if (!(await admitted(action.dedupeKey, person.mmUserId))) continue;
-      await offer({
-        id: action.dedupeKey,
-        kind: action.kind,
-        subjectId,
-        subjectTitle: meeting.title,
-        recipientMmUserId: person.mmUserId,
-        reason: action.reason,
-        blockers: [],
-      });
+      if (opts.groups && opts.mode === "live" && (await ensureGroup(fact, opts.groups, opts.mmUserIdOfOpUser)))
+        report.groupsCreated++;
     }
   }
   return report;
+}
+
+async function ensureGroup(
+  fact: FeatureFacts,
+  groups: NonNullable<ScanOptions["groups"]>,
+  mmUserIdOfOpUser: ScanOptions["mmUserIdOfOpUser"],
+): Promise<boolean> {
+  const { feature, children } = fact;
+  const live = children.filter((c) => !paused(c.lifecycle));
+  if (feature.statusKey !== STAGE.briefing || !live.length || live.some((c) => !c.assignee)) return false;
+  const people = [feature.responsiblePlanner, ...live.map((c) => c.assignee)].flatMap((u) => u ?? []);
+  const members = (await Promise.all(people.map((u) => mmUserIdOfOpUser(u.id)))).flatMap((m) => m ?? []);
+  if (!members.length) return false;
+  const { created } = await groups.store.ensure(feature.id, members, (list) =>
+    groups.create(`功能 #${feature.id} ${feature.subject}`, list),
+  );
+  return created;
 }

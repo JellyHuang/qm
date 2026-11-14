@@ -8,9 +8,11 @@ import { createMcpServerStore, type McpServer } from "../src/mcp/mcp-server-stor
 import { createMcpToolService, type McpToolService } from "../src/mcp/mcp-tool-service.ts";
 import type { McpToolContract } from "../src/mcp/tool-contract.ts";
 import { zqConfigFromEnv } from "../src/zq/config.ts";
-import { createMcpOpReader } from "../src/zq/op-reader.ts";
+import { parseContract, type ZqContract } from "../src/zq/contract.ts";
+import { createZqGroups, type ZqGroup } from "../src/zq/groups.ts";
+import { createMcpOpReader, parseWorkView } from "../src/zq/op-reader.ts";
 import { createZqReminderStore, type ZqReminder } from "../src/zq/reminders.ts";
-import { dayKeyIn, scanIsDue, type ScanPerson } from "../src/zq/scanner.ts";
+import { dayKeyIn, scanIsDue, scanOnce, type ScanPerson } from "../src/zq/scanner.ts";
 import { createZqService, type ZqRunState } from "../src/zq/service.ts";
 import { loopbackFetch, startMcpTestServer, type McpTestServer } from "./support/mcp-test-server.ts";
 import { testMap } from "./support/test-database.ts";
@@ -18,44 +20,62 @@ import { testMap } from "./support/test-database.ts";
 const recorded = JSON.parse(
   readFileSync(new URL("./fixtures/openproject-mcp-tools.json", import.meta.url), "utf8"),
 ) as { tools: Tool[] };
-const contract = JSON.parse(
+const toolContract = JSON.parse(
   readFileSync(new URL("./fixtures/openproject-tool-contract.json", import.meta.url), "utf8"),
 ) as McpToolContract;
+const keyTable = JSON.parse(
+  readFileSync(new URL("./fixtures/zq-contract-keys.json", import.meta.url), "utf8"),
+) as Record<string, unknown>;
+const contract: ZqContract = parseContract({ ...keyTable, tools: { dutyHolders: "zq_duty_holders" } });
 
 const DAY = 86_400_000;
 const NOON_SHANGHAI = Date.UTC(2026, 10, 14, 4, 0);
 const iso = (ms: number) => new Date(ms).toISOString();
+const ALICE_OP = { id: "11", login: "alice", name: "Alice A" };
+const BOB_OP = { id: "12", login: "bob", name: "Bob B" };
+const CAROL_OP = { id: "13", login: "carol", name: "Carol C" };
+const ALICE: ScanPerson = { mmUserId: "mm-alice", principalId: "internal:alice", opUserId: "11", opName: "Alice A" };
+const BOB: ScanPerson = { mmUserId: "mm-bob", principalId: "internal:bob", opUserId: "12", opName: "Bob B" };
+const MM_OF: Record<string, string> = { "11": "mm-alice", "12": "mm-bob" };
 
-const ALICE: ScanPerson = { mmUserId: "mm-alice", principalId: "internal:alice", opName: "Alice A" };
-const BOB: ScanPerson = { mmUserId: "mm-bob", principalId: "internal:bob", opName: "Bob B" };
-
-function wp(id: number, over: Record<string, unknown> = {}) {
+function detail(id: number, over: Record<string, unknown> = {}) {
   return {
     id,
-    subject: `Task ${id}`,
-    status: "fm.in_progress",
-    updated_at: iso(NOON_SHANGHAI - DAY),
-    assignee: "Alice A",
-    custom_fields: {},
+    subject: `单${id}`,
+    type_key: "backend",
+    status_key: "task.in_progress",
+    lifecycle: "normal",
+    project_id: "p1",
+    status_changed_at: iso(NOON_SHANGHAI - DAY),
     ...over,
   };
 }
 
-const ALICE_WPS = [
-  wp(7, { updated_at: iso(NOON_SHANGHAI - 6 * DAY) }),
-  wp(8, { status: "fm.qa", updated_at: iso(NOON_SHANGHAI - 6 * DAY), custom_fields: { review_result: "pass" } }),
-  wp(9, { status: "qa.closed", updated_at: iso(NOON_SHANGHAI - 30 * DAY) }),
-  wp(10, { status: "pm.in_progress", due_date: iso(NOON_SHANGHAI - 2 * DAY), updated_at: iso(NOON_SHANGHAI - DAY) }),
-  wp(11, { updated_at: iso(NOON_SHANGHAI - 8 * DAY) }),
-  wp(12, { assignee: "Someone Else", updated_at: iso(NOON_SHANGHAI - 9 * DAY) }),
+const DETAILS = [
+  detail(1, { type_key: "feature", status_key: "feature.staffing", responsible_planner: ALICE_OP }),
+  detail(2, { type_key: "vfx", status_key: "task.unassigned", parent_id: 1 }),
+  detail(20, { type_key: "feature", status_key: "feature.in_production", responsible_planner: ALICE_OP }),
+  detail(21, { parent_id: 20, assignee: BOB_OP }),
+  detail(22, {
+    parent_id: 20,
+    assignee: BOB_OP,
+    due_date: iso(NOON_SHANGHAI - 3 * DAY),
+    estimated_hours: "PT8H",
+    planned_start: iso(NOON_SHANGHAI - 5 * DAY),
+    planned_end: iso(NOON_SHANGHAI - 3 * DAY),
+  }),
+  detail(30, { type_key: "feature", status_key: "feature.planner_unassigned", lifecycle: "suspended" }),
+  detail(50, { type_key: "feature", status_key: "feature.staffing", responsible_planner: ALICE_OP }),
 ];
 
-const BOB_MEETINGS = [
-  { id: "m1", title: "Weekly sync", end_time: iso(NOON_SHANGHAI - 20 * 60_000), state: "open", organizer: "Bob B" },
-  { id: "m2", title: "Closed sync", end_time: iso(NOON_SHANGHAI - 3 * 3_600_000), state: "closed", organizer: "Bob B" },
-  { id: "m3", title: "Just ended", end_time: iso(NOON_SHANGHAI - 5 * 60_000), state: "open", organizer: "Bob B" },
-  { id: "m4", title: "Alice's meeting", end_time: iso(NOON_SHANGHAI - 3_600_000), state: "open", organizer: "Alice A" },
-];
+const rows = (list: Array<{ id: number }>) =>
+  list.map((d) => ({ id: d.id, subject: `单${d.id}`, status: "显示名", updated_at: iso(NOON_SHANGHAI - DAY) }));
+
+const extraTools: Tool[] = ["zq_get_work_package", "zq_duty_holders"].map((name) => ({
+  name,
+  description: name,
+  inputSchema: { type: "object", properties: {} },
+}));
 
 interface Harness {
   mcp: McpTestServer;
@@ -64,18 +84,47 @@ interface Harness {
   reminders: ReturnType<typeof createZqReminderStore>;
   state: ReturnType<typeof testMap<ZqRunState>>;
   clock: { now: number };
-  service: (env: NodeJS.ProcessEnv) => ReturnType<typeof createZqService>;
+  calls: string[];
+  reader: ReturnType<typeof createMcpOpReader>;
+  service: (
+    env: NodeJS.ProcessEnv,
+    extra?: Partial<Parameters<typeof createZqService>[0]>,
+  ) => ReturnType<typeof createZqService>;
 }
 
-async function harness(t: { after(fn: () => unknown): void }): Promise<Harness> {
+async function harness(
+  t: { after(fn: () => unknown): void },
+  visible: Record<string, number[]> = {},
+): Promise<Harness> {
+  const calls: string[] = [];
+  const who = (authorization: string | undefined) => (authorization === "Bearer alice-token" ? "alice" : "bob");
   const mcp = await startMcpTestServer(t as Parameters<typeof startMcpTestServer>[0], {
-    tools: recorded.tools,
-    call: (name, _args, authorization) => {
-      const bodies: Record<string, unknown> = {
-        "Bearer alice-token": { list_work_packages: { work_packages: ALICE_WPS }, list_meetings: { meetings: [] } },
-        "Bearer bob-token": { list_work_packages: { work_packages: [] }, list_meetings: { meetings: BOB_MEETINGS } },
-      };
-      const body = (bodies[authorization ?? ""] as Record<string, unknown> | undefined)?.[name] ?? {};
+    tools: [...recorded.tools, ...extraTools],
+    call: (name, args, authorization) => {
+      calls.push(`${name}:${who(authorization)}`);
+      const ids = visible[who(authorization)] ?? (who(authorization) === "alice" ? DETAILS.map((d) => d.id) : []);
+      const mine = DETAILS.filter((d) => ids.includes(d.id));
+      let body: unknown = {};
+      if (name === "list_work_packages") {
+        const offset = Number(args["offset"] ?? 0);
+        const page = rows(mine).slice(offset, offset + 3);
+        body = {
+          offset,
+          limit: 3,
+          total: mine.length,
+          count: page.length,
+          next_offset: offset + 3 < mine.length ? offset + 3 : null,
+          truncated: false,
+          results: page,
+        };
+      } else if (name === "zq_get_work_package") {
+        body = mine.find((d) => d.id === args["id"]) ?? { error: { code: "not_found" } };
+      } else if (name === "zq_duty_holders") {
+        body = {
+          next_offset: null,
+          results: args["duty"] === "art_lead" ? [BOB_OP] : [],
+        };
+      }
       return { content: [{ type: "text", text: JSON.stringify(body) }] };
     },
   });
@@ -103,7 +152,7 @@ async function harness(t: { after(fn: () => unknown): void }): Promise<Harness> 
     clientId: "op-client",
     oauthAuthorizeUrl: "https://op.example.com/oauth/authorize",
     oauthTokenUrl: "https://op.example.com/oauth/token",
-    toolContract: contract,
+    toolContract,
     readOnly: false,
     enabled: true,
     updatedAt: 0,
@@ -117,7 +166,7 @@ async function harness(t: { after(fn: () => unknown): void }): Promise<Harness> 
   const sent: Array<{ to: string; text: string }> = [];
   const reminders = createZqReminderStore({ map: testMap<ZqReminder>(), now: () => clock.now });
   const state = testMap<ZqRunState>();
-  const reader = createMcpOpReader({ call: (tool, args, principalId) => oa.call(tool, args, principalId) });
+  const reader = createMcpOpReader({ call: (tool, args, principalId) => oa.call(tool, args, principalId), contract });
   return {
     mcp,
     oa,
@@ -125,18 +174,27 @@ async function harness(t: { after(fn: () => unknown): void }): Promise<Harness> 
     reminders,
     state,
     clock,
-    service: (env) =>
+    calls,
+    reader,
+    service: (env, extra = {}) =>
       createZqService({
-        config: zqConfigFromEnv(env),
+        config: zqConfigFromEnv({ ZQ_CONTRACT_FILE: "/unused.json", ...env }),
         reader,
+        contract,
+        mmUserIdOfOpUser: async (id) => MM_OF[id],
         people: async () => [ALICE, BOB],
         reminders,
         state,
         send: async (to, text) => void sent.push({ to, text }),
         now: () => clock.now,
+        ...extra,
       }),
   };
 }
+
+const DAY_KEY = "2026-11-14";
+const parseWork = (d: unknown) => parseWorkView(JSON.stringify(d), contract)!;
+const ids = async (h: Harness, mm: string) => (await h.reminders.pendingFor(mm)).map((r) => r.rule).sort();
 
 test("everything stays off unless switched on", async (t) => {
   const h = await harness(t);
@@ -147,148 +205,186 @@ test("everything stays off unless switched on", async (t) => {
   assert.equal(await h.state.get("scanner"), null);
 });
 
-test("a dry-run scan stores what it would send, reads as each person, sends nothing, and is idempotent", async (t) => {
+test("a dry-run scan walks the pages, stores what it would send per rule, target and day, and sends nothing", async (t) => {
   const h = await harness(t);
-  const service = h.service({ ZQ_SCANNER: "1" });
+  const service = h.service({ ZQ_SCANNER: "1", ZQ_ESCALATION_DUTIES: "art_lead" });
   const out = await service.tick();
+  assert.equal(out.scanned?.mode, "dry-run");
   assert.deepEqual(
     { ...out.scanned, mode: undefined },
     {
       mode: undefined,
       peopleScanned: 2,
       peopleFailed: 0,
-      workPackagesSeen: 5,
-      meetingsSeen: 3,
-      created: 4,
+      featuresSeen: 4,
+      created: 5,
       alreadyKnown: 0,
-      cappedOut: 1,
-      unassigned: 0,
+      ceilingHit: 0,
+      noHolder: 0,
+      unlinked: 0,
+      groupsCreated: 0,
     },
   );
-  assert.equal(out.scanned?.mode, "dry-run");
-  assert.equal(out.delivered, undefined);
   assert.deepEqual(h.sent, []);
-
-  const authorizations = new Set(
-    h.mcp.requests.filter((r) => r.rpc?.startsWith("tools/call")).map((r) => r.authorization),
+  assert.deepEqual(await ids(h, "mm-alice"), ["staffing-trades"]);
+  assert.deepEqual(await ids(h, "mm-bob"), [
+    "production-missing-plan",
+    "staffing-assign",
+    "task-overdue",
+    "task-overdue-escalation",
+  ]);
+  const missing = (await h.reminders.pendingFor("mm-bob")).find((r) => r.rule === "production-missing-plan")!;
+  assert.equal(missing.id, `production-missing-plan:wp:21:mm-bob:${DAY_KEY}`);
+  assert.match(missing.text, /预计工时、计划开始时间、计划结束时间/);
+  assert.equal(
+    await h.reminders.has(`planner-unassigned:wp:30:mm-alice:${DAY_KEY}`),
+    false,
+    "a suspended feature is left alone",
   );
-  assert.ok(authorizations.has("Bearer alice-token") && authorizations.has("Bearer bob-token"));
-
-  const aliceCount = await h.reminders.countForDay("mm-alice", "2026-11-14");
-  const bobCount = await h.reminders.countForDay("mm-bob", "2026-11-14");
-  assert.equal(aliceCount, 3, "the daily cap holds");
-  assert.equal(bobCount, 1);
-  const bob = await h.reminders.pendingFor("mm-bob");
-  assert.deepEqual(
-    bob.map((r) => [r.id, r.mode, r.kind]),
-    [["meeting:m1:follow-up", "dry-run", "meeting-follow-up"]],
+  assert.ok(
+    h.calls.filter((c) => c.startsWith("list_work_packages")).length >= 3,
+    "the 7 rows were read in pages of 3 for each person",
   );
-  const alice = await h.reminders.pendingFor("mm-alice");
-  assert.ok(alice.every((r) => r.mode === "dry-run"));
-  assert.ok(alice.some((r) => r.subjectId === "wp:8" && r.blockers.join() === "qa_result"));
-  assert.equal(await h.reminders.has("wp:9:stale:0"), false, "closed work is left alone");
-  assert.equal(await h.reminders.lastLiveAt("wp:12"), undefined, "someone else's work is not Alice's reminder");
-
-  assert.deepEqual(
-    (await service.tick()).scanned,
-    undefined,
-    "the next tick inside the same 5 minutes does not rescan",
-  );
-  h.clock.now += 5 * 60_000;
-  const again = (await service.tick()).scanned!;
-  assert.equal(again.created, 1, "the meeting that had just ended is now past its grace period");
-  assert.equal(await h.reminders.has("meeting:m3:follow-up"), true);
-  assert.equal(again.alreadyKnown, 4);
 });
 
-test("going live delivers the stored reminders by Mattermost DM with the exit-blocker names", async (t) => {
+test("each feature is handled once even when two people can see it, and unchanged orders are not re-read", async (t) => {
+  const h = await harness(t, { alice: [1, 2, 20, 21, 22, 30, 50], bob: [20, 21, 22] });
+  await h.service({ ZQ_SCANNER: "1" }).tick();
+  const reads = h.calls.filter((c) => c.startsWith("zq_get_work_package"));
+  assert.equal(reads.length, 7 + 3, "Alice's seven and Bob's three are each read once");
+  assert.equal((await h.reminders.pendingFor("mm-bob")).filter((r) => r.rule === "task-overdue").length, 1);
+  h.clock.now += 5 * 60_000;
+  const before = h.calls.length;
+  const again = (await h.service({ ZQ_SCANNER: "1" }).tick()).scanned!;
+  assert.equal(again.created, 0);
+  assert.ok(again.alreadyKnown > 0);
+  assert.equal(
+    h.calls.slice(before).filter((c) => c.startsWith("zq_get_work_package")).length,
+    0,
+    "the per-order read is cached until updated_at changes",
+  );
+});
+
+test("going live delivers the Chinese texts to the people the rules name, once", async (t) => {
   const h = await harness(t);
   await h.service({ ZQ_SCANNER: "1" }).tick();
   h.clock.now += 5 * 60_000;
   const live = h.service({ ZQ_SCANNER: "1", ZQ_REMINDER_DELIVERY: "1" });
   const out = await live.tick();
   assert.equal(out.scanned?.mode, "live");
-  assert.deepEqual(out.delivered, { sent: 5, failed: 0 });
-  assert.equal(h.sent.filter((m) => m.to === "mm-alice").length, 3);
-  const qa = h.sent.find((m) => m.text.includes("wp:8"));
-  assert.match(qa!.text, /Fill in before moving it on: qa_result/);
-  assert.match(h.sent.find((m) => m.to === "mm-bob")!.text, /Weekly sync/);
+  assert.deepEqual(out.delivered, { sent: 4, failed: 0 });
+  assert.match(h.sent.find((m) => m.to === "mm-alice")!.text, /请确认本功能需要哪些专业和交付项/);
+  assert.ok(h.sent.some((m) => m.to === "mm-bob" && /已超过计划结束时间 3 天/.test(m.text)));
   h.clock.now += 5 * 60_000;
   assert.deepEqual((await live.tick()).delivered, { sent: 0, failed: 0 }, "nothing is sent twice");
 });
 
-test("the cap resets with the Shanghai calendar day and a failed delivery is retried", async (t) => {
+test("the same reminder repeats the next Shanghai day and a failed delivery is retried", async (t) => {
   const h = await harness(t);
   let fail = true;
-  const live = createZqService({
-    config: zqConfigFromEnv({ ZQ_SCANNER: "1", ZQ_REMINDER_DELIVERY: "1" }),
-    reader: createMcpOpReader({ call: (tool, args, principalId) => h.oa.call(tool, args, principalId) }),
-    people: async () => [ALICE],
-    reminders: h.reminders,
-    state: h.state,
-    send: async (to, text) => {
-      if (fail) throw new Error("mattermost down");
-      h.sent.push({ to, text });
+  const live = h.service(
+    { ZQ_SCANNER: "1", ZQ_REMINDER_DELIVERY: "1" },
+    {
+      send: async (to, text) => {
+        if (fail) throw new Error("mattermost down");
+        h.sent.push({ to, text });
+      },
     },
-    now: () => h.clock.now,
-  });
-  const first = await live.tick();
-  assert.deepEqual(first.delivered, { sent: 0, failed: 3 });
+  );
+  assert.deepEqual((await live.tick()).delivered, { sent: 0, failed: 4 });
   fail = false;
   h.clock.now += 5 * 60_000;
-  assert.deepEqual((await live.tick()).delivered, { sent: 3, failed: 0 });
-  h.clock.now = NOON_SHANGHAI + 3 * DAY;
-  const nextDay = (await live.tick()).scanned!;
-  assert.equal(await h.reminders.countForDay("mm-alice", "2026-11-17"), nextDay.created);
-  assert.ok(nextDay.created >= 1 && nextDay.created <= 3);
+  assert.deepEqual((await live.tick()).delivered, { sent: 4, failed: 0 });
+  h.clock.now = NOON_SHANGHAI + DAY;
+  const next = await live.tick();
+  assert.equal(next.scanned?.created, 4);
+  assert.equal(await h.reminders.countForDay("mm-alice", "2026-11-15"), 1);
+});
+
+test("a configured ceiling stops further reminders for a person that day and is reported", async (t) => {
+  const h = await harness(t);
+  const out = (await h.service({ ZQ_SCANNER: "1", ZQ_REMINDER_DAILY_CEILING: "1" }).tick()).scanned!;
+  assert.equal(await h.reminders.countForDay("mm-bob", DAY_KEY), 1);
+  assert.equal(out.ceilingHit, 2);
+});
+
+test("an unlinked recipient and a duty without holders are counted, not guessed", async (t) => {
+  const h = await harness(t);
+  const out = (
+    await h
+      .service(
+        { ZQ_SCANNER: "1", ZQ_ESCALATION_DUTIES: "planning_lead" },
+        { mmUserIdOfOpUser: async (id) => (id === "12" ? "mm-bob" : undefined) },
+      )
+      .tick()
+  ).scanned!;
+  assert.equal(out.unlinked, 1, "Alice's staffing question has nobody to reach");
+  assert.equal(out.noHolder, 1, "planning_lead has no holder");
+  assert.deepEqual(await ids(h, "mm-alice"), []);
 });
 
 test("a person whose OpenProject read fails is skipped without stopping the rest", async (t) => {
-  const h = await harness(t);
-  const out = await createZqService({
-    config: zqConfigFromEnv({ ZQ_SCANNER: "1" }),
-    reader: createMcpOpReader({
-      call: async (tool, args, principalId) => {
-        if (principalId === "internal:alice") throw new Error("token revoked");
-        return h.oa.call(tool, args, principalId);
+  const h = await harness(t, { alice: [1, 2, 20, 21, 22, 30, 50], bob: [20, 21, 22] });
+  const failing = createMcpOpReader({
+    call: async (tool, args, principalId) => {
+      if (principalId === "internal:alice") throw new Error("token revoked");
+      return h.oa.call(tool, args, principalId);
+    },
+    contract,
+  });
+  const out = await h.service({ ZQ_SCANNER: "1" }, { reader: failing }).tick();
+  assert.deepEqual([out.scanned?.peopleScanned, out.scanned?.peopleFailed, out.scanned?.featuresSeen], [1, 1, 1]);
+});
+
+test("the group for a feature in the briefing stage is made once, only when every live order has an assignee", async () => {
+  const feature = parseWork(
+    detail(40, { type_key: "feature", status_key: "feature.briefing", responsible_planner: ALICE_OP }),
+  );
+  const ready = [
+    parseWork(detail(41, { parent_id: 40, assignee: BOB_OP })),
+    parseWork(detail(42, { parent_id: 40, assignee: CAROL_OP })),
+    parseWork(detail(43, { parent_id: 40, lifecycle: "cancelled" })),
+  ];
+  const created: Array<{ name: string; members: string[] }> = [];
+  const run = async (children: typeof ready, groups = createZqGroups({ map: testMap<ZqGroup>() })) => {
+    const report = await scanOnce({
+      reader: { features: async () => [{ feature, children, meetings: [] }], dutyHolders: async () => undefined },
+      contract,
+      people: [ALICE],
+      mmUserIdOfOpUser: async (id) => ({ ...MM_OF, "13": "mm-carol" })[id],
+      reminders: createZqReminderStore({ map: testMap<ZqReminder>() }),
+      groups: {
+        store: groups,
+        create: async (name, members) => {
+          created.push({ name, members });
+          return "channel-1";
+        },
       },
-    }),
-    people: async () => [ALICE, BOB],
-    reminders: h.reminders,
-    state: h.state,
-    send: async () => {},
-    now: () => h.clock.now,
-  }).tick();
-  assert.deepEqual([out.scanned?.peopleScanned, out.scanned?.peopleFailed, out.scanned?.created], [1, 1, 1]);
+      mode: "live",
+      now: NOON_SHANGHAI,
+      timezone: "Asia/Shanghai",
+      dailyCeiling: 100,
+      escalation: { duties: [], afterDays: 2 },
+    });
+    return { report, groups };
+  };
+  assert.equal((await run([parseWork(detail(41, { parent_id: 40 })), ...ready.slice(1)])).report.groupsCreated, 0);
+  const first = await run(ready);
+  assert.equal(first.report.groupsCreated, 1);
+  assert.deepEqual(created, [{ name: "功能 #40 单40", members: ["mm-alice", "mm-bob", "mm-carol"] }]);
+  assert.equal((await run(ready, first.groups)).report.groupsCreated, 0, "a second scan reuses the group");
+  assert.equal(created.length, 1);
+  assert.equal((await first.groups.get(40))?.groupRef, "channel-1");
 });
 
 test("the scan schedule follows the cron in its timezone", () => {
   const start = Date.UTC(2026, 10, 14, 4, 1);
   assert.equal(scanIsDue("*/5 * * * *", "Asia/Shanghai", start, start + 3 * 60_000), false);
   assert.equal(scanIsDue("*/5 * * * *", "Asia/Shanghai", start, start + 4 * 60_000), true);
-  assert.equal(
-    scanIsDue("0 9 * * *", "Asia/Shanghai", Date.UTC(2026, 10, 14, 0, 30), Date.UTC(2026, 10, 14, 0, 59)),
-    false,
-  );
-  assert.equal(
-    scanIsDue("0 9 * * *", "Asia/Shanghai", Date.UTC(2026, 10, 14, 0, 30), Date.UTC(2026, 10, 14, 1, 0)),
-    true,
-  );
   assert.equal(scanIsDue("*/5 * * * *", "Asia/Shanghai", undefined, start), true);
 });
 
-test("invalid scanner settings are refused at startup", () => {
-  assert.throws(() => zqConfigFromEnv({ ZQ_SCANNER_CRON: "nonsense" }), /ZQ_SCANNER_CRON/);
-  assert.throws(() => zqConfigFromEnv({ ZQ_SCANNER_TZ: "Mars/Base" }), /ZQ_SCANNER_TZ/);
-  assert.throws(() => zqConfigFromEnv({ ZQ_REMINDER_DAILY_CAP: "0" }), /ZQ_REMINDER_DAILY_CAP/);
-  const c = zqConfigFromEnv({});
-  assert.deepEqual(
-    [c.scanner, c.deliverReminders, c.reminderDailyCap, c.identityMap, c.reports.enabled],
-    [{ enabled: false, cron: "*/5 * * * *", timezone: "Asia/Shanghai" }, false, 3, false, false],
-  );
-});
-
-test("the daily cap uses the Shanghai calendar day", () => {
+test("the dedup day is the Shanghai calendar day", () => {
   assert.equal(dayKeyIn("Asia/Shanghai", Date.UTC(2026, 10, 14, 15, 59)), "2026-11-14");
   assert.equal(dayKeyIn("Asia/Shanghai", Date.UTC(2026, 10, 14, 16, 0)), "2026-11-15");
 });

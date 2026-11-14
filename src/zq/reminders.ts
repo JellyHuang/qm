@@ -1,17 +1,15 @@
 import type { DurableMap } from "../persistence/durable-map.ts";
-
-export type ReminderKind = "remind-stale" | "remind-overdue" | "escalate-blocked" | "meeting-follow-up";
+import type { RuleId } from "./rules.ts";
 
 export type ReminderMode = "dry-run" | "live";
 
 export interface ZqReminderDraft {
   id: string;
-  kind: ReminderKind;
+  rule: RuleId;
   subjectId: string;
   subjectTitle?: string;
   recipientMmUserId: string;
-  reason: string;
-  blockers: string[];
+  text: string;
   dayKey: string;
   dueAt: number;
 }
@@ -28,10 +26,13 @@ export interface ZqReminderStore {
   due(now: number, limit?: number): Promise<ZqReminder[]>;
   markSent(id: string): Promise<ZqReminder | null>;
   has(id: string): Promise<boolean>;
-  lastLiveAt(subjectId: string): Promise<number | undefined>;
   countForDay(recipientMmUserId: string, dayKey: string): Promise<number>;
   cancelForSubject(subjectId: string): Promise<number>;
   pendingFor(recipientMmUserId: string): Promise<ZqReminder[]>;
+}
+
+export function reminderId(rule: RuleId, subjectId: string, recipientMmUserId: string, dayKey: string): string {
+  return `${rule}:${subjectId}:${recipientMmUserId}:${dayKey}`;
 }
 
 export function createZqReminderStore(opts: { map: DurableMap<ZqReminder>; now?: () => number }): ZqReminderStore {
@@ -57,12 +58,6 @@ export function createZqReminderStore(opts: { map: DurableMap<ZqReminder>; now?:
       opts.map.update(id, (r) => (r.status === "pending" ? { ...r, status: "sent", sentAt: now() } : r)),
     async has(id) {
       return (await opts.map.get(id)) !== null;
-    },
-    async lastLiveAt(subjectId) {
-      const times = (await opts.map.all())
-        .filter((r) => r.subjectId === subjectId && r.mode === "live")
-        .map((r) => r.createdAt);
-      return times.length ? Math.max(...times) : undefined;
     },
     async countForDay(recipientMmUserId, dayKey) {
       return (await opts.map.all()).filter(
