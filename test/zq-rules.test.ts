@@ -50,9 +50,9 @@ test("an unassigned planner and a pending review go to the owners the contract n
     { kind: "duty", duty: "pm" },
   ]);
   assert.match(a[0]!.text, /待分配策划/);
-  const r = rules({ feature: feature("feature.review"), children: [] });
+  const r = rules({ feature: feature("feature.review", { reviewer: BOB }), children: [] });
   assert.deepEqual(ids(r), ["review-pending"]);
-  assert.deepEqual(r[0]!.to, [{ kind: "duty", duty: "producer" }]);
+  assert.deepEqual(r[0]!.to, [{ kind: "field", field: "reviewer" }]);
 });
 
 test("staffing asks the planner for trades when there are no child orders, and the duty leads for unassigned ones", () => {
@@ -166,4 +166,50 @@ test("waiting for formal assets lists the unfinished art orders for the art lead
     children: [work(3, { typeKey: "vfx", statusKey: "execution.done" })],
   });
   assert.match(done[0]!.text, /全部完成/);
+});
+
+test("the review is for the reviewer on the order, the QA stage for the QA owner and the acceptance for the acceptor", () => {
+  const reviewer = { id: "22", name: "Rev R" };
+  const review = rules({ feature: feature("feature.review", { reviewer }), children: [] });
+  assert.deepEqual(ids(review), ["review-pending"]);
+  assert.deepEqual(review[0]!.to, [{ kind: "field", field: "reviewer" }]);
+  const qa = rules({
+    feature: feature("feature.qa", { qaOwner: { id: "23", name: "QA Q" } }),
+    children: [],
+    exit: { ready: true, blockers: [] },
+  });
+  assert.deepEqual(qa[0]!.to, [{ kind: "field", field: "qaOwner" }]);
+  const acceptance = rules({
+    feature: feature("feature.acceptance", { acceptor: ALICE }),
+    children: [],
+    exit: { ready: true, blockers: [] },
+  });
+  assert.deepEqual(acceptance[0]!.to, [{ kind: "field", field: "acceptor" }]);
+});
+
+test("an empty responsibility field never falls back to a duty group: it is reported to the configured duties", () => {
+  const unset = rules({ feature: feature("feature.review"), children: [] }, contract, { ...OPTS, unsetDuties: ["pm"] });
+  assert.deepEqual(ids(unset), ["responsibility-not-set"]);
+  assert.deepEqual(unset[0]!.to, [{ kind: "duty", duty: "pm" }]);
+  assert.equal(unset[0]!.subjectId, "wp:1:reviewer");
+  assert.match(unset[0]!.text, /需要审核人,但还没有设置/);
+  const unconfigured = rules({ feature: feature("feature.review"), children: [] });
+  assert.deepEqual(ids(unconfigured), ["responsibility-not-set"]);
+  assert.deepEqual(unconfigured[0]!.to, [], "counted, but nobody is guessed");
+  assert.deepEqual(ids(rules({ feature: feature("feature.review", { reviewer: ALICE }), children: [] })), [
+    "review-pending",
+  ]);
+});
+
+test("a missing planner is reported once per field even when several rules would have used it", () => {
+  const f = feature("feature.briefing", { responsiblePlanner: undefined });
+  const out = rules(
+    { feature: f, children: [], meetings: [{ id: "m", title: "t", endAt: NOW - DAY, state: "open" }] },
+    contract,
+    {
+      ...OPTS,
+      unsetDuties: ["pm"],
+    },
+  );
+  assert.deepEqual(ids(out), ["responsibility-not-set"]);
 });

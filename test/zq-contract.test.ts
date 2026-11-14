@@ -12,6 +12,8 @@ test("the fixture parses and keeps the labels for the stage keys", () => {
   assert.equal(c.stages.feature["feature.briefing"], "宣讲对齐");
   assert.equal(c.stageRoles.inProduction, "feature.development");
   assert.equal(c.stages.task["program.integration"], "联调中");
+  assert.deepEqual(c.stageOwners["feature.review"], [{ kind: "field", field: "reviewer" }]);
+  assert.equal(c.fields.qaOwner, "qa_owner");
   assert.equal(c.tools.exitCheck, "zq_check_exit");
 });
 

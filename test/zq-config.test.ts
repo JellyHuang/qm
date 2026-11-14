@@ -45,3 +45,15 @@ test("feature channels and the OpenProject link are off and unset by default, an
   assert.deepEqual([on.featureChannels, on.opBaseUrl], [true, "https://op.example.com"]);
   assert.throws(() => zqConfigFromEnv({ ZQ_OP_BASE_URL: "op.example.com" }), /ZQ_OP_BASE_URL/);
 });
+
+test("who hears about an empty responsibility field is configured and never chosen by default", () => {
+  assert.deepEqual(zqConfigFromEnv({}).unsetResponsibilityDuties, []);
+  assert.deepEqual(zqConfigFromEnv({ ZQ_UNSET_RESPONSIBILITY_DUTIES: "pm,producer" }).unsetResponsibilityDuties, [
+    "pm",
+    "producer",
+  ]);
+  assert.throws(
+    () => zqConfigFromEnv({ ZQ_UNSET_RESPONSIBILITY_DUTIES: "nobody" }),
+    /ZQ_UNSET_RESPONSIBILITY_DUTIES names an unknown duty/,
+  );
+});

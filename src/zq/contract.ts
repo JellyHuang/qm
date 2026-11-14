@@ -6,7 +6,18 @@ export type Lifecycle = "normal" | "delayed" | "suspended" | "cancelled";
 
 const LIFECYCLES: readonly Lifecycle[] = ["normal", "delayed", "suspended", "cancelled"];
 
-export type Recipient = { kind: "duty"; duty: Duty } | { kind: "field"; field: "responsiblePlanner" | "assignee" };
+export const PERSON_FIELDS = [
+  "responsiblePlanner",
+  "pm",
+  "reviewer",
+  "qaOwner",
+  "acceptor",
+  "regressionOwner",
+] as const;
+
+export type PersonField = (typeof PERSON_FIELDS)[number];
+
+export type Recipient = { kind: "duty"; duty: Duty } | { kind: "field"; field: PersonField };
 
 export interface StageRoles {
   plannerUnassigned: string;
@@ -30,11 +41,10 @@ export interface ZqContract {
   stageRoles: StageRoles;
   stageOwners: Readonly<Record<string, readonly Recipient[]>>;
   fields: {
-    responsiblePlanner: string;
     estimate: string;
     plannedStart: string;
     plannedEnd: string;
-  };
+  } & Record<PersonField, string>;
   duties: Readonly<Record<Duty, string>>;
   tools: { exitCheck?: string; meetingsForFeature?: string; dutyHolders?: string };
 }
@@ -74,8 +84,8 @@ function optionalTools(v: unknown): ZqContract["tools"] {
 }
 
 function recipient(raw: string): Recipient {
-  if (raw === "field:responsiblePlanner" || raw === "field:assignee")
-    return { kind: "field", field: raw.slice("field:".length) as "responsiblePlanner" | "assignee" };
+  const field = raw.startsWith("field:") ? raw.slice("field:".length) : "";
+  if ((PERSON_FIELDS as readonly string[]).includes(field)) return { kind: "field", field: field as PersonField };
   const duty = raw.startsWith("duty:") ? raw.slice("duty:".length) : "";
   if (!(DUTIES as readonly string[]).includes(duty)) throw new Error(`contract key table: unknown recipient ${raw}`);
   return { kind: "duty", duty: duty as Duty };
@@ -121,6 +131,13 @@ export function parseContract(value: unknown): ZqContract {
     stageOwners,
     fields: {
       responsiblePlanner: text(fields["responsiblePlanner"], "fields.responsiblePlanner"),
+      pm: fields["pm"] ? text(fields["pm"], "fields.pm") : "pm",
+      reviewer: fields["reviewer"] ? text(fields["reviewer"], "fields.reviewer") : "reviewer",
+      qaOwner: fields["qaOwner"] ? text(fields["qaOwner"], "fields.qaOwner") : "qa_owner",
+      acceptor: fields["acceptor"] ? text(fields["acceptor"], "fields.acceptor") : "acceptor",
+      regressionOwner: fields["regressionOwner"]
+        ? text(fields["regressionOwner"], "fields.regressionOwner")
+        : "regression_owner",
       estimate: text(fields["estimate"], "fields.estimate"),
       plannedStart: text(fields["plannedStart"], "fields.plannedStart"),
       plannedEnd: text(fields["plannedEnd"], "fields.plannedEnd"),

@@ -1,4 +1,4 @@
-import { paused, type Duty, type Lifecycle, type Recipient, type ZqContract } from "./contract.ts";
+import { paused, type Duty, type Lifecycle, type PersonField, type Recipient, type ZqContract } from "./contract.ts";
 
 export interface OpUserRef {
   id: string;
@@ -17,6 +17,11 @@ export interface WorkView {
   projectId?: string;
   assignee?: OpUserRef;
   responsiblePlanner?: OpUserRef;
+  pm?: OpUserRef;
+  reviewer?: OpUserRef;
+  qaOwner?: OpUserRef;
+  acceptor?: OpUserRef;
+  regressionOwner?: OpUserRef;
   dueAt?: number;
   estimateHours?: number;
   plannedStart?: number;
@@ -55,7 +60,8 @@ export type RuleId =
   | "task-overdue"
   | "task-overdue-escalation"
   | "exit-ready"
-  | "formal-assets-pending";
+  | "formal-assets-pending"
+  | "responsibility-not-set";
 
 export interface RuleAction {
   rule: RuleId;
@@ -70,6 +76,7 @@ export interface RuleOptions {
   meetingGraceMs: number;
   escalateAfterMs: number;
   escalationDuties: readonly Duty[];
+  unsetDuties: readonly Duty[];
 }
 
 const DAY = 86_400_000;
@@ -77,6 +84,7 @@ export const DEFAULT_RULE_OPTIONS = {
   meetingGraceMs: 10 * 60_000,
   escalateAfterMs: 2 * DAY,
   escalationDuties: [] as readonly Duty[],
+  unsetDuties: [] as readonly Duty[],
 };
 
 const label = (contract: ZqContract, key: string) => contract.stages.feature[key] ?? contract.stages.task[key] ?? key;
@@ -97,7 +105,16 @@ function missingPlan(w: WorkView): string[] {
   ];
 }
 
-export function evaluateRules(facts: FeatureFacts, contract: ZqContract, opts: RuleOptions): RuleAction[] {
+const FIELD_LABEL: Record<PersonField, string> = {
+  responsiblePlanner: "负责策划",
+  pm: "PM",
+  reviewer: "审核人",
+  qaOwner: "QA 确认人",
+  acceptor: "验收人",
+  regressionOwner: "回归确认人",
+};
+
+function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOptions): RuleAction[] {
   const { feature, children } = facts;
   if (feature.typeKey !== contract.featureType || !active(feature)) return [];
   const at = (rule: RuleId, to: Target[], text: string, subject: WorkView = feature): RuleAction => ({
@@ -233,4 +250,25 @@ export function evaluateRules(facts: FeatureFacts, contract: ZqContract, opts: R
     );
   }
   return out;
+}
+
+export function evaluateRules(facts: FeatureFacts, contract: ZqContract, opts: RuleOptions): RuleAction[] {
+  const actions = evaluateStage(facts, contract, opts);
+  const { feature } = facts;
+  const unset = new Set<PersonField>();
+  for (const action of actions)
+    for (const target of action.to) if (target.kind === "field" && !feature[target.field]) unset.add(target.field);
+  return [
+    ...actions.map((a) => ({
+      ...a,
+      to: a.to.filter((t) => t.kind !== "field" || feature[t.field]),
+    })),
+    ...[...unset].map((field): RuleAction => ({
+      rule: "responsibility-not-set",
+      subjectId: `wp:${feature.id}:${field}`,
+      subjectTitle: feature.subject,
+      to: opts.unsetDuties.map((duty): Target => ({ kind: "duty", duty })),
+      text: `功能「${feature.subject}」(#${feature.id})在「${label(contract, feature.statusKey)}」需要${FIELD_LABEL[field]},但还没有设置。请设置。`,
+    })),
+  ].filter((a) => a.rule === "responsibility-not-set" || a.to.length > 0);
 }

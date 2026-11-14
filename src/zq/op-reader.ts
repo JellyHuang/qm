@@ -1,5 +1,5 @@
 import { lifecycleOf, type Duty, type ZqContract } from "./contract.ts";
-import type { ExitCheck, FeatureFacts, MeetingView, OpUserRef, WorkView } from "./rules.ts";
+import type { ExitCheck, MeetingView, OpUserRef, WorkView } from "./rules.ts";
 import type { OpReader, ScanPerson } from "./scanner.ts";
 
 export type OpCall = (tool: string, args: Record<string, unknown>, principalId: string) => Promise<string>;
@@ -83,14 +83,24 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
   if (!isObject(item)) return undefined;
   const id = Number(item["id"]);
   const typeKey = str(item["type_key"]);
-  const statusKey = str(item["stage_key"]) ?? str(item["status_key"]);
+  const stage = str(item["stage_key"]);
+  const status = str(item["status_key"]);
+  if (stage && status && stage !== status)
+    throw new OpError("contract_mismatch", `work package ${id} has stage_key ${stage} but status_key ${status}`);
+  const statusKey = stage ?? status;
   if (!Number.isSafeInteger(id) || !typeKey || !statusKey) return undefined;
   const lifecycle = lifecycleOf(item["lifecycle"]);
   const statusChangedAt = time(item["status_changed_at"]);
   const parentId = Number(item["parent_id"]);
   const projectId = str(item["project_id"]);
   const assignee = individual(item["assignee"]);
-  const planner = person(item[contract.fields.responsiblePlanner]);
+  const personAt = (field: keyof ZqContract["fields"]) => person(item[contract.fields[field]]);
+  const planner = personAt("responsiblePlanner");
+  const pm = personAt("pm");
+  const reviewer = personAt("reviewer");
+  const qaOwner = personAt("qaOwner");
+  const acceptor = personAt("acceptor");
+  const regressionOwner = personAt("regressionOwner");
   const dueAt = time(item["due_date"], "end");
   const estimateHours = hours(item[contract.fields.estimate]);
   const plannedStart = time(item[contract.fields.plannedStart], "start");
@@ -106,6 +116,11 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
     ...(projectId ? { projectId } : {}),
     ...(assignee ? { assignee } : {}),
     ...(planner ? { responsiblePlanner: planner } : {}),
+    ...(pm ? { pm } : {}),
+    ...(reviewer ? { reviewer } : {}),
+    ...(qaOwner ? { qaOwner } : {}),
+    ...(acceptor ? { acceptor } : {}),
+    ...(regressionOwner ? { regressionOwner } : {}),
     ...(dueAt !== undefined ? { dueAt } : {}),
     ...(estimateHours !== undefined ? { estimateHours } : {}),
     ...(plannedStart !== undefined ? { plannedStart } : {}),
@@ -164,11 +179,20 @@ export function createMcpOpReader(opts: { call: OpCall; contract: ZqContract; se
   const invisible = (e: unknown) => e instanceof OpError && (e.code === "not_found" || e.code === "404");
 
   return {
-    async features(scanner: ScanPerson): Promise<FeatureFacts[]> {
+    async features(scanner: ScanPerson) {
       const rows = await pages("zq_list_work_packages", { limit: PAGE_LIMIT }, scanner.principalId);
-      const found = rows.flatMap((row) => parseWorkView(row, contract) ?? []);
+      const problems: string[] = [];
+      const found = rows.flatMap((row) => {
+        try {
+          return parseWorkView(row, contract) ?? [];
+        } catch (e) {
+          if (!(e instanceof OpError)) throw e;
+          problems.push(e.message);
+          return [];
+        }
+      });
       const features = found.filter((w) => w.typeKey === contract.featureType);
-      return mapLimited(features, async (feature) => {
+      const facts = await mapLimited(features, async (feature) => {
         const children = found.filter((w) => w.parentId === feature.id);
         const [meetings, exit] = await Promise.all([
           contract.tools.meetingsForFeature
@@ -192,6 +216,7 @@ export function createMcpOpReader(opts: { call: OpCall; contract: ZqContract; se
         ]);
         return { feature, children, ...(meetings ? { meetings } : {}), ...(exit ? { exit } : {}) };
       });
+      return { facts, problems };
     },
     async dutyHolders(scanner: ScanPerson, projectId: string, duty: Duty): Promise<OpUserRef[] | undefined> {
       if (!contract.tools.dutyHolders) return undefined;

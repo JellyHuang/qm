@@ -221,6 +221,9 @@ test("a dry-run scan walks the pages, stores what it would send per rule, target
       noHolder: 0,
       unlinked: 0,
       groupsCreated: 0,
+      unsetResponsibility: 0,
+      contractProblems: 0,
+      problemSamples: [],
     },
   );
   assert.deepEqual(h.sent, []);
@@ -348,7 +351,10 @@ test("the group for a feature in the briefing stage is made once, only when ever
   const created: Array<{ feature: { id: number; subject: string; url?: string }; members: string[] }> = [];
   const run = async (children: typeof ready, groups = createZqGroups({ map: testMap<ZqGroup>() })) => {
     const report = await scanOnce({
-      reader: { features: async () => [{ feature, children, meetings: [] }], dutyHolders: async () => undefined },
+      reader: {
+        features: async () => ({ facts: [{ feature, children, meetings: [] }], problems: [] }),
+        dutyHolders: async () => undefined,
+      },
       contract,
       people: [ALICE],
       mmUserIdOfOpUser: async (id) => ({ ...MM_OF, "13": "mm-carol" })[id],

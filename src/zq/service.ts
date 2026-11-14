@@ -97,6 +97,7 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
             timezone: config.scanner.timezone,
             dailyCeiling: config.reminderDailyCeiling,
             escalation: config.escalation,
+            unsetDuties: config.unsetResponsibilityDuties,
           });
           await deps.state.merge("scanner", { lastReport: out.scanned });
         }

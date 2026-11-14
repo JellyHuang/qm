@@ -15,7 +15,7 @@ const wp = (over: Record<string, unknown> = {}) => ({
   subject: "新增英雄",
   project_id: "p1",
   type_key: "feature",
-  status_key: "feature.status.legacy",
+  status_key: "feature.briefing",
   stage_key: "feature.briefing",
   lifecycle: "delayed",
   lock_version: 3,
@@ -30,7 +30,7 @@ const wp = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-test("the normalized v0.3 object is read by its stable keys, and stage_key wins over status_key", () => {
+test("the normalized v0.3 object is read by its stable keys, and status_key is used when stage_key is absent", () => {
   const view = parseWorkView(wp(), contract)!;
   assert.deepEqual(
     [
@@ -46,7 +46,11 @@ test("the normalized v0.3 object is read by its stable keys, and stage_key wins 
   );
   assert.equal(view.parentId, undefined);
   assert.equal(view.statusChangedAt, undefined, "an unknown change time stays unknown");
-  assert.equal(parseWorkView(wp({ stage_key: undefined }), contract)!.statusKey, "feature.status.legacy");
+  assert.equal(
+    parseWorkView(wp({ stage_key: undefined }), contract)!.statusKey,
+    "feature.briefing",
+    "status_key is the same-value alias",
+  );
   assert.equal(parseWorkView(wp({ type_key: undefined }), contract), undefined);
 });
 
@@ -77,7 +81,10 @@ function fake(handlers: Record<string, (args: Record<string, unknown>) => unknow
 }
 
 test("pages follow next_offset to the end, children are grouped under their parent, and the tools get the documented arguments", async () => {
-  const rows = [wp({ id: 1 }), wp({ id: 2, type_key: "vfx", parent_id: 1, stage_key: "execution.unassigned" })];
+  const rows = [
+    wp({ id: 1 }),
+    wp({ id: 2, type_key: "vfx", parent_id: 1, stage_key: "execution.unassigned", status_key: "execution.unassigned" }),
+  ];
   const f = fake({
     openproject_zq_list_work_packages: (a) => ({
       next_offset: a["offset"] === 0 ? 1 : null,
@@ -103,7 +110,7 @@ test("pages follow next_offset to the end, children are grouped under their pare
       ],
     }),
   });
-  const facts = await createMcpOpReader({ call: f.call, contract }).features(PERSON);
+  const { facts } = await createMcpOpReader({ call: f.call, contract }).features(PERSON);
   assert.equal(facts.length, 1);
   assert.deepEqual(
     facts[0]!.children.map((c) => c.id),
@@ -125,7 +132,7 @@ test("a feature OpenProject says is not visible is read without the optional ans
     openproject_zq_check_exit: () => ({ error: { code: "not_found", message: "no such object" } }),
     openproject_zq_meetings_for_feature: () => ({ next_offset: null, results: [] }),
   });
-  const [facts] = await createMcpOpReader({ call: hidden.call, contract }).features(PERSON);
+  const [facts] = (await createMcpOpReader({ call: hidden.call, contract }).features(PERSON)).facts;
   assert.equal(facts!.exit, undefined);
   assert.deepEqual(facts!.meetings, []);
   const denied = fake({
@@ -165,4 +172,41 @@ test("duty holders are asked for by OpenProject's name of the duty and keep seve
   assert.ok(f.calls[0]!.includes('"duty":"lead_artist"'));
   const without = createMcpOpReader({ call: f.call, contract: { ...contract, tools: {} } });
   assert.equal(await without.dutyHolders(PERSON, "p1", "art_lead"), undefined);
+});
+
+test("stage_key and status_key that disagree are a contract problem: the order is skipped and reported, not guessed", async () => {
+  assert.throws(
+    () => parseWorkView(wp({ status_key: "feature.review", stage_key: "feature.briefing" }), contract),
+    /contract_mismatch|stage_key/,
+  );
+  const f = fake({
+    openproject_zq_list_work_packages: () => ({
+      next_offset: null,
+      results: [wp({ id: 1 }), wp({ id: 2, status_key: "feature.review", stage_key: "feature.briefing" })],
+    }),
+    openproject_zq_check_exit: () => ({ ready: false, blockers: [] }),
+    openproject_zq_meetings_for_feature: () => ({ next_offset: null, results: [] }),
+  });
+  const read = await createMcpOpReader({ call: f.call, contract }).features(PERSON);
+  assert.deepEqual(
+    read.facts.map((x) => x.feature.id),
+    [1],
+  );
+  assert.equal(read.problems.length, 1);
+  assert.match(read.problems[0]!, /work package 2 has stage_key feature\.briefing but status_key feature\.review/);
+});
+
+test("the personal responsibility properties are read as people, and an empty one stays empty", () => {
+  const people = {
+    pm: { id: "21", login: "pm", name: "PM P" },
+    reviewer: { id: "22", login: "rv", name: "Rev R" },
+    qa_owner: { id: "23", login: "qa", name: "QA Q" },
+    acceptor: null,
+    regression_owner: { id: "24", login: "rg", name: "Reg G" },
+  };
+  const view = parseWorkView(wp(people), contract)!;
+  assert.deepEqual(
+    [view.pm?.id, view.reviewer?.id, view.qaOwner?.id, view.regressionOwner?.id, view.acceptor],
+    ["21", "22", "23", "24", undefined],
+  );
 });

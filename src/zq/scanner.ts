@@ -19,7 +19,7 @@ export interface ScanPerson {
 }
 
 export interface OpReader {
-  features(person: ScanPerson): Promise<FeatureFacts[]>;
+  features(person: ScanPerson): Promise<{ facts: FeatureFacts[]; problems: string[] }>;
   dutyHolders(person: ScanPerson, projectId: string, duty: Duty): Promise<OpUserRef[] | undefined>;
 }
 
@@ -42,6 +42,7 @@ export interface ScanOptions {
   timezone: string;
   dailyCeiling: number;
   escalation: { duties: readonly Duty[]; afterDays: number };
+  unsetDuties?: readonly Duty[];
 }
 
 export interface ScanReport {
@@ -55,6 +56,9 @@ export interface ScanReport {
   noHolder: number;
   unlinked: number;
   groupsCreated: number;
+  unsetResponsibility: number;
+  contractProblems: number;
+  problemSamples: string[];
 }
 
 export function dayKeyIn(timezone: string, at: number): string {
@@ -86,6 +90,9 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
     noHolder: 0,
     unlinked: 0,
     groupsCreated: 0,
+    unsetResponsibility: 0,
+    contractProblems: 0,
+    problemSamples: [],
   };
   const dayKey = dayKeyIn(opts.timezone, opts.now);
   const ruleOptions: RuleOptions = {
@@ -93,13 +100,20 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
     now: opts.now,
     escalateAfterMs: opts.escalation.afterDays * DAY,
     escalationDuties: opts.escalation.duties,
+    unsetDuties: opts.unsetDuties ?? [],
   };
   const handled = new Set<number>();
 
   for (const person of opts.people) {
     let facts: FeatureFacts[];
     try {
-      facts = await opts.reader.features(person);
+      const read = await opts.reader.features(person);
+      facts = read.facts;
+      for (const problem of read.problems) {
+        report.contractProblems++;
+        if (report.problemSamples.length < 5 && !report.problemSamples.includes(problem))
+          report.problemSamples.push(problem);
+      }
     } catch {
       report.peopleFailed++;
       continue;
@@ -117,10 +131,7 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
 
     async function usersOf(target: Target, fact: FeatureFacts): Promise<OpUserRef[]> {
       if (target.kind === "user") return [target.user];
-      if (target.kind === "field")
-        return target.field === "responsiblePlanner" && fact.feature.responsiblePlanner
-          ? [fact.feature.responsiblePlanner]
-          : [];
+      if (target.kind === "field") return fact.feature[target.field] ? [fact.feature[target.field]!] : [];
       const found = await holdersOf(fact.feature.projectId, target.duty);
       if (!found?.length) report.noHolder++;
       return found ?? [];
@@ -131,6 +142,7 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
       handled.add(fact.feature.id);
       report.featuresSeen++;
       for (const action of evaluateRules(fact, opts.contract, ruleOptions)) {
+        if (action.rule === "responsibility-not-set") report.unsetResponsibility++;
         const users = (await Promise.all(action.to.map((t) => usersOf(t, fact)))).flat();
         const recipients = new Set<string>();
         for (const u of users) {

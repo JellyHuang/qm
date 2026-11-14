@@ -11,6 +11,7 @@ export interface ZqConfig {
   opBaseUrl?: string;
   featureChannels: boolean;
   escalation: { duties: readonly Duty[]; afterDays: number };
+  unsetResponsibilityDuties: readonly Duty[];
   reports: { enabled: boolean; dailyCron?: string; weeklyCron?: string };
 }
 
@@ -37,14 +38,13 @@ function integer(name: string, raw: string | undefined, fallback: number, min: n
   return n;
 }
 
-function duties(raw: string | undefined): Duty[] {
+function duties(name: string, raw: string | undefined): Duty[] {
   const list = (raw ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
   for (const duty of list)
-    if (!(DUTIES as readonly string[]).includes(duty))
-      throw new Error(`ZQ_ESCALATION_DUTIES names an unknown duty: ${duty}`);
+    if (!(DUTIES as readonly string[]).includes(duty)) throw new Error(`${name} names an unknown duty: ${duty}`);
   return list as Duty[];
 }
 
@@ -83,9 +83,10 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
     ...(opBaseUrl ? { opBaseUrl } : {}),
     featureChannels: on(env.ZQ_FEATURE_CHANNELS),
     escalation: {
-      duties: duties(env.ZQ_ESCALATION_DUTIES),
+      duties: duties("ZQ_ESCALATION_DUTIES", env.ZQ_ESCALATION_DUTIES),
       afterDays: integer("ZQ_ESCALATION_AFTER_DAYS", env.ZQ_ESCALATION_AFTER_DAYS, DEFAULT_ESCALATION_DAYS, 1, 365),
     },
+    unsetResponsibilityDuties: duties("ZQ_UNSET_RESPONSIBILITY_DUTIES", env.ZQ_UNSET_RESPONSIBILITY_DUTIES),
     reports: {
       enabled: on(env.ZQ_REPORTS),
       ...(dailyCron ? { dailyCron } : {}),

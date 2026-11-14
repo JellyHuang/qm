@@ -1,5 +1,5 @@
 {
-  "version": "0.3",
+  "version": "0.3.1",
   "featureType": "feature",
   "typeDuties": {
     "planning": "planning_lead",
@@ -59,12 +59,12 @@
   "stageOwners": {
     "feature.planning_unassigned": ["duty:producer", "duty:pm"],
     "feature.planning": ["field:responsiblePlanner"],
-    "feature.review": ["duty:producer"],
+    "feature.review": ["field:reviewer"],
     "feature.staffing": ["field:responsiblePlanner", "duty:pm"],
     "feature.briefing": ["field:responsiblePlanner", "duty:pm"],
     "feature.development": ["field:responsiblePlanner", "duty:pm"],
-    "feature.acceptance": ["field:responsiblePlanner"],
-    "feature.qa": ["duty:qa_lead"],
+    "feature.acceptance": ["field:acceptor"],
+    "feature.qa": ["field:qaOwner"],
     "feature.resources": ["duty:art_lead", "duty:pm", "duty:qa_lead"],
     "feature.done": ["field:responsiblePlanner", "duty:pm", "duty:producer"]
   },

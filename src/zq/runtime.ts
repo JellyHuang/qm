@@ -45,7 +45,7 @@ export interface ZqRuntime {
 }
 
 const noReader = {
-  features: async () => [],
+  features: async () => ({ facts: [], problems: [] }),
   dutyHolders: async () => undefined,
 };
 

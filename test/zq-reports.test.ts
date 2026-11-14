@@ -90,7 +90,7 @@ test("the service sends each person a report card at the report time, and not be
   const store = reports();
   const service = createZqService({
     config,
-    reader: { features: async () => [], dutyHolders: async () => undefined },
+    reader: { features: async () => ({ facts: [], problems: [] }), dutyHolders: async () => undefined },
     mmUserIdOfOpUser: async () => undefined,
     people: async () => [{ mmUserId: "mm1", principalId: "internal:alice", opName: "Alice A" }],
     reminders: createZqReminderStore({ map: testMap<ZqReminder>() }),
