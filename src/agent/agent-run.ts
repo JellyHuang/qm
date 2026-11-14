@@ -1,3 +1,4 @@
+import { logOutboundTools } from "./diagnostics.ts";
 import {
   applyFastSpeed,
   buildModelRuntime,
@@ -890,6 +891,14 @@ export function createAgent(opts?: AgentOptions): Agent {
             swallow("pi: request byte budget", e);
           }
           if (capturedPayload) ref.llmCapture?.push(capturedPayload);
+          if (logOutboundTools()) {
+            // Diagnostic (off by default): tool names on the final request handed to the model client.
+            const sent = (finalPayload as { tools?: Array<{ name?: string; function?: { name?: string } }> })?.tools;
+            const names = Array.isArray(sent) ? sent.map((t) => t?.name ?? t?.function?.name ?? "?") : [];
+            console.log(
+              `[pi] outbound tools session=${sessionId} model=${(model as { id?: string } | undefined)?.id ?? "?"} n=${names.length} names=${names.join(",")}`,
+            );
+          }
           return finalPayload;
         };
         agent.afterToolCall = pauseStampAfterToolCall(ref);

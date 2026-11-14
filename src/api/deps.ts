@@ -91,6 +91,8 @@ export interface ServerDeps {
   requestBodyDeadlineMs?: number;
   externalSlackPolicies?: ExternalSlackPolicies;
   checkReadiness?: (signal: AbortSignal) => Promise<void>;
+  /** Non-secret build metadata served by GET /v1/build-info. */
+  buildInfo?: { commit?: string; builtAt?: string };
   draining?: AbortSignal;
   modelGatewayTransport?: ModelGatewayTransportConfig;
   modelRoutes?: ModelRoutes;

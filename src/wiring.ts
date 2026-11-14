@@ -1,4 +1,5 @@
 import { createZqRuntime, type ZqIdentityAdmin, type ZqRuntime } from "./zq/runtime.ts";
+import { setLogOutboundTools } from "./agent/diagnostics.ts";
 import { createOaClient } from "./integrations/openagents/client.ts";
 import { createOpenAgentsService, setOpenAgentsService, type OaThreadLink } from "./integrations/openagents/service.ts";
 import { isChatSurface, setPrimaryChatSurface } from "./surfaces/primary-chat.ts";
@@ -2676,6 +2677,7 @@ export function buildApp(
           createSweeper,
         })
       : null;
+  setLogOutboundTools(config.logOutboundTools === true);
   const webhookDelivery = createDeliveryRelay(deliveries, {
     type: "webhook",
     send: webhookSender(config.signingSecret),
@@ -3353,6 +3355,14 @@ export function serverDeps(
     modelRoutes: built.modelRoutes,
     production: config.production,
     checkReadiness: built.checkReadiness,
+    ...(config.buildCommit || config.buildTime
+      ? {
+          buildInfo: {
+            ...(config.buildCommit ? { commit: config.buildCommit } : {}),
+            ...(config.buildTime ? { builtAt: config.buildTime } : {}),
+          },
+        }
+      : {}),
     ...(config.backgroundDeploymentId && config.backgroundWorkEnabled
       ? {
           deploymentControlSecret: config.deploymentControlSecret,

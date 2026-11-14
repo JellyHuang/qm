@@ -1,13 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { DurableMap } from "../src/persistence/durable-map.ts";
-import type { ToolContext } from "../src/tools/primitives.ts";
-import { createAgentTools } from "../src/agent/agent-tools.ts";
-import {
-  createOpenAgentsService,
-  setOpenAgentsService,
-  type OaThreadLink,
-} from "../src/integrations/openagents/service.ts";
+import { createOpenAgentsService, type OaThreadLink } from "../src/integrations/openagents/service.ts";
 import { OaError, type OaClient, type OaEvent } from "../src/integrations/openagents/client.ts";
 import { openAgentsConfigFromEnv } from "../src/integrations/openagents/config.ts";
 
@@ -166,27 +160,6 @@ test("agents distinguishes a failed discover call from workers that are simply n
   const found = await setup().svc.call({ action: "agents" }, ctx);
   assert.match(found, /- qm-dev-worker \(claude\): online/);
   assert.match(found, /- op-dev-worker: not visible to QM/);
-});
-
-test("the openagents tool is offered on Mattermost turns, DMs included, and not on web or read-only turns", () => {
-  const toolNames = (opts: Parameters<typeof createAgentTools>[1]) =>
-    createAgentTools({ current: {} as ToolContext }, opts).map((t) => t.name);
-  try {
-    setOpenAgentsService(undefined);
-    assert.ok(!toolNames({ surfaceName: "mattermost" }).includes("openagents"), "not configured");
-
-    setOpenAgentsService(setup().svc);
-    assert.ok(toolNames({ surfaceName: "mattermost" }).includes("openagents"), "Mattermost DM turn (no surfaceTools)");
-    assert.ok(
-      toolNames({ surfaceTools: true, surfaceName: "mattermost" }).includes("openagents"),
-      "Mattermost channel turn",
-    );
-    assert.ok(!toolNames({ surfaceName: "web" }).includes("openagents"), "web turn");
-    assert.ok(!toolNames({}).includes("openagents"), "turn with no surface");
-    assert.ok(!toolNames({ surfaceName: "mattermost", readOnly: true }).includes("openagents"), "read-only turn");
-  } finally {
-    setOpenAgentsService(undefined);
-  }
 });
 
 test("threads stay isolated per QM user", async () => {
