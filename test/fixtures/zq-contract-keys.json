@@ -72,7 +72,12 @@
     "responsiblePlanner": "planner",
     "estimate": "estimated_hours",
     "plannedStart": "start_date",
-    "plannedEnd": "due_date"
+    "plannedEnd": "due_date",
+    "pm": "pm",
+    "reviewer": "reviewer",
+    "qaOwner": "qa_owner",
+    "acceptor": "acceptor",
+    "regressionOwner": "regression_owner"
   },
   "duties": {
     "producer": "producer",
