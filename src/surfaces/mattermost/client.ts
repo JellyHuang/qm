@@ -65,6 +65,15 @@ export interface MattermostClient {
   channelMemberIds(channelId: string): Promise<string[]>;
   directChannel(a: string, b: string): Promise<MattermostChannel>;
   groupChannel(userIds: readonly string[]): Promise<MattermostChannel>;
+  createPrivateChannel(input: {
+    teamId: string;
+    name: string;
+    displayName: string;
+    purpose?: string;
+    header?: string;
+  }): Promise<MattermostChannel>;
+  channelByName(teamId: string, name: string): Promise<MattermostChannel>;
+  addChannelMember(channelId: string, userId: string): Promise<void>;
   createPost(post: PostInput): Promise<MattermostPost>;
   patchPost(id: string, patch: PostPatch): Promise<MattermostPost>;
   deletePost(id: string): Promise<void>;
@@ -142,6 +151,20 @@ export function createMattermostClient(opts: { url: string; token: string; fetch
       ),
     directChannel: (a, b) => json(channelSchema, "POST", "/channels/direct", [a, b]),
     groupChannel: (ids) => json(channelSchema, "POST", "/channels/group", [...new Set(ids)]),
+    createPrivateChannel: (input) =>
+      json(channelSchema, "POST", "/channels", {
+        team_id: input.teamId,
+        name: input.name,
+        display_name: input.displayName,
+        type: "P",
+        ...(input.purpose ? { purpose: input.purpose } : {}),
+        ...(input.header ? { header: input.header } : {}),
+      }),
+    channelByName: (teamId, name) =>
+      json(channelSchema, "GET", `/teams/${encodeURIComponent(teamId)}/channels/name/${encodeURIComponent(name)}`),
+    async addChannelMember(channelId, userId) {
+      await call("POST", `/channels/${encodeURIComponent(channelId)}/members`, { user_id: userId });
+    },
     createPost: (post) => json(postSchema, "POST", "/posts", post),
     patchPost: (id, patch) => json(postSchema, "PUT", `/posts/${encodeURIComponent(id)}/patch`, patch),
     async deletePost(id) {

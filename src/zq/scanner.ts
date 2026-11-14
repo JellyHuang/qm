@@ -24,13 +24,20 @@ export interface OpReader {
   dutyHolders(person: ScanPerson, projectId: string, duty: Duty): Promise<OpUserRef[] | undefined>;
 }
 
+export interface ZqFeatureRef {
+  id: number;
+  subject: string;
+  url?: string;
+}
+
 export interface ScanOptions {
   reader: OpReader;
   contract: ZqContract;
   people: readonly ScanPerson[];
   mmUserIdOfOpUser: (opUserId: string) => Promise<string | undefined>;
   reminders: ZqReminderStore;
-  groups?: { store: ZqGroups; create: (name: string, memberMmUserIds: string[]) => Promise<string> };
+  groups?: { store: ZqGroups; create: (feature: ZqFeatureRef, memberMmUserIds: string[]) => Promise<string> };
+  opBaseUrl?: string;
   mode: ReminderMode;
   now: number;
   timezone: string;
@@ -155,7 +162,11 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
           else report.alreadyKnown++;
         }
       }
-      if (opts.groups && opts.mode === "live" && (await ensureGroup(fact, opts.groups, opts.mmUserIdOfOpUser)))
+      if (
+        opts.groups &&
+        opts.mode === "live" &&
+        (await ensureGroup(fact, opts.groups, opts.mmUserIdOfOpUser, opts.opBaseUrl))
+      )
         report.groupsCreated++;
     }
   }
@@ -166,6 +177,7 @@ async function ensureGroup(
   fact: FeatureFacts,
   groups: NonNullable<ScanOptions["groups"]>,
   mmUserIdOfOpUser: ScanOptions["mmUserIdOfOpUser"],
+  opBaseUrl: string | undefined,
 ): Promise<boolean> {
   const { feature, children } = fact;
   const live = children.filter((c) => !paused(c.lifecycle));
@@ -173,8 +185,11 @@ async function ensureGroup(
   const people = [feature.responsiblePlanner, ...live.map((c) => c.assignee)].flatMap((u) => u ?? []);
   const members = (await Promise.all(people.map((u) => mmUserIdOfOpUser(u.id)))).flatMap((m) => m ?? []);
   if (!members.length) return false;
-  const { created } = await groups.store.ensure(feature.id, members, (list) =>
-    groups.create(`功能 #${feature.id} ${feature.subject}`, list),
-  );
+  const ref: ZqFeatureRef = {
+    id: feature.id,
+    subject: feature.subject,
+    ...(opBaseUrl ? { url: `${opBaseUrl}/work_packages/${feature.id}` } : {}),
+  };
+  const { created } = await groups.store.ensure(feature.id, members, (list) => groups.create(ref, list));
   return created;
 }

@@ -1,3 +1,4 @@
+import { createFeatureChannel, type FeatureChannelInput } from "./feature-channel.ts";
 import type { ServerResponse } from "node:http";
 import type { App } from "../../api/app-types.ts";
 import type { IdentityService } from "../../identity/identity-service.ts";
@@ -277,6 +278,9 @@ export function createMattermost(deps: MattermostDeps) {
         message: buttons?.length ? "" : message,
         ...(props ? { props } : {}),
       });
+    },
+    async createFeatureChannel(feature: FeatureChannelInput, memberMmUserIds: readonly string[]): Promise<string> {
+      return createFeatureChannel(client, rt.bot().teamId, feature, memberMmUserIds);
     },
     async mmUserIdOf(principalId: string): Promise<string | undefined> {
       return (await rt.mmUserForPrincipal(principalId))?.id;

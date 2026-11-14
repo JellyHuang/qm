@@ -8,6 +8,8 @@ export interface ZqConfig {
   deliverReminders: boolean;
   reminderDailyCeiling: number;
   contractFile?: string;
+  opBaseUrl?: string;
+  featureChannels: boolean;
   escalation: { duties: readonly Duty[]; afterDays: number };
   reports: { enabled: boolean; dailyCron?: string; weeklyCron?: string };
 }
@@ -62,6 +64,8 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   const dailyCron = clock("ZQ_REPORT_DAILY_AT", env.ZQ_REPORT_DAILY_AT, "*");
   const weeklyCron = clock("ZQ_REPORT_WEEKLY_AT", env.ZQ_REPORT_WEEKLY_AT, String(WEDNESDAY));
   const contractFile = env.ZQ_CONTRACT_FILE?.trim();
+  const opBaseUrl = env.ZQ_OP_BASE_URL?.trim().replace(/\/+$/, "");
+  if (opBaseUrl && !/^https?:\/\//.test(opBaseUrl)) throw new Error("ZQ_OP_BASE_URL must be an http(s) URL");
   const scannerEnabled = on(env.ZQ_SCANNER);
   if (scannerEnabled && !contractFile) throw new Error("ZQ_SCANNER needs ZQ_CONTRACT_FILE (the contract key table)");
   return {
@@ -76,6 +80,8 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
       10_000,
     ),
     ...(contractFile ? { contractFile } : {}),
+    ...(opBaseUrl ? { opBaseUrl } : {}),
+    featureChannels: on(env.ZQ_FEATURE_CHANNELS),
     escalation: {
       duties: duties(env.ZQ_ESCALATION_DUTIES),
       afterDays: integer("ZQ_ESCALATION_AFTER_DAYS", env.ZQ_ESCALATION_AFTER_DAYS, DEFAULT_ESCALATION_DAYS, 1, 365),

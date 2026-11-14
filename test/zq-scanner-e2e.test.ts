@@ -345,7 +345,7 @@ test("the group for a feature in the briefing stage is made once, only when ever
     parseWork(detail(42, { parent_id: 40, assignee: CAROL_OP })),
     parseWork(detail(43, { parent_id: 40, lifecycle: "cancelled" })),
   ];
-  const created: Array<{ name: string; members: string[] }> = [];
+  const created: Array<{ feature: { id: number; subject: string; url?: string }; members: string[] }> = [];
   const run = async (children: typeof ready, groups = createZqGroups({ map: testMap<ZqGroup>() })) => {
     const report = await scanOnce({
       reader: { features: async () => [{ feature, children, meetings: [] }], dutyHolders: async () => undefined },
@@ -355,11 +355,12 @@ test("the group for a feature in the briefing stage is made once, only when ever
       reminders: createZqReminderStore({ map: testMap<ZqReminder>() }),
       groups: {
         store: groups,
-        create: async (name, members) => {
-          created.push({ name, members });
+        create: async (feature, members) => {
+          created.push({ feature, members });
           return "channel-1";
         },
       },
+      opBaseUrl: "https://op.example.com",
       mode: "live",
       now: NOON_SHANGHAI,
       timezone: "Asia/Shanghai",
@@ -371,7 +372,12 @@ test("the group for a feature in the briefing stage is made once, only when ever
   assert.equal((await run([parseWork(detail(41, { parent_id: 40 })), ...ready.slice(1)])).report.groupsCreated, 0);
   const first = await run(ready);
   assert.equal(first.report.groupsCreated, 1);
-  assert.deepEqual(created, [{ name: "功能 #40 单40", members: ["mm-alice", "mm-bob", "mm-carol"] }]);
+  assert.deepEqual(created, [
+    {
+      feature: { id: 40, subject: "单40", url: "https://op.example.com/work_packages/40" },
+      members: ["mm-alice", "mm-bob", "mm-carol"],
+    },
+  ]);
   assert.equal((await run(ready, first.groups)).report.groupsCreated, 0, "a second scan reuses the group");
   assert.equal(created.length, 1);
   assert.equal((await first.groups.get(40))?.groupRef, "channel-1");

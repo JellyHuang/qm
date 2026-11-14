@@ -6,7 +6,7 @@ import type { ReminderMode, ZqReminderStore } from "./reminders.ts";
 import type { ReportInput, ZqReports } from "./reports.ts";
 import type { ZqContract } from "./contract.ts";
 import type { ZqGroups } from "./groups.ts";
-import { scanIsDue, scanOnce, type OpReader, type ScanPerson, type ScanReport } from "./scanner.ts";
+import { scanIsDue, scanOnce, type OpReader, type ScanPerson, type ScanReport, type ZqFeatureRef } from "./scanner.ts";
 
 export interface ZqRunState {
   lastRunAt: number;
@@ -22,7 +22,7 @@ export interface ZqServiceDeps {
   reader: OpReader;
   contract?: ZqContract;
   mmUserIdOfOpUser: (opUserId: string) => Promise<string | undefined>;
-  groups?: { store: ZqGroups; create: (name: string, memberMmUserIds: string[]) => Promise<string> };
+  groups?: { store: ZqGroups; create: (feature: ZqFeatureRef, memberMmUserIds: string[]) => Promise<string> };
   people: () => Promise<ScanPerson[]>;
   reminders: ZqReminderStore;
   state: DurableMap<ZqRunState>;
@@ -91,6 +91,7 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
             mmUserIdOfOpUser: deps.mmUserIdOfOpUser,
             reminders: deps.reminders,
             ...(deps.groups ? { groups: deps.groups } : {}),
+            ...(config.opBaseUrl ? { opBaseUrl: config.opBaseUrl } : {}),
             mode,
             now: at,
             timezone: config.scanner.timezone,

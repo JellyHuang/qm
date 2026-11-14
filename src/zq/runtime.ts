@@ -9,7 +9,7 @@ import { createZqGroups, type ZqGroup } from "./groups.ts";
 import { createMcpOpReader, type OpCall } from "./op-reader.ts";
 import { createZqReminderStore, type ZqReminder } from "./reminders.ts";
 import { createZqReports, type ReportInput, type ZqReportDraft } from "./reports.ts";
-import type { ScanPerson } from "./scanner.ts";
+import type { ScanPerson, ZqFeatureRef } from "./scanner.ts";
 import { createZqService, type ZqRunState } from "./service.ts";
 
 const TICK_MS = 60_000;
@@ -31,7 +31,7 @@ export interface ZqChat {
   ): Promise<void>;
   mmUserIdOf(principalId: string): Promise<string | undefined>;
   principalOf(mmUserId: string): Promise<string | undefined>;
-  createGroup?(name: string, memberMmUserIds: string[]): Promise<string>;
+  createGroup?(feature: ZqFeatureRef, memberMmUserIds: string[]): Promise<string>;
 }
 
 export type ZqIdentityAdmin = Pick<ZqIdentityMap, "enabled" | "list" | "confirm" | "unlink">;
@@ -90,9 +90,10 @@ export function createZqRuntime(deps: {
   }
 
   const contract = deps.contract ?? (config.contractFile ? loadZqContract(config.contractFile) : undefined);
-  const groups = chat.createGroup
-    ? { store: createZqGroups({ map: deps.map<ZqGroup>("zq_groups") }), create: chat.createGroup }
-    : undefined;
+  const groups =
+    config.featureChannels && chat.createGroup
+      ? { store: createZqGroups({ map: deps.map<ZqGroup>("zq_groups") }), create: chat.createGroup.bind(chat) }
+      : undefined;
 
   const service = createZqService({
     config,

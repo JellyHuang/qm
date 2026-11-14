@@ -36,3 +36,12 @@ test("escalation targets are duties from the contract and are not chosen by defa
   ]);
   assert.throws(() => zqConfigFromEnv({ ZQ_ESCALATION_DUTIES: "boss" }), /unknown duty: boss/);
 });
+
+test("feature channels and the OpenProject link are off and unset by default, and the URL must be http(s)", () => {
+  const c = zqConfigFromEnv({});
+  assert.equal(c.featureChannels, false);
+  assert.equal(c.opBaseUrl, undefined);
+  const on = zqConfigFromEnv({ ZQ_FEATURE_CHANNELS: "1", ZQ_OP_BASE_URL: "https://op.example.com//" });
+  assert.deepEqual([on.featureChannels, on.opBaseUrl], [true, "https://op.example.com"]);
+  assert.throws(() => zqConfigFromEnv({ ZQ_OP_BASE_URL: "op.example.com" }), /ZQ_OP_BASE_URL/);
+});
