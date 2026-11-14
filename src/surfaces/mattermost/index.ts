@@ -13,8 +13,8 @@ import { unfinishedTurnText, userFacingFailureClause } from "../../core/failure-
 import { createSweeper } from "../../util/sweeper.ts";
 import { errMessage, swallowAs } from "../../util/errors.ts";
 import { sleep } from "../../util/async.ts";
-import { createActions } from "./actions.ts";
-import { createActionSigner } from "./cards.ts";
+import { createActions, type ZqDecision } from "./actions.ts";
+import { cardProps, createActionSigner, type ActionPayload, type CardButton } from "./cards.ts";
 import { createMattermostClient, createMattermostSocket } from "./client.ts";
 import { createContextAnswers } from "./context.ts";
 import { createDirectorySync } from "./directory.ts";
@@ -82,6 +82,7 @@ export interface MattermostDeps {
   allowedDomain?: string;
   keychainApprovals?: KeychainApprovals;
   claimPrincipalDeliveries: boolean;
+  zqDecision?: ZqDecision;
 }
 
 export function createMattermost(deps: MattermostDeps) {
@@ -125,6 +126,7 @@ export function createMattermost(deps: MattermostDeps) {
     live,
     onboarding,
     ...(deps.keychainApprovals ? { keychainApprovals: deps.keychainApprovals } : {}),
+    ...(deps.zqDecision ? { zqDecision: deps.zqDecision } : {}),
   });
   const linkPage = createLinkPage({ links, path: MATTERMOST_LINK_BROWSER_PATH, onLinked: (l) => onboarding.linked(l) });
   const directory = createDirectorySync({ rt });
@@ -261,6 +263,27 @@ export function createMattermost(deps: MattermostDeps) {
       await inbound.inject(postId, text, key);
     },
     /** Core: the person finished an OAuth connect; continue any Mattermost request waiting on it. */
+    async directMessage(
+      mmUserId: string,
+      message: string,
+      buttons?: Array<{ id: string; name: string; style?: CardButton["style"]; payload: ActionPayload }>,
+    ): Promise<void> {
+      const channel = await rt.dmWith(mmUserId);
+      const props = buttons?.length
+        ? cardProps({ message, text: message, buttons }, rt.signer, rt.config.actionUrl)
+        : undefined;
+      await client.createPost({
+        channel_id: channel,
+        message: buttons?.length ? "" : message,
+        ...(props ? { props } : {}),
+      });
+    },
+    async mmUserIdOf(principalId: string): Promise<string | undefined> {
+      return (await rt.mmUserForPrincipal(principalId))?.id;
+    },
+    async principalOf(mmUserId: string): Promise<string | undefined> {
+      return (await rt.actorFor(await rt.user(mmUserId)))?.externalId;
+    },
     async connectorConnected(provider: string, principalId: string): Promise<void> {
       await resumer.connected(provider, principalId);
     },

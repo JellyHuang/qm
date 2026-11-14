@@ -1,0 +1,64 @@
+import { tenantTest as test } from "./support/tenant-test.ts";
+import assert from "node:assert/strict";
+import { type LeaderLease } from "../src/persistence/leader-lease.ts";
+import { zqConfigFromEnv } from "../src/zq/config.ts";
+import { createZqRuntime, type ZqChat } from "../src/zq/runtime.ts";
+import { testMap } from "./support/test-database.ts";
+
+function leaseOf(): LeaderLease {
+  return { hold: async (_key, fn) => fn(new Promise<void>(() => {})) };
+}
+
+function setup(env: NodeJS.ProcessEnv) {
+  const buttons: Array<{ to: string; text: string; refs: string[] }> = [];
+  const calls: string[] = [];
+  const chat: ZqChat = {
+    sendDm: async () => {},
+    sendButtons: async (to, text, b) =>
+      void buttons.push({ to, text, refs: b.map((x) => `${x.op}:${x.ref}:${x.approve}`) }),
+    mmUserIdOf: async (principalId) => (principalId === "internal:alice" ? "mm-alice" : undefined),
+    principalOf: async (mmUserId) => (mmUserId === "mm-alice" ? "internal:alice" : undefined),
+  };
+  const runtime = createZqRuntime({
+    config: zqConfigFromEnv(env),
+    call: async (name, _args, principalId) => {
+      calls.push(`${name}@${principalId}`);
+      return JSON.stringify({ id: 42, login: "alice", name: "Alice A" });
+    },
+    chat,
+    map: () => testMap(),
+    leaderLease: leaseOf(),
+    createSweeper: () => ({ start() {}, stop: async () => {} }),
+  });
+  return { runtime, buttons, calls };
+}
+
+test("nothing happens on sign-in while identity mapping is off", async () => {
+  const { runtime, buttons, calls } = setup({});
+  await runtime.connectorConnected("openproject", "internal:alice");
+  assert.deepEqual([buttons, calls], [[], []]);
+});
+
+test("signing in to OpenProject proposes a link that only its owner can confirm", async () => {
+  const { runtime, buttons, calls } = setup({ ZQ_IDENTITY_MAP: "1" });
+  await runtime.connectorConnected("other-server", "internal:alice");
+  await runtime.connectorConnected("openproject", "internal:nobody");
+  assert.deepEqual(calls, []);
+  await runtime.connectorConnected("openproject", "internal:alice");
+  assert.deepEqual(calls, ["openproject_get_current_user@internal:alice"]);
+  assert.equal(buttons.length, 1);
+  assert.equal(buttons[0]!.to, "mm-alice");
+  assert.match(buttons[0]!.text, /OpenProject user alice/);
+  assert.deepEqual(buttons[0]!.refs, ["link:mm-alice:true", "link:mm-alice:false"]);
+  await assert.rejects(runtime.decide("link", "mm-alice", true, "mm-bob"), /only the person being linked/);
+  assert.equal(await runtime.decide("link", "mm-alice", true, "mm-alice"), "OpenProject account linked.");
+  await runtime.connectorConnected("openproject", "internal:alice");
+  assert.equal(buttons.length, 1, "a confirmed link is not proposed again");
+});
+
+test("answering Not me removes the proposal", async () => {
+  const { runtime } = setup({ ZQ_IDENTITY_MAP: "1" });
+  await runtime.connectorConnected("openproject", "internal:alice");
+  assert.equal(await runtime.decide("link", "mm-alice", false, "mm-alice"), "OpenProject account not linked.");
+  await assert.rejects(runtime.decide("link", "mm-alice", true, "mm-alice"), /no proposed link/);
+});

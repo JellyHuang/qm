@@ -54,6 +54,11 @@ test("one OpenProject user maps to one Mattermost user, and a new proposal needs
   const map = createZqIdentityMap({ map: testMap<ZqIdentityLink>(), enabled: true });
   await map.propose(PROPOSAL);
   await map.confirm("mm1", "internal:admin");
+  assert.equal(
+    (await map.propose(PROPOSAL)).status,
+    "confirmed",
+    "proposing the same account again keeps the confirmation",
+  );
   await assert.rejects(map.propose({ ...PROPOSAL, mmUserId: "mm2" }), /already linked/);
   await map.propose({ ...PROPOSAL, opUserId: "43", opLogin: "alice2" });
   assert.equal(await map.byMattermost("mm1"), undefined);

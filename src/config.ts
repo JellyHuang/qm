@@ -1,4 +1,5 @@
 import { mattermostConfigFromEnv, type MattermostConfig } from "./surfaces/mattermost/config.ts";
+import { zqConfigFromEnv, type ZqConfig } from "./zq/config.ts";
 import { openAgentsConfigFromEnv, type OpenAgentsConfig } from "./integrations/openagents/config.ts";
 import { isClaudeSubscriptionToken } from "./model/claude-subscription.ts";
 import { isDnsLabel } from "../plugins/chassis/src/dns-label.ts";
@@ -127,6 +128,7 @@ export interface Config extends SandboxSettings, DeploySettings {
   partnerChat?: { url: string; secret: string; label?: string };
   mattermost?: MattermostConfig;
   openAgents?: OpenAgentsConfig;
+  zq: ZqConfig;
   secretsBackend: "env" | "aws";
   secretsPrefix: string;
   apiBaseUrl?: string;
@@ -627,6 +629,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       });
       return mattermost ? { mattermost } : {};
     })(),
+    zq: zqConfigFromEnv(env),
     ...(() => {
       const openAgents = openAgentsConfigFromEnv(env);
       return openAgents ? { openAgents } : {};

@@ -27,11 +27,19 @@ function settled(text: string, color = "#8d8d8d"): ActionResponse {
   return { update: { message: "", props: settledProps({ message: text, text, color }) } };
 }
 
+export type ZqDecision = (
+  op: "report" | "link",
+  id: string,
+  approve: boolean,
+  clickerMmUserId: string,
+) => Promise<string>;
+
 export function createActions(deps: {
   rt: Runtime;
   live: LivePresenter;
   onboarding: Onboarding;
   keychainApprovals?: KeychainApprovals;
+  zqDecision?: ZqDecision;
 }) {
   const { rt, live } = deps;
   const busy = new Set<string>();
@@ -117,6 +125,11 @@ export function createActions(deps: {
           if (!actor)
             return { status: 200, body: { ephemeral_text: "Connect your account to QM first — message me." } };
           const text = await decideDeploymentAccess(rt.app, rt.identity, payload.value, actor, payload.approve);
+          return { status: 200, body: settled(text, payload.approve ? "#2eb67d" : "#8d8d8d") };
+        }
+        case "zq": {
+          if (!deps.zqDecision) return { status: 200, body: { ephemeral_text: "This isn't available." } };
+          const text = await deps.zqDecision(payload.op, payload.id, payload.approve, clickerId);
           return { status: 200, body: settled(text, payload.approve ? "#2eb67d" : "#8d8d8d") };
         }
         case "access": {

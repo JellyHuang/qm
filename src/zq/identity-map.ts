@@ -55,6 +55,8 @@ export function createZqIdentityMap(opts: {
     enabled: opts.enabled,
     async propose(input) {
       if (!opts.enabled) throw off();
+      const current = await opts.map.get(input.mmUserId);
+      if (current?.status === "confirmed" && current.opUserId === input.opUserId) return current;
       const taken = (await opts.map.all()).find((l) => l.opUserId === input.opUserId && l.mmUserId !== input.mmUserId);
       if (taken) throw new Error(`OpenProject user ${input.opUserId} is already linked to another Mattermost user`);
       const link: ZqIdentityLink = { ...input, status: "pending", proposedAt: now() };

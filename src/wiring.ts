@@ -1,3 +1,4 @@
+import { createZqRuntime, type ZqRuntime } from "./zq/runtime.ts";
 import { createOaClient } from "./integrations/openagents/client.ts";
 import { createOpenAgentsService, setOpenAgentsService, type OaThreadLink } from "./integrations/openagents/service.ts";
 import { isChatSurface, setPrimaryChatSurface } from "./surfaces/primary-chat.ts";
@@ -2170,6 +2171,7 @@ export function buildApp(
   const uiState = artifactMap<PersistedUiState>("web_ui_state");
   if (config.mattermost && mattermostOwnsDirectMessages(config)) setPrimaryChatSurface(MATTERMOST_SURFACE);
   let mattermost: Mattermost | null = null;
+  let zq: ZqRuntime | null = null;
   const surfaces = createSurfaceRegistry({
     surfaces: [
       createSlackSurface({ deliveries }),
@@ -2626,6 +2628,8 @@ export function buildApp(
         ...(config.emailAuthDomain ? { allowedDomain: config.emailAuthDomain } : {}),
         ...(keychainApprovals ? { keychainApprovals } : {}),
         claimPrincipalDeliveries: mattermostOwnsDirectMessages(config),
+        zqDecision: (op, id, approve, clicker) =>
+          zq ? zq.decide(op, id, approve, clicker) : Promise.reject(new Error("OpenProject follow-up is off")),
       })
     : null;
   const openAgents = config.openAgents
@@ -2647,6 +2651,30 @@ export function buildApp(
       })
     : undefined;
   setOpenAgentsService(openAgents);
+  zq =
+    mattermost && (config.zq.scanner.enabled || config.zq.reports.enabled || config.zq.identityMap)
+      ? createZqRuntime({
+          config: config.zq,
+          call: (name, args, principalId) => mcpToolService.call(name, args, principalId),
+          chat: {
+            sendDm: (to, text) => mattermost!.directMessage(to, text),
+            sendButtons: (to, text, buttons) =>
+              mattermost!.directMessage(
+                to,
+                text,
+                buttons.map(({ op, ref, approve, ...button }) => ({
+                  ...button,
+                  payload: { k: "zq" as const, op, id: ref, approve },
+                })),
+              ),
+            mmUserIdOf: (principalId) => mattermost!.mmUserIdOf(principalId),
+            principalOf: (mmUserId) => mattermost!.principalOf(mmUserId),
+          },
+          map: (table) => artifactMap(table),
+          leaderLease,
+          createSweeper,
+        })
+      : null;
   const webhookDelivery = createDeliveryRelay(deliveries, {
     type: "webhook",
     send: webhookSender(config.signingSecret),
@@ -3072,6 +3100,7 @@ export function buildApp(
       partnerChatDelivery?.start();
       mattermost?.start();
       openAgents?.start();
+      zq?.start();
       webhookDelivery.start();
     };
     if (backgroundStopping)
@@ -3111,6 +3140,7 @@ export function buildApp(
       partnerChatDelivery?.stop(),
       mattermost?.stop(),
       openAgents?.stop(),
+      zq?.stop(),
       preemptionSweeper.stop(),
       worker.stopClaims(),
     ];
@@ -3243,8 +3273,12 @@ export function buildApp(
           mattermostActions: (raw: string) => mattermost!.handleAction(raw),
           mattermostLinkPage: (res: ServerResponse, url: URL, signedInAs: string | undefined) =>
             mattermost!.handleLinkPage(res, url, signedInAs),
-          onConnectorConnected: (provider: string, principalId: string) =>
-            mattermost!.connectorConnected(provider, principalId),
+          onConnectorConnected: async (provider: string, principalId: string) => {
+            await mattermost!.connectorConnected(provider, principalId);
+            await zq
+              ?.connectorConnected(provider, principalId)
+              .catch(reportFailureAs("zq: link after sign-in", undefined));
+          },
         }
       : {}),
     loopIngress,
