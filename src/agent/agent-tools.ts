@@ -1,6 +1,5 @@
 import { openAgentsTools } from "./agent-tools/openagents.ts";
 import { openAgentsService } from "../integrations/openagents/service.ts";
-import { SURFACE } from "../surfaces/mattermost/protocol.ts";
 import type { DocumentInput } from "../core/documents.ts";
 import type { TurnHandoff } from "./runtime-types.ts";
 import { type ToolDefinition } from "@earendil-works/pi-coding-agent";
