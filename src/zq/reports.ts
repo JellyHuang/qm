@@ -59,7 +59,7 @@ export function reportPrompt(input: ReportInput): string {
   ].join("\n");
 }
 
-export function templateReport(input: ReportInput): string {
+function templateReport(input: ReportInput): string {
   const hours = input.timeEntries.reduce((sum, e) => sum + e.hours, 0);
   const lines = [`${input.period === "daily" ? "Daily" : "Weekly"} report for ${input.opName}`];
   if (input.statusChanges.length) {

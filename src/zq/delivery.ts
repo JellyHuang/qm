@@ -7,7 +7,7 @@ const KIND_LABEL: Record<ZqReminder["kind"], string> = {
   "meeting-follow-up": "Meeting follow-up",
 };
 
-export function reminderText(r: ZqReminder): string {
+function reminderText(r: ZqReminder): string {
   const title = r.subjectTitle ? ` ${r.subjectTitle}` : "";
   const lines = [`**${KIND_LABEL[r.kind]}:**${title} (${r.subjectId})`, r.reason];
   if (r.blockers.length) lines.push(`Fill in before moving it on: ${r.blockers.join(", ")}`);

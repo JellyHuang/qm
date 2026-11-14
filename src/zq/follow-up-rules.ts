@@ -99,7 +99,7 @@ export interface ExitRule {
   requires: readonly string[];
 }
 
-export const DEFAULT_EXIT_RULES: readonly ExitRule[] = [
+const DEFAULT_EXIT_RULES: readonly ExitRule[] = [
   { from: "fm.review", to: "fm.qa", requires: ["review_result"] },
   { from: "fm.qa", to: "fm.formal", requires: ["review_result", "qa_result"] },
   { from: "dv.review", to: "dv.qa", requires: ["review_result"] },
@@ -180,7 +180,7 @@ export function evaluateFollowUp(
   return actions;
 }
 
-export const MEETING_GRACE_MS = 10 * 60_000;
+const MEETING_GRACE_MS = 10 * 60_000;
 
 export interface MeetingState {
   id: string;
