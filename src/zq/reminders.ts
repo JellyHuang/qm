@@ -1,56 +1,81 @@
 import type { DurableMap } from "../persistence/durable-map.ts";
-import type { FollowUpAction } from "./follow-up-rules.ts";
 
-export interface ZqReminder {
+export type ReminderKind = "remind-stale" | "remind-overdue" | "escalate-blocked" | "meeting-follow-up";
+
+export type ReminderMode = "dry-run" | "live";
+
+export interface ZqReminderDraft {
   id: string;
-  kind: FollowUpAction["kind"];
-  workPackageId: number;
-  assigneeOpUserId?: string;
-  assigneeName?: string;
+  kind: ReminderKind;
+  subjectId: string;
+  subjectTitle?: string;
+  recipientMmUserId: string;
   reason: string;
-  status: "pending" | "sent" | "cancelled";
+  blockers: string[];
+  dayKey: string;
   dueAt: number;
+}
+
+export interface ZqReminder extends ZqReminderDraft {
+  mode: ReminderMode;
+  status: "pending" | "sent" | "cancelled";
   createdAt: number;
   sentAt?: number;
 }
 
 export interface ZqReminderStore {
-  schedule(action: FollowUpAction, dueAt: number): Promise<{ reminder: ZqReminder; created: boolean }>;
+  schedule(draft: ZqReminderDraft, mode: ReminderMode): Promise<{ reminder: ZqReminder; created: boolean }>;
   due(now: number, limit?: number): Promise<ZqReminder[]>;
   markSent(id: string): Promise<ZqReminder | null>;
-  cancelForWorkPackage(workPackageId: number): Promise<number>;
+  has(id: string): Promise<boolean>;
+  lastLiveAt(subjectId: string): Promise<number | undefined>;
+  countForDay(recipientMmUserId: string, dayKey: string): Promise<number>;
+  cancelForSubject(subjectId: string): Promise<number>;
+  pendingFor(recipientMmUserId: string): Promise<ZqReminder[]>;
 }
 
 export function createZqReminderStore(opts: { map: DurableMap<ZqReminder>; now?: () => number }): ZqReminderStore {
   const now = opts.now ?? (() => Date.now());
   return {
-    async schedule(action, dueAt) {
-      const reminder: ZqReminder = {
-        id: action.dedupeKey,
-        kind: action.kind,
-        workPackageId: action.workPackageId,
-        ...(action.assigneeOpUserId ? { assigneeOpUserId: action.assigneeOpUserId } : {}),
-        ...(action.assigneeName ? { assigneeName: action.assigneeName } : {}),
-        reason: action.reason,
-        status: "pending",
-        dueAt,
-        createdAt: now(),
-      };
-      const created = await opts.map.insertIfAbsent(reminder.id, reminder);
-      return { reminder: created ? reminder : ((await opts.map.get(reminder.id)) ?? reminder), created };
+    async schedule(draft, mode) {
+      const reminder: ZqReminder = { ...draft, mode, status: "pending", createdAt: now() };
+      if (await opts.map.insertIfAbsent(reminder.id, reminder)) return { reminder, created: true };
+      const existing = (await opts.map.get(reminder.id)) ?? reminder;
+      if (existing.mode === "dry-run" && mode === "live" && existing.status === "pending") {
+        const upgraded = await opts.map.merge(existing.id, { mode: "live" });
+        return { reminder: upgraded ?? existing, created: false };
+      }
+      return { reminder: existing, created: false };
     },
     async due(at, limit = 100) {
       return (await opts.map.all())
-        .filter((r) => r.status === "pending" && r.dueAt <= at)
+        .filter((r) => r.mode === "live" && r.status === "pending" && r.dueAt <= at)
         .sort((a, b) => a.dueAt - b.dueAt)
         .slice(0, limit);
     },
     markSent: (id) =>
       opts.map.update(id, (r) => (r.status === "pending" ? { ...r, status: "sent", sentAt: now() } : r)),
-    async cancelForWorkPackage(workPackageId) {
-      const open = (await opts.map.all()).filter((r) => r.workPackageId === workPackageId && r.status === "pending");
+    async has(id) {
+      return (await opts.map.get(id)) !== null;
+    },
+    async lastLiveAt(subjectId) {
+      const times = (await opts.map.all())
+        .filter((r) => r.subjectId === subjectId && r.mode === "live")
+        .map((r) => r.createdAt);
+      return times.length ? Math.max(...times) : undefined;
+    },
+    async countForDay(recipientMmUserId, dayKey) {
+      return (await opts.map.all()).filter(
+        (r) => r.recipientMmUserId === recipientMmUserId && r.dayKey === dayKey && r.status !== "cancelled",
+      ).length;
+    },
+    async cancelForSubject(subjectId) {
+      const open = (await opts.map.all()).filter((r) => r.subjectId === subjectId && r.status === "pending");
       await Promise.all(open.map((r) => opts.map.merge(r.id, { status: "cancelled" })));
       return open.length;
+    },
+    async pendingFor(recipientMmUserId) {
+      return (await opts.map.all()).filter((r) => r.recipientMmUserId === recipientMmUserId && r.status === "pending");
     },
   };
 }

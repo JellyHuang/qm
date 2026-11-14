@@ -2,8 +2,7 @@ import { tenantTest as test } from "./support/tenant-test.ts";
 import assert from "node:assert/strict";
 import { zqConfigFromEnv } from "../src/zq/config.ts";
 import { createZqIdentityMap, hintByEmail, type ZqIdentityLink } from "../src/zq/identity-map.ts";
-import { createZqReminderStore, type ZqReminder } from "../src/zq/reminders.ts";
-import type { FollowUpAction } from "../src/zq/follow-up-rules.ts";
+import { createZqReminderStore, type ZqReminder, type ZqReminderDraft } from "../src/zq/reminders.ts";
 import { testMap } from "./support/test-database.ts";
 
 const PROPOSAL = {
@@ -76,44 +75,58 @@ test("an email is only a hint and only an unambiguous match counts", () => {
   assert.equal(hintByEmail("carol@example.com", users), undefined);
 });
 
-const ACTION: FollowUpAction = {
+const DRAFT: ZqReminderDraft = {
+  id: "wp:7:stale:0",
   kind: "remind-stale",
-  workPackageId: 7,
-  assigneeOpUserId: "42",
-  dedupeKey: "7:stale:0",
-  reason: "no update for 6 day(s) while In progress",
+  subjectId: "wp:7",
+  subjectTitle: "Boss intro cutscene",
+  recipientMmUserId: "mm1",
+  reason: "no update for 6 day(s) while fm.in_progress",
+  blockers: [],
+  dayKey: "2026-11-14",
+  dueAt: 2_000,
 };
 
-test("a reminder is scheduled once per dedupe key, becomes due on time and is sent once", async () => {
+test("a reminder is stored once per id, dry-run ones are never due, and going live upgrades them", async () => {
   let clock = 1_000;
   const store = createZqReminderStore({ map: testMap<ZqReminder>(), now: () => clock });
-  const first = await store.schedule(ACTION, 2_000);
-  assert.equal(first.created, true);
+  const first = await store.schedule(DRAFT, "dry-run");
+  assert.deepEqual([first.created, first.reminder.mode], [true, "dry-run"]);
+  assert.deepEqual(await store.due(5_000), []);
   clock = 1_500;
-  const again = await store.schedule(ACTION, 9_000);
-  assert.equal(again.created, false);
-  assert.equal(again.reminder.dueAt, 2_000);
+  const live = await store.schedule({ ...DRAFT, dueAt: 9_000 }, "live");
+  assert.deepEqual([live.created, live.reminder.mode, live.reminder.dueAt], [false, "live", 2_000]);
   assert.deepEqual(await store.due(1_999), []);
   assert.deepEqual(
     (await store.due(2_000)).map((r) => r.id),
-    ["7:stale:0"],
+    [DRAFT.id],
   );
   clock = 2_100;
-  assert.equal((await store.markSent("7:stale:0"))?.sentAt, 2_100);
+  assert.equal((await store.markSent(DRAFT.id))?.sentAt, 2_100);
   clock = 3_000;
-  assert.equal((await store.markSent("7:stale:0"))?.sentAt, 2_100);
+  assert.equal((await store.markSent(DRAFT.id))?.sentAt, 2_100);
   assert.deepEqual(await store.due(5_000), []);
+  assert.equal((await store.schedule(DRAFT, "live")).created, false);
 });
 
-test("cancelling a work package's reminders leaves sent ones alone", async () => {
-  const store = createZqReminderStore({ map: testMap<ZqReminder>() });
-  await store.schedule(ACTION, 1);
-  await store.schedule({ ...ACTION, dedupeKey: "7:stale:1" }, 1);
-  await store.schedule({ ...ACTION, workPackageId: 8, dedupeKey: "8:stale:0" }, 1);
-  await store.markSent("7:stale:0");
-  assert.equal(await store.cancelForWorkPackage(7), 1);
+test("counts, last time and cancellation are per recipient and per subject", async () => {
+  let clock = 10;
+  const store = createZqReminderStore({ map: testMap<ZqReminder>(), now: () => clock });
+  await store.schedule(DRAFT, "live");
+  clock = 20;
+  await store.schedule({ ...DRAFT, id: "wp:7:stale:1" }, "live");
+  await store.schedule({ ...DRAFT, id: "wp:8:stale:0", subjectId: "wp:8", recipientMmUserId: "mm2" }, "live");
+  await store.schedule({ ...DRAFT, id: "wp:7:stale:old", dayKey: "2026-11-13" }, "live");
+  assert.equal(await store.countForDay("mm1", "2026-11-14"), 2);
+  assert.equal(await store.countForDay("mm2", "2026-11-14"), 1);
+  assert.equal(await store.lastLiveAt("wp:7"), 20);
+  assert.equal(await store.lastLiveAt("wp:9"), undefined);
+  assert.equal(await store.has("wp:8:stale:0"), true);
+  await store.markSent(DRAFT.id);
+  assert.equal(await store.cancelForSubject("wp:7"), 2);
+  assert.equal(await store.countForDay("mm1", "2026-11-14"), 1);
   assert.deepEqual(
-    (await store.due(10)).map((r) => r.id),
-    ["8:stale:0"],
+    (await store.pendingFor("mm2")).map((r) => r.id),
+    ["wp:8:stale:0"],
   );
 });

@@ -179,3 +179,45 @@ export function evaluateFollowUp(
   }
   return actions;
 }
+
+export const MEETING_GRACE_MS = 10 * 60_000;
+
+export interface MeetingState {
+  id: string;
+  title: string;
+  endAt: number;
+  state: string;
+  plannerName?: string;
+  plannerOpUserId?: string;
+}
+
+export interface MeetingAction {
+  kind: "meeting-follow-up";
+  meetingId: string;
+  dedupeKey: string;
+  reason: string;
+}
+
+export function evaluateMeetingFollowUp(
+  meeting: MeetingState,
+  now: number,
+  graceMs: number = MEETING_GRACE_MS,
+): MeetingAction | undefined {
+  if (meeting.state.trim().toLowerCase() === "closed" || now < meeting.endAt + graceMs) return undefined;
+  return {
+    kind: "meeting-follow-up",
+    meetingId: meeting.id,
+    dedupeKey: `meeting:${meeting.id}:follow-up`,
+    reason: `ended ${Math.floor((now - meeting.endAt) / 60_000)} minute(s) ago and is still ${meeting.state}`,
+  };
+}
+
+export function pendingExitFields(
+  status: string,
+  fields: Readonly<Record<string, string | null | undefined>>,
+  rules: readonly ExitRule[] = DEFAULT_EXIT_RULES,
+): string[] {
+  const from = status.trim().toLowerCase();
+  const targets = rules.filter((r) => r.from === from).map((r) => r.to);
+  return [...new Set(targets.flatMap((to) => exitBlockers(from, to, fields, rules)))];
+}
