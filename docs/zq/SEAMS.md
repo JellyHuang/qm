@@ -141,3 +141,21 @@ New tables: `openagents_threads`, `openagents_state`, `openagents_seen`. With no
 | `test/mcp-tool-contract.test.ts`, `test/fixtures/openproject-mcp-tools.json` | Tests with a mock listing                                                                                    |                                                                                    |
 
 See `docs/zq/openproject-mcp.md` for registration.
+
+## Feature commit: "P0 follow-up foundations" (`src/zq/`)
+
+Everything here is additive and unused by the running system until a later change wires it in. No existing table, config key or payload changes.
+
+| File                        | Change                                                                                                                                     |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/zq/config.ts`          | `ZQ_IDENTITY_MAP=1` turns identity mapping on; unset or any other value leaves it off                                                      |
+| `src/zq/identity-map.ts`    | Mattermost user ↔ OpenProject user links, one OpenProject user per Mattermost user. Off: `link` and `unlink` throw, lookups return nothing |
+| `src/zq/reminders.ts`       | Reminder store with one row per dedupe key                                                                                                 |
+| `src/zq/follow-up-rules.ts` | Pure status-driven rules: given a work package's state and the time, returns reminder and escalation actions. No I/O                       |
+
+New durable-map tables, created on first use like the Mattermost ones (`id TEXT` key, `json JSONB` value):
+
+- `zq_identity_map`, key `mmUserId`: `{ mmUserId, opUserId, opLogin, email, source: "email-match" | "admin", linkedAt, linkedBy }`. Example (invented): `mm1 → { "opUserId": "42", "opLogin": "alice", "email": "alice@example.com", "source": "admin", "linkedAt": 1763000000000, "linkedBy": "internal:admin" }`.
+- `zq_reminders`, key = dedupe key such as `7:stale:0`: `{ id, kind: "remind-stale" | "remind-overdue" | "escalate-blocked", workPackageId, assigneeOpUserId?, reason, status: "pending" | "sent" | "cancelled", dueAt, createdAt, sentAt? }`.
+
+Rollout: nothing writes to either table yet, so there is nothing to migrate or back-fill and rollback is a no-op.

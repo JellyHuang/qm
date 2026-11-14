@@ -48,14 +48,14 @@ export function parseToolContract(value: unknown): McpToolContract | undefined |
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "object" || Array.isArray(value)) return "invalid";
   const { required, forbidden, ...rest } = value as Record<string, unknown>;
-  const names = (list: unknown): string[] | undefined =>
-    list === undefined
-      ? []
-      : Array.isArray(list) &&
-          list.length <= 200 &&
-          list.every((n) => typeof n === "string" && /^[\w.:-]{1,128}$/.test(n))
-        ? [...new Set(list as string[])]
-        : undefined;
+  const names = (list: unknown): string[] | undefined => {
+    if (list === undefined) return [];
+    const valid =
+      Array.isArray(list) &&
+      list.length <= 200 &&
+      list.every((n) => typeof n === "string" && /^[\w.:-]{1,128}$/.test(n));
+    return valid ? [...new Set(list as string[])] : undefined;
+  };
   const req = names(required);
   const forb = names(forbidden);
   if (Object.keys(rest).length || !req || !forb || req.some((n) => forb.includes(n))) return "invalid";
