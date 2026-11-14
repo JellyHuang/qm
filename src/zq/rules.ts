@@ -73,17 +73,6 @@ export interface RuleOptions {
 }
 
 const DAY = 86_400_000;
-export const STAGE = {
-  plannerUnassigned: "feature.planner_unassigned",
-  reviewPending: "feature.review_pending",
-  staffing: "feature.staffing",
-  briefing: "feature.briefing",
-  inProduction: "feature.in_production",
-  formalAssets: "feature.formal_assets_pending",
-  taskUnassigned: "task.unassigned",
-  taskDone: "task.done",
-} as const;
-
 export const DEFAULT_RULE_OPTIONS = {
   meetingGraceMs: 10 * 60_000,
   escalateAfterMs: 2 * DAY,
@@ -93,7 +82,8 @@ export const DEFAULT_RULE_OPTIONS = {
 const label = (contract: ZqContract, key: string) => contract.stages.feature[key] ?? contract.stages.task[key] ?? key;
 const where = (w: WorkView) => `「${w.subject}」(#${w.id})`;
 const active = (w: WorkView) => !paused(w.lifecycle);
-const open = (w: WorkView) => w.statusKey !== STAGE.taskDone && active(w);
+
+const isOpen = (contract: ZqContract, w: WorkView) => w.statusKey !== contract.stageRoles.taskDone && active(w);
 
 function stageOwners(contract: ZqContract, stage: string): Target[] {
   return [...(contract.stageOwners[stage] ?? [])];
@@ -118,10 +108,11 @@ export function evaluateRules(facts: FeatureFacts, contract: ZqContract, opts: R
     text,
   });
   const stage = feature.statusKey;
+  const r = contract.stageRoles;
   const stageName = label(contract, stage);
   const out: RuleAction[] = [];
 
-  if (stage === STAGE.plannerUnassigned)
+  if (stage === r.plannerUnassigned)
     out.push(
       at(
         "planner-unassigned",
@@ -130,12 +121,12 @@ export function evaluateRules(facts: FeatureFacts, contract: ZqContract, opts: R
       ),
     );
 
-  if (stage === STAGE.reviewPending)
+  if (stage === r.reviewPending)
     out.push(
       at("review-pending", stageOwners(contract, stage), `功能${where(feature)}的策划案等待审核,请审核通过或退回。`),
     );
 
-  if (stage === STAGE.staffing) {
+  if (stage === r.staffing) {
     const planner: Target[] = [{ kind: "field", field: "responsiblePlanner" }];
     const live = children.filter(active);
     if (!live.length)
@@ -146,7 +137,7 @@ export function evaluateRules(facts: FeatureFacts, contract: ZqContract, opts: R
           `功能${where(feature)}在「${stageName}」,还没有专业执行单。请确认本功能需要哪些专业和交付项。`,
         ),
       );
-    const pending = live.filter((c) => c.statusKey === STAGE.taskUnassigned);
+    const pending = live.filter((c) => c.statusKey === r.taskUnassigned);
     const byDuty = new Map<Duty, WorkView[]>();
     for (const c of pending) {
       const duty = contract.typeDuties[c.typeKey];
@@ -162,7 +153,7 @@ export function evaluateRules(facts: FeatureFacts, contract: ZqContract, opts: R
       );
   }
 
-  if (stage === STAGE.briefing && facts.meetings) {
+  if (stage === r.briefing && facts.meetings) {
     const valid = facts.meetings.filter((m) => m.state.trim().toLowerCase() !== "cancelled");
     if (!valid.length)
       out.push(
@@ -184,8 +175,8 @@ export function evaluateRules(facts: FeatureFacts, contract: ZqContract, opts: R
     }
   }
 
-  if (stage === STAGE.inProduction) {
-    for (const c of children.filter(open)) {
+  if (stage === r.inProduction) {
+    for (const c of children.filter((c) => isOpen(contract, c))) {
       const missing = missingPlan(c);
       if (missing.length && c.assignee)
         out.push(
@@ -229,8 +220,8 @@ export function evaluateRules(facts: FeatureFacts, contract: ZqContract, opts: R
       ),
     );
 
-  if (stage === STAGE.formalAssets) {
-    const unfinished = children.filter((c) => contract.typeDuties[c.typeKey] === "art_lead" && open(c));
+  if (stage === r.formalAssets) {
+    const unfinished = children.filter((c) => contract.typeDuties[c.typeKey] === "art_lead" && isOpen(contract, c));
     out.push(
       at(
         "formal-assets-pending",

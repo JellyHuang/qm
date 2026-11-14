@@ -32,6 +32,7 @@ const DAY = 86_400_000;
 const NOON_SHANGHAI = Date.UTC(2026, 10, 14, 4, 0);
 const iso = (ms: number) => new Date(ms).toISOString();
 const ALICE_OP = { id: "11", login: "alice", name: "Alice A" };
+const asUser = (u: { id: string; login: string; name: string }) => ({ ...u, type: "User" });
 const BOB_OP = { id: "12", login: "bob", name: "Bob B" };
 const CAROL_OP = { id: "13", login: "carol", name: "Carol C" };
 const ALICE: ScanPerson = { mmUserId: "mm-alice", principalId: "internal:alice", opUserId: "11", opName: "Alice A" };
@@ -39,39 +40,39 @@ const BOB: ScanPerson = { mmUserId: "mm-bob", principalId: "internal:bob", opUse
 const MM_OF: Record<string, string> = { "11": "mm-alice", "12": "mm-bob" };
 
 function detail(id: number, over: Record<string, unknown> = {}) {
+  const status = (over["status_key"] as string | undefined) ?? "execution.active";
   return {
     id,
     subject: `单${id}`,
     type_key: "backend",
-    status_key: "task.in_progress",
+    status_key: status,
+    stage_key: status,
     lifecycle: "normal",
     project_id: "p1",
+    lock_version: 1,
     status_changed_at: iso(NOON_SHANGHAI - DAY),
+    updated_at: iso(NOON_SHANGHAI - DAY),
     ...over,
   };
 }
 
 const DETAILS = [
-  detail(1, { type_key: "feature", status_key: "feature.staffing", responsible_planner: ALICE_OP }),
-  detail(2, { type_key: "vfx", status_key: "task.unassigned", parent_id: 1 }),
-  detail(20, { type_key: "feature", status_key: "feature.in_production", responsible_planner: ALICE_OP }),
-  detail(21, { parent_id: 20, assignee: BOB_OP }),
+  detail(1, { type_key: "feature", status_key: "feature.staffing", planner: ALICE_OP }),
+  detail(2, { type_key: "vfx", status_key: "execution.unassigned", parent_id: 1 }),
+  detail(20, { type_key: "feature", status_key: "feature.development", planner: ALICE_OP }),
+  detail(21, { parent_id: 20, assignee: asUser(BOB_OP) }),
   detail(22, {
     parent_id: 20,
-    assignee: BOB_OP,
-    due_date: iso(NOON_SHANGHAI - 3 * DAY),
-    estimated_hours: "PT8H",
-    planned_start: iso(NOON_SHANGHAI - 5 * DAY),
-    planned_end: iso(NOON_SHANGHAI - 3 * DAY),
+    assignee: asUser(BOB_OP),
+    due_date: "2026-11-11",
+    estimated_hours: 8,
+    start_date: "2026-11-09",
   }),
-  detail(30, { type_key: "feature", status_key: "feature.planner_unassigned", lifecycle: "suspended" }),
-  detail(50, { type_key: "feature", status_key: "feature.staffing", responsible_planner: ALICE_OP }),
+  detail(30, { type_key: "feature", status_key: "feature.planning_unassigned", lifecycle: "suspended" }),
+  detail(50, { type_key: "feature", status_key: "feature.staffing", planner: ALICE_OP }),
 ];
 
-const rows = (list: Array<{ id: number }>) =>
-  list.map((d) => ({ id: d.id, subject: `单${d.id}`, status: "显示名", updated_at: iso(NOON_SHANGHAI - DAY) }));
-
-const extraTools: Tool[] = ["zq_get_work_package", "zq_duty_holders"].map((name) => ({
+const extraTools: Tool[] = ["zq_list_work_packages", "zq_duty_holders"].map((name) => ({
   name,
   description: name,
   inputSchema: { type: "object", properties: {} },
@@ -105,24 +106,21 @@ async function harness(
       const ids = visible[who(authorization)] ?? (who(authorization) === "alice" ? DETAILS.map((d) => d.id) : []);
       const mine = DETAILS.filter((d) => ids.includes(d.id));
       let body: unknown = {};
-      if (name === "list_work_packages") {
+      if (name === "zq_list_work_packages") {
         const offset = Number(args["offset"] ?? 0);
-        const page = rows(mine).slice(offset, offset + 3);
+        const page = mine.slice(offset, offset + 3);
         body = {
           offset,
           limit: 3,
-          total: mine.length,
           count: page.length,
           next_offset: offset + 3 < mine.length ? offset + 3 : null,
           truncated: false,
           results: page,
         };
-      } else if (name === "zq_get_work_package") {
-        body = mine.find((d) => d.id === args["id"]) ?? { error: { code: "not_found" } };
       } else if (name === "zq_duty_holders") {
         body = {
           next_offset: null,
-          results: args["duty"] === "art_lead" ? [BOB_OP] : [],
+          results: args["duty"] === "lead_artist" ? [BOB_OP] : [],
         };
       }
       return { content: [{ type: "text", text: JSON.stringify(body) }] };
@@ -193,7 +191,7 @@ async function harness(
 }
 
 const DAY_KEY = "2026-11-14";
-const parseWork = (d: unknown) => parseWorkView(JSON.stringify(d), contract)!;
+const parseWork = (d: unknown) => parseWorkView(d, contract)!;
 const ids = async (h: Harness, mm: string) => (await h.reminders.pendingFor(mm)).map((r) => r.rule).sort();
 
 test("everything stays off unless switched on", async (t) => {
@@ -242,27 +240,31 @@ test("a dry-run scan walks the pages, stores what it would send per rule, target
     "a suspended feature is left alone",
   );
   assert.ok(
-    h.calls.filter((c) => c.startsWith("list_work_packages")).length >= 3,
+    h.calls.filter((c) => c.startsWith("zq_list_work_packages")).length >= 3,
     "the 7 rows were read in pages of 3 for each person",
   );
 });
 
-test("each feature is handled once even when two people can see it, and unchanged orders are not re-read", async (t) => {
+test("each feature is handled once even when two people can see it, and each person is read through their own token", async (t) => {
   const h = await harness(t, { alice: [1, 2, 20, 21, 22, 30, 50], bob: [20, 21, 22] });
   await h.service({ ZQ_SCANNER: "1" }).tick();
-  const reads = h.calls.filter((c) => c.startsWith("zq_get_work_package"));
-  assert.equal(reads.length, 7 + 3, "Alice's seven and Bob's three are each read once");
+  assert.deepEqual(
+    [
+      h.calls.filter((c) => c === "zq_list_work_packages:alice").length,
+      h.calls.filter((c) => c === "zq_list_work_packages:bob").length,
+    ],
+    [3, 1],
+    "seven rows are three pages for Alice, three rows one page for Bob",
+  );
   assert.equal((await h.reminders.pendingFor("mm-bob")).filter((r) => r.rule === "task-overdue").length, 1);
+  assert.ok(
+    !h.calls.some((c) => c.startsWith("get_work_package") || c.startsWith("list_work_packages")),
+    "no per-order reads",
+  );
   h.clock.now += 5 * 60_000;
-  const before = h.calls.length;
   const again = (await h.service({ ZQ_SCANNER: "1" }).tick()).scanned!;
   assert.equal(again.created, 0);
   assert.ok(again.alreadyKnown > 0);
-  assert.equal(
-    h.calls.slice(before).filter((c) => c.startsWith("zq_get_work_package")).length,
-    0,
-    "the per-order read is cached until updated_at changes",
-  );
 });
 
 test("going live delivers the Chinese texts to the people the rules name, once", async (t) => {
@@ -274,7 +276,7 @@ test("going live delivers the Chinese texts to the people the rules name, once",
   assert.equal(out.scanned?.mode, "live");
   assert.deepEqual(out.delivered, { sent: 4, failed: 0 });
   assert.match(h.sent.find((m) => m.to === "mm-alice")!.text, /请确认本功能需要哪些专业和交付项/);
-  assert.ok(h.sent.some((m) => m.to === "mm-bob" && /已超过计划结束时间 3 天/.test(m.text)));
+  assert.ok(h.sent.some((m) => m.to === "mm-bob" && /已超过计划结束时间 2 天/.test(m.text)));
   h.clock.now += 5 * 60_000;
   assert.deepEqual((await live.tick()).delivered, { sent: 0, failed: 0 }, "nothing is sent twice");
 });
@@ -337,12 +339,10 @@ test("a person whose OpenProject read fails is skipped without stopping the rest
 });
 
 test("the group for a feature in the briefing stage is made once, only when every live order has an assignee", async () => {
-  const feature = parseWork(
-    detail(40, { type_key: "feature", status_key: "feature.briefing", responsible_planner: ALICE_OP }),
-  );
+  const feature = parseWork(detail(40, { type_key: "feature", status_key: "feature.briefing", planner: ALICE_OP }));
   const ready = [
-    parseWork(detail(41, { parent_id: 40, assignee: BOB_OP })),
-    parseWork(detail(42, { parent_id: 40, assignee: CAROL_OP })),
+    parseWork(detail(41, { parent_id: 40, assignee: asUser(BOB_OP) })),
+    parseWork(detail(42, { parent_id: 40, assignee: asUser(CAROL_OP) })),
     parseWork(detail(43, { parent_id: 40, lifecycle: "cancelled" })),
   ];
   const created: Array<{ feature: { id: number; subject: string; url?: string }; members: string[] }> = [];

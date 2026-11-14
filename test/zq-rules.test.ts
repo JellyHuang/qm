@@ -20,7 +20,7 @@ const ALICE = { id: "11", name: "Alice A" };
 const BOB = { id: "12", name: "Bob B" };
 
 function work(id: number, over: Partial<WorkView> = {}): WorkView {
-  return { id, subject: `单${id}`, typeKey: "backend", statusKey: "task.in_progress", ...over };
+  return { id, subject: `单${id}`, typeKey: "backend", statusKey: "execution.active", ...over };
 }
 
 function feature(stage: string, over: Partial<WorkView> = {}): WorkView {
@@ -35,7 +35,7 @@ test("a work package that is not a feature never produces feature rules", () => 
 });
 
 test("suspended and cancelled features are skipped, a delayed one is not", () => {
-  const stage = "feature.planner_unassigned";
+  const stage = "feature.planning_unassigned";
   assert.deepEqual(rules({ feature: feature(stage, { lifecycle: "suspended" }), children: [] }), []);
   assert.deepEqual(rules({ feature: feature(stage, { lifecycle: "cancelled" }), children: [] }), []);
   assert.deepEqual(ids(rules({ feature: feature(stage, { lifecycle: "delayed" }), children: [] })), [
@@ -44,13 +44,13 @@ test("suspended and cancelled features are skipped, a delayed one is not", () =>
 });
 
 test("an unassigned planner and a pending review go to the owners the contract names for the stage", () => {
-  const a = rules({ feature: feature("feature.planner_unassigned"), children: [] });
+  const a = rules({ feature: feature("feature.planning_unassigned"), children: [] });
   assert.deepEqual(a[0]!.to, [
     { kind: "duty", duty: "producer" },
     { kind: "duty", duty: "pm" },
   ]);
   assert.match(a[0]!.text, /待分配策划/);
-  const r = rules({ feature: feature("feature.review_pending"), children: [] });
+  const r = rules({ feature: feature("feature.review"), children: [] });
   assert.deepEqual(ids(r), ["review-pending"]);
   assert.deepEqual(r[0]!.to, [{ kind: "duty", duty: "producer" }]);
 });
@@ -60,10 +60,10 @@ test("staffing asks the planner for trades when there are no child orders, and t
   assert.deepEqual(ids(empty), ["staffing-trades"]);
   assert.deepEqual(empty[0]!.to, [{ kind: "field", field: "responsiblePlanner" }]);
   const children = [
-    work(2, { typeKey: "vfx", statusKey: "task.unassigned" }),
-    work(3, { typeKey: "scene_art", statusKey: "task.unassigned" }),
-    work(4, { typeKey: "backend", statusKey: "task.waiting" }),
-    work(5, { typeKey: "frontend", statusKey: "task.unassigned", lifecycle: "suspended" }),
+    work(2, { typeKey: "vfx", statusKey: "execution.unassigned" }),
+    work(3, { typeKey: "scene_concept", statusKey: "execution.unassigned" }),
+    work(4, { typeKey: "backend", statusKey: "execution.waiting" }),
+    work(5, { typeKey: "frontend", statusKey: "execution.unassigned", lifecycle: "suspended" }),
   ];
   const assign = rules({ feature: feature("feature.staffing"), children });
   assert.deepEqual(ids(assign), ["staffing-assign"]);
@@ -102,11 +102,11 @@ test("in production, missing estimates and dates go to the assignee until filled
   const children = [
     work(2, { assignee: BOB }),
     work(3, { assignee: BOB, estimateHours: 8, plannedStart: NOW, plannedEnd: NOW + DAY }),
-    work(4, { assignee: BOB, statusKey: "task.done" }),
+    work(4, { assignee: BOB, statusKey: "execution.done" }),
     work(5, { assignee: BOB, lifecycle: "suspended" }),
     work(6),
   ];
-  const a = rules({ feature: feature("feature.in_production"), children });
+  const a = rules({ feature: feature("feature.development"), children });
   assert.deepEqual(ids(a), ["production-missing-plan"]);
   assert.deepEqual(a[0]!.to, [{ kind: "user", user: BOB }]);
   assert.match(a[0]!.text, /预计工时、计划开始时间、计划结束时间/);
@@ -115,10 +115,10 @@ test("in production, missing estimates and dates go to the assignee until filled
 test("an overdue order asks its assignee, and escalates only to the configured duties after the configured time", () => {
   const plan = { estimateHours: 1, plannedStart: NOW - 5 * DAY, plannedEnd: NOW - DAY };
   const late = work(2, { assignee: BOB, dueAt: NOW - 3 * DAY, ...plan });
-  const plain = rules({ feature: feature("feature.in_production"), children: [late] });
+  const plain = rules({ feature: feature("feature.development"), children: [late] });
   assert.deepEqual(ids(plain), ["task-overdue"]);
   assert.match(plain[0]!.text, /3 天/);
-  const escalating = rules({ feature: feature("feature.in_production"), children: [late] }, contract, {
+  const escalating = rules({ feature: feature("feature.development"), children: [late] }, contract, {
     ...OPTS,
     escalationDuties: ["pm", "planning_lead"],
   });
@@ -128,7 +128,7 @@ test("an overdue order asks its assignee, and escalates only to the configured d
     { kind: "duty", duty: "planning_lead" },
   ]);
   const recent = work(3, { assignee: BOB, dueAt: NOW - DAY, ...plan });
-  const early = rules({ feature: feature("feature.in_production"), children: [recent] }, contract, {
+  const early = rules({ feature: feature("feature.development"), children: [recent] }, contract, {
     ...OPTS,
     escalationDuties: ["pm"],
     escalateAfterMs: 2 * DAY,
@@ -137,7 +137,7 @@ test("an overdue order asks its assignee, and escalates only to the configured d
 });
 
 test("an exit-ready answer from OpenProject notifies the stage owners, and an unavailable or not-ready one says nothing", () => {
-  const f = feature("feature.in_production");
+  const f = feature("feature.development");
   const ready = rules({ feature: f, children: [], exit: { ready: true, blockers: [] } });
   assert.deepEqual(ids(ready), ["exit-ready"]);
   assert.deepEqual(ready[0]!.to, [
@@ -150,11 +150,11 @@ test("an exit-ready answer from OpenProject notifies the stage owners, and an un
 
 test("waiting for formal assets lists the unfinished art orders for the art lead, PM and QA lead", () => {
   const children = [
-    work(2, { typeKey: "vfx", statusKey: "task.in_progress" }),
-    work(3, { typeKey: "vfx", statusKey: "task.done" }),
-    work(4, { typeKey: "backend", statusKey: "task.in_progress" }),
+    work(2, { typeKey: "vfx", statusKey: "execution.active" }),
+    work(3, { typeKey: "vfx", statusKey: "execution.done" }),
+    work(4, { typeKey: "backend", statusKey: "execution.active" }),
   ];
-  const a = rules({ feature: feature("feature.formal_assets_pending"), children });
+  const a = rules({ feature: feature("feature.resources"), children });
   assert.deepEqual(ids(a), ["formal-assets-pending"]);
   assert.match(a[0]!.text, /1 张美术单未完成/);
   assert.deepEqual(
@@ -162,8 +162,8 @@ test("waiting for formal assets lists the unfinished art orders for the art lead
     ["art_lead", "pm", "qa_lead"],
   );
   const done = rules({
-    feature: feature("feature.formal_assets_pending"),
-    children: [work(3, { typeKey: "vfx", statusKey: "task.done" })],
+    feature: feature("feature.resources"),
+    children: [work(3, { typeKey: "vfx", statusKey: "execution.done" })],
   });
   assert.match(done[0]!.text, /全部完成/);
 });

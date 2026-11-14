@@ -15,9 +15,9 @@ QM reads stage, lifecycle and duty keys from one JSON file named by `ZQ_CONTRACT
 
 Lifecycle keys are fixed: `normal`, `delayed`, `suspended`, `cancelled`.
 
-## What QM expects from `zq_get_work_package`
+## What QM reads from `zq_list_work_packages`
 
-`{ id, subject, type_key, status_key, lifecycle, project_id, parent_id?, status_changed_at?, assignee?: {id, login, name}, due_date?, <fields.*> }`, where the responsible planner is `{id, login, name} | null`, the estimate is a number of hours or an ISO 8601 duration, and the planned dates are ISO 8601.
+Called with `{ limit: 100, offset }` and paged by `next_offset` until it is `null` (`total` is never trusted). QM reads each normalized object: `{ id, subject, project_id, type_key, stage_key (falls back to status_key), lifecycle, parent_id, assignee: {id, login, name, type} | null, due_date, status_changed_at?, <fields.*> }`. `fields` names the properties for the responsible planner (`{id, login, name} | null`), the estimate (hours, or an ISO 8601 duration), and the planned start and end. A date without a time is a Shanghai calendar day: it ends at 23:59:59.999 +08:00. An assignee whose `type` is not `User` (a group) does not count as a person assigned. An error comes back as `{ error: { code, message } }`; `not_found` on an optional tool means the feature is not visible and the answer is left out, any other code fails that person's scan.
 
 ## Optional tools
 

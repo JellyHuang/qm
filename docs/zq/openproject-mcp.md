@@ -45,7 +45,7 @@ Registering with the contract is what turns a silent server change into a loud f
 ## Follow-up rules and identity (`src/zq/`)
 
 - QM never defines stage names. `ZQ_CONTRACT_FILE` points at the contract key table that OpenProject supplies (`docs/zq/contract-keys.md`): stage keys with their Chinese labels, the four lifecycle keys, the duty keys, the field keys, which duty owns which type of order, and who is responsible per stage.
-- The scan axis is the parent feature: the scanner reads the paged `list_work_packages`, reads each changed order once with `zq_get_work_package` (cached per person until `updated_at` changes), groups child orders under their parent feature, then applies the rules in `src/zq/rules.ts` and resolves each stage's responsible person from the table.
+- The scan axis is the parent feature: the scanner reads the paged `zq_list_work_packages` (normalized objects, 100 per page, per person's own token), groups child orders under their parent feature, then applies the rules in `src/zq/rules.ts` and resolves each stage's responsible person from the table.
 - Suspended and cancelled features and orders get no reminders; a delayed one still does.
 - Exit checks are OpenProject's. QM calls the tool named in the table (`tools.exitCheck`) and shows the result; without it no "ready to advance" message is sent. The same holds for `tools.meetingsForFeature` (meeting rules) and `tools.dutyHolders` (duty recipients).
 - Reminders are deduplicated per rule, target and Shanghai day. `ZQ_REMINDER_DAILY_CEILING` is only a safety ceiling.

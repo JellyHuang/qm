@@ -1,68 +1,91 @@
 {
-  "version": "draft-0",
+  "version": "0.3",
   "featureType": "feature",
   "typeDuties": {
-    "character_art": "art_lead",
-    "scene_art": "art_lead",
+    "planning": "planning_lead",
+    "acceptance": "planning_lead",
+    "configuration": "planning_lead",
+    "character_concept": "art_lead",
+    "scene_concept": "art_lead",
     "ui": "art_lead",
     "character_model": "art_lead",
     "scene_model": "art_lead",
-    "terrain": "art_lead",
+    "level_art": "art_lead",
     "animation": "art_lead",
     "vfx": "art_lead",
-    "frontend": "client_lead",
     "fgui": "client_lead",
+    "frontend": "client_lead",
     "backend": "server_lead",
-    "planning": "planning_lead",
-    "acceptance": "planning_lead",
-    "config_table": "planning_lead"
+    "qa_test": "qa_lead"
   },
   "stages": {
     "feature": {
-      "feature.planner_unassigned": "待分配策划",
+      "feature.planning_unassigned": "待分配策划",
       "feature.planning": "策划编写中",
-      "feature.review_pending": "待审核",
+      "feature.review": "待审核",
       "feature.staffing": "人员安排",
       "feature.briefing": "宣讲对齐",
-      "feature.in_production": "研发制作中",
+      "feature.development": "研发制作中",
       "feature.acceptance": "策划验收",
-      "feature.qa_testing": "QA 测试中",
-      "feature.formal_assets_pending": "待正式资源",
+      "feature.qa": "QA 测试中",
+      "feature.resources": "待正式资源",
       "feature.done": "已完成"
     },
     "task": {
-      "task.unassigned": "待分配",
-      "task.waiting": "等待开发",
-      "task.in_progress": "进行中",
-      "task.integration": "联调中",
-      "task.done": "已完成"
+      "execution.unassigned": "待分配",
+      "execution.waiting": "等待开发",
+      "execution.active": "进行中",
+      "program.integration": "联调中",
+      "execution.done": "已完成"
+    },
+    "bug": {
+      "bug.new": "新建",
+      "bug.unassigned": "待分派",
+      "bug.fixing": "修复中",
+      "bug.retest": "待 QA 复测",
+      "bug.closed": "已关闭"
     }
   },
+  "stageRoles": {
+    "plannerUnassigned": "feature.planning_unassigned",
+    "reviewPending": "feature.review",
+    "staffing": "feature.staffing",
+    "briefing": "feature.briefing",
+    "inProduction": "feature.development",
+    "formalAssets": "feature.resources",
+    "taskUnassigned": "execution.unassigned",
+    "taskDone": "execution.done"
+  },
   "stageOwners": {
-    "feature.planner_unassigned": ["duty:producer", "duty:pm"],
+    "feature.planning_unassigned": ["duty:producer", "duty:pm"],
     "feature.planning": ["field:responsiblePlanner"],
-    "feature.review_pending": ["duty:producer"],
+    "feature.review": ["duty:producer"],
     "feature.staffing": ["field:responsiblePlanner", "duty:pm"],
     "feature.briefing": ["field:responsiblePlanner", "duty:pm"],
-    "feature.in_production": ["field:responsiblePlanner", "duty:pm"],
+    "feature.development": ["field:responsiblePlanner", "duty:pm"],
     "feature.acceptance": ["field:responsiblePlanner"],
-    "feature.qa_testing": ["duty:qa_lead"],
-    "feature.formal_assets_pending": ["duty:art_lead", "duty:pm", "duty:qa_lead"],
+    "feature.qa": ["duty:qa_lead"],
+    "feature.resources": ["duty:art_lead", "duty:pm", "duty:qa_lead"],
     "feature.done": ["field:responsiblePlanner", "duty:pm", "duty:producer"]
   },
   "fields": {
-    "responsiblePlanner": "responsible_planner",
+    "responsiblePlanner": "planner",
     "estimate": "estimated_hours",
-    "plannedStart": "planned_start",
-    "plannedEnd": "planned_end"
+    "plannedStart": "start_date",
+    "plannedEnd": "due_date"
   },
   "duties": {
     "producer": "producer",
     "pm": "pm",
-    "art_lead": "art_lead",
-    "client_lead": "client_lead",
-    "server_lead": "server_lead",
-    "planning_lead": "planning_lead",
+    "art_lead": "lead_artist",
+    "client_lead": "lead_frontend",
+    "server_lead": "lead_backend",
+    "planning_lead": "lead_planner",
     "qa_lead": "qa_lead"
+  },
+  "tools": {
+    "exitCheck": "zq_check_exit",
+    "meetingsForFeature": "zq_meetings_for_feature",
+    "dutyHolders": "zq_duty_holders"
   }
 }

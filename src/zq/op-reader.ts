@@ -6,6 +6,17 @@ export type OpCall = (tool: string, args: Record<string, unknown>, principalId: 
 
 type Json = Record<string, unknown>;
 
+const PAGE_LIMIT = 100;
+const SHANGHAI = "+08:00";
+
+export class OpError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(`OpenProject ${code}: ${message}`);
+    this.code = code;
+  }
+}
+
 const isObject = (value: unknown): value is Json =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -15,8 +26,12 @@ function str(value: unknown): string | undefined {
   return undefined;
 }
 
-function time(value: unknown): number | undefined {
-  const ms = typeof value === "string" ? Date.parse(value) : NaN;
+function time(value: unknown, edge: "start" | "end" = "start"): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
+  const ms = Date.parse(
+    dateOnly ? `${value.trim()}${edge === "end" ? "T23:59:59.999" : "T00:00:00"}${SHANGHAI}` : value,
+  );
   return Number.isNaN(ms) ? undefined : ms;
 }
 
@@ -29,12 +44,24 @@ function hours(value: unknown): number | undefined {
   return value.trim() && Number.isFinite(plain) ? plain : undefined;
 }
 
-function user(value: unknown): OpUserRef | undefined {
+function person(value: unknown): OpUserRef | undefined {
   if (!isObject(value)) return undefined;
   const id = str(value["id"]);
   const name = str(value["name"]) ?? str(value["login"]);
   const login = str(value["login"]);
   return id && name ? { id, name, ...(login ? { login } : {}) } : undefined;
+}
+
+function individual(value: unknown): OpUserRef | undefined {
+  const type = isObject(value) ? str(value["type"]) : undefined;
+  return type && !/^user$/i.test(type) ? undefined : person(value);
+}
+
+function parseJson(text: string): unknown {
+  const parsed: unknown = JSON.parse(text);
+  const error = isObject(parsed) ? parsed["error"] : undefined;
+  if (isObject(error)) throw new OpError(str(error["code"]) ?? "error", str(error["message"]) ?? "request failed");
+  return parsed;
 }
 
 interface Page {
@@ -43,7 +70,7 @@ interface Page {
 }
 
 function parsePage(text: string): Page {
-  const parsed: unknown = JSON.parse(text);
+  const parsed = parseJson(text);
   if (!isObject(parsed) || !Array.isArray(parsed["results"])) throw new Error("OpenProject returned no results list");
   const next = parsed["next_offset"];
   return {
@@ -52,23 +79,22 @@ function parsePage(text: string): Page {
   };
 }
 
-export function parseWorkView(text: string, contract: ZqContract): WorkView | undefined {
-  const item: unknown = JSON.parse(text);
+export function parseWorkView(item: unknown, contract: ZqContract): WorkView | undefined {
   if (!isObject(item)) return undefined;
   const id = Number(item["id"]);
   const typeKey = str(item["type_key"]);
-  const statusKey = str(item["status_key"]);
+  const statusKey = str(item["stage_key"]) ?? str(item["status_key"]);
   if (!Number.isSafeInteger(id) || !typeKey || !statusKey) return undefined;
   const lifecycle = lifecycleOf(item["lifecycle"]);
   const statusChangedAt = time(item["status_changed_at"]);
   const parentId = Number(item["parent_id"]);
   const projectId = str(item["project_id"]);
-  const assignee = user(item["assignee"]);
-  const planner = user(item[contract.fields.responsiblePlanner]);
-  const dueAt = time(item["due_date"]);
+  const assignee = individual(item["assignee"]);
+  const planner = person(item[contract.fields.responsiblePlanner]);
+  const dueAt = time(item["due_date"], "end");
   const estimateHours = hours(item[contract.fields.estimate]);
-  const plannedStart = time(item[contract.fields.plannedStart]);
-  const plannedEnd = time(item[contract.fields.plannedEnd]);
+  const plannedStart = time(item[contract.fields.plannedStart], "start");
+  const plannedEnd = time(item[contract.fields.plannedEnd], "end");
   return {
     id,
     subject: str(item["subject"]) ?? `#${id}`,
@@ -95,7 +121,7 @@ function parseMeeting(item: Json): MeetingView | undefined {
 }
 
 function parseExit(text: string): ExitCheck | undefined {
-  const parsed: unknown = JSON.parse(text);
+  const parsed = parseJson(text);
   if (!isObject(parsed) || typeof parsed["ready"] !== "boolean") return undefined;
   const blockers = Array.isArray(parsed["blockers"])
     ? parsed["blockers"].flatMap((b) => (isObject(b) ? (str(b["message"]) ?? str(b["code"]) ?? []) : (str(b) ?? [])))
@@ -122,7 +148,6 @@ async function mapLimited<T, R>(items: readonly T[], work: (item: T) => Promise<
 export function createMcpOpReader(opts: { call: OpCall; contract: ZqContract; serverId?: string }): OpReader {
   const { contract } = opts;
   const tool = (name: string) => `${opts.serverId ?? "openproject"}_${name}`;
-  const views = new Map<string, WorkView>();
 
   async function pages(name: string, args: Json, principalId: string): Promise<Json[]> {
     const rows: Json[] = [];
@@ -136,52 +161,46 @@ export function createMcpOpReader(opts: { call: OpCall; contract: ZqContract; se
     }
   }
 
-  async function view(row: Json, principalId: string): Promise<WorkView | undefined> {
-    const id = str(row["id"]);
-    if (!id) return undefined;
-    const stamp = `${principalId}|${id}|${str(row["updated_at"]) ?? ""}`;
-    const cached = views.get(stamp);
-    if (cached) return cached;
-    const found = parseWorkView(
-      await opts.call(tool("zq_get_work_package"), { id: Number(id) }, principalId),
-      contract,
-    );
-    if (found) views.set(stamp, found);
-    return found;
-  }
+  const invisible = (e: unknown) => e instanceof OpError && (e.code === "not_found" || e.code === "404");
 
   return {
-    async features(person: ScanPerson): Promise<FeatureFacts[]> {
-      const rows = await pages("list_work_packages", {}, person.principalId);
-      const found = (await mapLimited(rows, (row) => view(row, person.principalId))).flatMap((v) => v ?? []);
-      const live = new Set(rows.map((r) => `${person.principalId}|${str(r["id"])}|${str(r["updated_at"]) ?? ""}`));
-      for (const key of views.keys()) if (key.startsWith(`${person.principalId}|`) && !live.has(key)) views.delete(key);
+    async features(scanner: ScanPerson): Promise<FeatureFacts[]> {
+      const rows = await pages("zq_list_work_packages", { limit: PAGE_LIMIT }, scanner.principalId);
+      const found = rows.flatMap((row) => parseWorkView(row, contract) ?? []);
       const features = found.filter((w) => w.typeKey === contract.featureType);
       return mapLimited(features, async (feature) => {
         const children = found.filter((w) => w.parentId === feature.id);
         const [meetings, exit] = await Promise.all([
           contract.tools.meetingsForFeature
-            ? pages(contract.tools.meetingsForFeature, { id: feature.id }, person.principalId).then((r) =>
-                r.flatMap((m) => parseMeeting(m) ?? []),
+            ? pages(contract.tools.meetingsForFeature, { id: feature.id }, scanner.principalId).then(
+                (r) => r.flatMap((m) => parseMeeting(m) ?? []),
+                (e: unknown) => {
+                  if (invisible(e)) return undefined;
+                  throw e;
+                },
               )
             : undefined,
           contract.tools.exitCheck
             ? opts
-                .call(tool(contract.tools.exitCheck), { id: feature.id }, person.principalId)
+                .call(tool(contract.tools.exitCheck), { id: feature.id }, scanner.principalId)
                 .then((t) => parseExit(t))
+                .catch((e: unknown) => {
+                  if (invisible(e)) return undefined;
+                  throw e;
+                })
             : undefined,
         ]);
         return { feature, children, ...(meetings ? { meetings } : {}), ...(exit ? { exit } : {}) };
       });
     },
-    async dutyHolders(person: ScanPerson, projectId: string, duty: Duty): Promise<OpUserRef[] | undefined> {
+    async dutyHolders(scanner: ScanPerson, projectId: string, duty: Duty): Promise<OpUserRef[] | undefined> {
       if (!contract.tools.dutyHolders) return undefined;
       const rows = await pages(
         contract.tools.dutyHolders,
         { project_id: projectId, duty: contract.duties[duty] },
-        person.principalId,
+        scanner.principalId,
       );
-      return rows.flatMap((r) => user(r) ?? []);
+      return rows.flatMap((r) => person(r) ?? []);
     },
   };
 }

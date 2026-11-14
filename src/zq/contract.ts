@@ -8,6 +8,17 @@ const LIFECYCLES: readonly Lifecycle[] = ["normal", "delayed", "suspended", "can
 
 export type Recipient = { kind: "duty"; duty: Duty } | { kind: "field"; field: "responsiblePlanner" | "assignee" };
 
+export interface StageRoles {
+  plannerUnassigned: string;
+  reviewPending: string;
+  staffing: string;
+  briefing: string;
+  inProduction: string;
+  formalAssets: string;
+  taskUnassigned: string;
+  taskDone: string;
+}
+
 export interface ZqContract {
   version: string;
   featureType: string;
@@ -16,6 +27,7 @@ export interface ZqContract {
     feature: Readonly<Record<string, string>>;
     task: Readonly<Record<string, string>>;
   };
+  stageRoles: StageRoles;
   stageOwners: Readonly<Record<string, readonly Recipient[]>>;
   fields: {
     responsiblePlanner: string;
@@ -75,6 +87,12 @@ export function parseContract(value: unknown): ZqContract {
   const feature = stringMap(stages["feature"], "stages.feature");
   const task = stringMap(stages["task"], "stages.task");
   const owners = isRecord(value["stageOwners"]) ? value["stageOwners"] : {};
+  const roles = stringMap(value["stageRoles"], "stageRoles");
+  const stageRole = (name: keyof StageRoles, table: Readonly<Record<string, string>>): string => {
+    const key = text(roles[name], `stageRoles.${name}`);
+    if (!(key in table)) throw new Error(`contract key table: stageRoles.${name} names unknown stage ${key}`);
+    return key;
+  };
   const known = new Set(Object.keys(feature));
   const stageOwners = Object.fromEntries(
     Object.entries(owners).map(([stage, list]) => {
@@ -90,6 +108,16 @@ export function parseContract(value: unknown): ZqContract {
     featureType: text(value["featureType"], "featureType"),
     typeDuties: typeDuties(value["typeDuties"]),
     stages: { feature, task },
+    stageRoles: {
+      plannerUnassigned: stageRole("plannerUnassigned", feature),
+      reviewPending: stageRole("reviewPending", feature),
+      staffing: stageRole("staffing", feature),
+      briefing: stageRole("briefing", feature),
+      inProduction: stageRole("inProduction", feature),
+      formalAssets: stageRole("formalAssets", feature),
+      taskUnassigned: stageRole("taskUnassigned", task),
+      taskDone: stageRole("taskDone", task),
+    },
     stageOwners,
     fields: {
       responsiblePlanner: text(fields["responsiblePlanner"], "fields.responsiblePlanner"),

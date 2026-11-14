@@ -10,12 +10,14 @@ test("the fixture parses and keeps the labels for the stage keys", () => {
   const c = parseContract(raw());
   assert.equal(c.featureType, "feature");
   assert.equal(c.stages.feature["feature.briefing"], "宣讲对齐");
-  assert.deepEqual(c.tools, {});
+  assert.equal(c.stageRoles.inProduction, "feature.development");
+  assert.equal(c.stages.task["program.integration"], "联调中");
+  assert.equal(c.tools.exitCheck, "zq_check_exit");
 });
 
 test("optional tools are accepted, unknown ones are refused", () => {
-  const ok = parseContract({ ...raw(), tools: { exitCheck: "zq_check_exit" } });
-  assert.equal(ok.tools.exitCheck, "zq_check_exit");
+  const ok = parseContract({ ...raw(), tools: { exitCheck: "other_check" } });
+  assert.equal(ok.tools.exitCheck, "other_check");
   assert.throws(() => parseContract({ ...raw(), tools: { other: "x" } }), /unknown tool other/);
 });
 
@@ -31,6 +33,11 @@ test("a table that names a stage owner for an unknown stage or an unknown duty i
   assert.throws(() => parseContract({ ...raw(), typeDuties: { vfx: "wizard" } }), /not a duty/);
   assert.throws(() => parseContract({ ...raw(), fields: {} }), /fields\.responsiblePlanner/);
   assert.throws(() => parseContract([]), /must be an object/);
+  assert.throws(() => parseContract({ ...raw(), stageRoles: undefined }), /stageRoles must be an object/);
+  assert.throws(
+    () => parseContract({ ...raw(), stageRoles: { ...(raw()["stageRoles"] as object), briefing: "feature.nope" } }),
+    /stageRoles\.briefing names unknown stage feature\.nope/,
+  );
 });
 
 test("only the four lifecycle keys are understood, and suspended and cancelled pause reminders", () => {

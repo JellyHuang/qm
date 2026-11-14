@@ -5,7 +5,6 @@ import { reminderId, type ReminderMode, type ZqReminderStore } from "./reminders
 import {
   DEFAULT_RULE_OPTIONS,
   evaluateRules,
-  STAGE,
   type FeatureFacts,
   type OpUserRef,
   type RuleOptions,
@@ -165,7 +164,7 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
       if (
         opts.groups &&
         opts.mode === "live" &&
-        (await ensureGroup(fact, opts.groups, opts.mmUserIdOfOpUser, opts.opBaseUrl))
+        (await ensureGroup(fact, opts.contract, opts.groups, opts.mmUserIdOfOpUser, opts.opBaseUrl))
       )
         report.groupsCreated++;
     }
@@ -175,13 +174,14 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
 
 async function ensureGroup(
   fact: FeatureFacts,
+  contract: ZqContract,
   groups: NonNullable<ScanOptions["groups"]>,
   mmUserIdOfOpUser: ScanOptions["mmUserIdOfOpUser"],
   opBaseUrl: string | undefined,
 ): Promise<boolean> {
   const { feature, children } = fact;
   const live = children.filter((c) => !paused(c.lifecycle));
-  if (feature.statusKey !== STAGE.briefing || !live.length || live.some((c) => !c.assignee)) return false;
+  if (feature.statusKey !== contract.stageRoles.briefing || !live.length || live.some((c) => !c.assignee)) return false;
   const people = [feature.responsiblePlanner, ...live.map((c) => c.assignee)].flatMap((u) => u ?? []);
   const members = (await Promise.all(people.map((u) => mmUserIdOfOpUser(u.id)))).flatMap((m) => m ?? []);
   if (!members.length) return false;
