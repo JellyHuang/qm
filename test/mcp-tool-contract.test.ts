@@ -22,10 +22,9 @@ const recorded = JSON.parse(
   readFileSync(new URL("./fixtures/openproject-mcp-tools.json", import.meta.url), "utf8"),
 ) as { tools: Tool[] };
 
-const CONTRACT: McpToolContract = {
-  required: ["list_projects", "get_work_package", "list_work_packages", "update_work_package", "add_comment"],
-  forbidden: ["delete_work_package", "bulk_update_work_packages"],
-};
+const CONTRACT = JSON.parse(
+  readFileSync(new URL("./fixtures/openproject-tool-contract.json", import.meta.url), "utf8"),
+) as McpToolContract;
 const HOST = "op.example.com";
 const ADMIN = { "content-type": "application/json", "x-admin-actor": "admin-alice@default-org" };
 
@@ -60,16 +59,22 @@ test("the recorded OpenProject listing satisfies the contract", () => {
 });
 
 test("a missing required tool and an exposed forbidden tool are both reported", () => {
-  const tools = [...without("add_comment", "update_work_package"), { name: "delete_work_package" }];
+  const tools = [
+    ...without("add_work_package_comment", "update_work_package"),
+    { name: "delete_work_package" },
+    { name: "delete_meeting" },
+    { name: "bulk_update_work_packages" },
+  ];
   assert.deepEqual(contractViolation(tools, CONTRACT), {
-    missing: ["update_work_package", "add_comment"],
-    forbidden: ["delete_work_package"],
+    missing: ["update_work_package", "add_work_package_comment"],
+    forbidden: ["delete_work_package", "delete_meeting", "bulk_update_work_packages"],
   });
 });
 
 test("tool contracts parse strictly", () => {
   assert.equal(parseToolContract(undefined), undefined);
   assert.equal(parseToolContract({}), undefined);
+  assert.deepEqual(parseToolContract({ forbidden: ["delete_*"] }), { required: [], forbidden: ["delete_*"] });
   assert.deepEqual(parseToolContract({ required: ["a", "a"], forbidden: ["b"] }), {
     required: ["a"],
     forbidden: ["b"],
@@ -81,6 +86,8 @@ test("tool contracts parse strictly", () => {
     { required: [1] },
     { required: ["a b"] },
     { required: ["a"], forbidden: ["a"] },
+    { required: ["delete_x"], forbidden: ["delete_*"] },
+    { required: ["a*"] },
     { required: ["a"], extra: 1 },
   ]) {
     assert.equal(parseToolContract(bad), "invalid", JSON.stringify(bad));
@@ -89,7 +96,7 @@ test("tool contracts parse strictly", () => {
 
 test("sign-in against a server that dropped a required tool fails loudly and loads nothing", async (t) => {
   const store = createMcpServerStore(testMap<McpServer>());
-  const mcp = await startMcpTestServer(t, { tools: without("add_comment") });
+  const mcp = await startMcpTestServer(t, { tools: without("add_work_package_comment") });
   const service = createMcpToolService({
     fetch: loopbackFetch,
     servers: store,
@@ -106,7 +113,7 @@ test("sign-in against a server that dropped a required tool fails loudly and loa
   await service.refresh();
   await assert.rejects(
     service.call("openproject_sign_in", {}, "internal:alice"),
-    /missing required tools: add_comment/,
+    /missing required tools: add_work_package_comment/,
   );
   assert.equal((await store.get("openproject"))?.tools, undefined);
   assert.deepEqual(

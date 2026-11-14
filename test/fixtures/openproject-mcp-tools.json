@@ -1,8 +1,19 @@
 {
   "tools": [
     {
+      "name": "get_current_user",
+      "description": "Get current user",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
       "name": "list_projects",
-      "description": "List projects visible to the caller",
+      "description": "List projects",
       "inputSchema": {
         "type": "object",
         "properties": {}
@@ -13,55 +24,7 @@
     },
     {
       "name": "get_project",
-      "description": "Get one project",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          }
-        }
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_work_packages",
-      "description": "List work packages in a project",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "project_id": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          }
-        }
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "get_work_package",
-      "description": "Get one work package",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer"
-          }
-        }
-      },
-      "annotations": {
-        "readOnlyHint": true
-      }
-    },
-    {
-      "name": "list_users",
-      "description": "List users",
+      "description": "Get project",
       "inputSchema": {
         "type": "object",
         "properties": {}
@@ -71,8 +34,206 @@
       }
     },
     {
-      "name": "get_current_user",
-      "description": "The user behind the token",
+      "name": "list_types",
+      "description": "List types",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_type",
+      "description": "Get type",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_statuses",
+      "description": "List statuses",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_status",
+      "description": "Get status",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_project_work_package_context",
+      "description": "Get project work package context",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_work_packages",
+      "description": "List work packages",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "search_work_packages",
+      "description": "Search work packages",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_work_package",
+      "description": "Get work package",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_work_packages",
+      "description": "Get work packages",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_work_package_activities",
+      "description": "Get work package activities",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_work_package_relations",
+      "description": "Get work package relations",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_project_memberships",
+      "description": "List project memberships",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_roles",
+      "description": "List roles",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_meetings",
+      "description": "List meetings",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_meeting",
+      "description": "Get meeting",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_meeting_agenda_items",
+      "description": "List meeting agenda items",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_meeting_outcomes",
+      "description": "List meeting outcomes",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_meeting_sections",
+      "description": "List meeting sections",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_job_status",
+      "description": "Get job status",
       "inputSchema": {
         "type": "object",
         "properties": {}
@@ -83,45 +244,144 @@
     },
     {
       "name": "create_work_package",
-      "description": "Create a work package",
+      "description": "Create work package (needs confirm=true)",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "project_id": {
-            "type": "string"
-          },
-          "subject": {
-            "type": "string"
+          "confirm": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "create_subtask",
+      "description": "Create subtask (needs confirm=true)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "type": "boolean"
           }
         }
       }
     },
     {
       "name": "update_work_package",
-      "description": "Update one work package",
+      "description": "Update work package (needs confirm=true)",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "integer"
-          },
-          "lockVersion": {
-            "type": "integer"
+          "confirm": {
+            "type": "boolean"
           }
         }
       }
     },
     {
-      "name": "add_comment",
-      "description": "Comment on a work package",
+      "name": "add_work_package_comment",
+      "description": "Add work package comment (needs confirm=true)",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "integer"
-          },
-          "comment": {
-            "type": "string"
+          "confirm": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "create_work_package_relation",
+      "description": "Create work package relation (needs confirm=true)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "create_meeting",
+      "description": "Create meeting (needs confirm=true)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "update_meeting",
+      "description": "Update meeting (needs confirm=true)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "create_meeting_agenda_item",
+      "description": "Create meeting agenda item (needs confirm=true)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "update_meeting_agenda_item",
+      "description": "Update meeting agenda item (needs confirm=true)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "create_meeting_outcome",
+      "description": "Create meeting outcome (needs confirm=true)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "update_meeting_outcome",
+      "description": "Update meeting outcome (needs confirm=true)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "create_meeting_section",
+      "description": "Create meeting section (needs confirm=true)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "type": "boolean"
           }
         }
       }

@@ -24,6 +24,10 @@ function contractMessage(serverName: string, { missing, forbidden }: McpContract
   return `${serverName} does not match its tool contract (${parts.join("; ")})`;
 }
 
+function forbids(pattern: string, name: string): boolean {
+  return pattern.endsWith("*") ? name.startsWith(pattern.slice(0, -1)) : pattern === name;
+}
+
 export function contractViolation(
   tools: ReadonlyArray<{ name: string }>,
   contract: McpToolContract | undefined,
@@ -31,7 +35,7 @@ export function contractViolation(
   if (!contract) return undefined;
   const names = new Set(tools.map((t) => t.name));
   const missing = contract.required.filter((n) => !names.has(n));
-  const forbidden = contract.forbidden.filter((n) => names.has(n));
+  const forbidden = [...names].filter((n) => contract.forbidden.some((f) => forbids(f, n)));
   return missing.length || forbidden.length ? { missing, forbidden } : undefined;
 }
 
@@ -48,16 +52,14 @@ export function parseToolContract(value: unknown): McpToolContract | undefined |
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "object" || Array.isArray(value)) return "invalid";
   const { required, forbidden, ...rest } = value as Record<string, unknown>;
-  const names = (list: unknown): string[] | undefined => {
+  const names = (list: unknown, pattern: RegExp): string[] | undefined => {
     if (list === undefined) return [];
     const valid =
-      Array.isArray(list) &&
-      list.length <= 200 &&
-      list.every((n) => typeof n === "string" && /^[\w.:-]{1,128}$/.test(n));
+      Array.isArray(list) && list.length <= 200 && list.every((n) => typeof n === "string" && pattern.test(n));
     return valid ? [...new Set(list as string[])] : undefined;
   };
-  const req = names(required);
-  const forb = names(forbidden);
-  if (Object.keys(rest).length || !req || !forb || req.some((n) => forb.includes(n))) return "invalid";
+  const req = names(required, /^[\w.:-]{1,128}$/);
+  const forb = names(forbidden, /^[\w.:-]{1,127}\*?$/);
+  if (Object.keys(rest).length || !req || !forb || req.some((n) => forb.some((f) => forbids(f, n)))) return "invalid";
   return req.length || forb.length ? { required: req, forbidden: forb } : undefined;
 }
