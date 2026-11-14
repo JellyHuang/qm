@@ -16,6 +16,14 @@ export interface OpenAgentsConfig {
   workers: readonly string[];
   /** QM principals (emails) allowed to delegate, in addition to org admins. */
   allowedPrincipals: readonly string[];
+  inboundPerHour: number;
+}
+
+const DEFAULT_INBOUND_PER_HOUR = 200;
+
+function inboundPerHour(raw: string | undefined): number {
+  const n = Number(raw?.trim());
+  return Number.isSafeInteger(n) && n > 0 ? n : DEFAULT_INBOUND_PER_HOUR;
 }
 
 export function openAgentsConfigFromEnv(env: NodeJS.ProcessEnv): OpenAgentsConfig | undefined {
@@ -44,5 +52,6 @@ export function openAgentsConfigFromEnv(env: NodeJS.ProcessEnv): OpenAgentsConfi
       .split(",")
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean),
+    inboundPerHour: inboundPerHour(env.OA_INBOUND_PER_HOUR),
   };
 }

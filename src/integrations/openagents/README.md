@@ -28,7 +28,7 @@ Mattermost user ⇄ QM conversation ──(openagents tool)──▶ OA thread (
 - QM only delegates to workers listed in `OA_WORKERS`.
 - A thread can only be used by the QM user who started it.
 - A message from a thread QM didn't start gets one short reply in OA and never reaches a QM session.
-- Each thread can wake QM at most 30 times an hour.
+- Each thread can wake QM at most `OA_INBOUND_PER_HOUR` times an hour (default 200). Past that, delivery is delayed, not dropped: the messages stay unread, one notice is posted in the thread, and they are delivered when the hour window resets. Other threads are unaffected.
 - The resumed turn runs as the original user, so it has exactly that user's permissions and scopes.
 
 ## Configuration (core env)
@@ -43,6 +43,7 @@ Mattermost user ⇄ QM conversation ──(openagents tool)──▶ OA thread (
 | `OA_PUBLIC_URL`         | OA UI URL, used in links shown to people                                                                   |
 | `OA_POLL_MS`            | Poll interval; default 3000                                                                                |
 | `OA_ALLOWED_PRINCIPALS` | Extra QM users who may delegate                                                                            |
+| `OA_INBOUND_PER_HOUR`   | Messages per thread per hour that may wake QM; positive integer, default 200, invalid values fall back     |
 
 Verified against OpenAgents commit `1aeec218`:
 
