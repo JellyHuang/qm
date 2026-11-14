@@ -4,7 +4,7 @@ import type { Sweeper } from "../util/sweeper.ts";
 import type { ZqConfig } from "./config.ts";
 import { createZqIdentityMap, type ZqIdentityLink, type ZqIdentityMap } from "./identity-map.ts";
 import { loadZqContract } from "./config.ts";
-import type { ZqContract } from "./contract.ts";
+import { checkConfiguredDuties, type ZqContract } from "./contract.ts";
 import { createZqGroups, type ZqGroup } from "./groups.ts";
 import { createMcpOpReader, type OpCall } from "./op-reader.ts";
 import { createZqReminderStore, type ZqReminder } from "./reminders.ts";
@@ -90,6 +90,11 @@ export function createZqRuntime(deps: {
   }
 
   const contract = deps.contract ?? (config.contractFile ? loadZqContract(config.contractFile) : undefined);
+  if (contract)
+    checkConfiguredDuties(contract, {
+      ZQ_ESCALATION_DUTIES: config.escalation.duties,
+      ZQ_UNSET_RESPONSIBILITY_DUTIES: config.unsetResponsibilityDuties,
+    });
   const groups =
     config.featureChannels && chat.createGroup
       ? { store: createZqGroups({ map: deps.map<ZqGroup>("zq_groups") }), create: chat.createGroup.bind(chat) }

@@ -34,7 +34,7 @@ test("escalation targets are duties from the contract and are not chosen by defa
     "pm",
     "planning_lead",
   ]);
-  assert.throws(() => zqConfigFromEnv({ ZQ_ESCALATION_DUTIES: "boss" }), /unknown duty: boss/);
+  assert.throws(() => zqConfigFromEnv({ ZQ_ESCALATION_DUTIES: "Boss!" }), /ZQ_ESCALATION_DUTIES must list duty keys/);
 });
 
 test("feature channels and the OpenProject link are off and unset by default, and the URL must be http(s)", () => {
@@ -53,7 +53,7 @@ test("who hears about an empty responsibility field is configured and never chos
     "producer",
   ]);
   assert.throws(
-    () => zqConfigFromEnv({ ZQ_UNSET_RESPONSIBILITY_DUTIES: "nobody" }),
-    /ZQ_UNSET_RESPONSIBILITY_DUTIES names an unknown duty/,
+    () => zqConfigFromEnv({ ZQ_UNSET_RESPONSIBILITY_DUTIES: "no body" }),
+    /ZQ_UNSET_RESPONSIBILITY_DUTIES must list duty keys/,
   );
 });

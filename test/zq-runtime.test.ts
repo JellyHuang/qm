@@ -62,3 +62,31 @@ test("answering 不是我 removes the proposal", async () => {
   assert.equal(await runtime.decide("link", "mm-alice", false, "mm-alice"), "已取消,没有关联 OpenProject 账号。");
   await assert.rejects(runtime.decide("link", "mm-alice", true, "mm-alice"), /no proposed link/);
 });
+
+test("a duty the configuration names but the contract key table lacks refuses startup", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { parseContract } = await import("../src/zq/contract.ts");
+  const contract = parseContract(
+    JSON.parse(readFileSync(new URL("./fixtures/zq-contract-keys.json", import.meta.url), "utf8")),
+  );
+  const build = (env: NodeJS.ProcessEnv) =>
+    createZqRuntime({
+      config: zqConfigFromEnv(env),
+      contract,
+      call: async () => "{}",
+      chat: {
+        sendDm: async () => {},
+        sendButtons: async () => {},
+        mmUserIdOf: async () => undefined,
+        principalOf: async () => undefined,
+      },
+      map: () => testMap(),
+      leaderLease: leaseOf(),
+      createSweeper: () => ({ start() {}, stop: async () => {} }),
+    });
+  assert.doesNotThrow(() => build({ ZQ_ESCALATION_DUTIES: "pm" }));
+  assert.throws(
+    () => build({ ZQ_ESCALATION_DUTIES: "lead_ui" }),
+    /ZQ_ESCALATION_DUTIES names a duty the contract key table does not have: lead_ui/,
+  );
+});

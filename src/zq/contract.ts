@@ -1,6 +1,6 @@
-export const DUTIES = ["producer", "pm", "art_lead", "client_lead", "server_lead", "planning_lead", "qa_lead"] as const;
+export type Duty = string;
 
-export type Duty = (typeof DUTIES)[number];
+const DUTY_KEY = /^[a-z][a-z0-9_]*$/;
 
 export type Lifecycle = "normal" | "delayed" | "suspended" | "cancelled";
 
@@ -45,7 +45,7 @@ export interface ZqContract {
     plannedStart: string;
     plannedEnd: string;
   } & Record<PersonField, string>;
-  duties: Readonly<Record<Duty, string>>;
+  duties: Readonly<Record<string, string>>;
   tools: { exitCheck?: string; meetingsForFeature?: string; dutyHolders?: string };
 }
 
@@ -67,11 +67,7 @@ function stringMap(v: unknown, what: string): Record<string, string> {
 }
 
 function typeDuties(v: unknown): Record<string, Duty> {
-  const map = stringMap(v, "typeDuties");
-  for (const [type, duty] of Object.entries(map))
-    if (!(DUTIES as readonly string[]).includes(duty))
-      throw new Error(`contract key table: typeDuties.${type} is not a duty`);
-  return map as Record<string, Duty>;
+  return stringMap(v, "typeDuties");
 }
 
 function optionalTools(v: unknown): ZqContract["tools"] {
@@ -83,12 +79,12 @@ function optionalTools(v: unknown): ZqContract["tools"] {
   return map;
 }
 
-function recipient(raw: string): Recipient {
+function recipient(raw: string, known: ReadonlySet<string>): Recipient {
   const field = raw.startsWith("field:") ? raw.slice("field:".length) : "";
   if ((PERSON_FIELDS as readonly string[]).includes(field)) return { kind: "field", field: field as PersonField };
   const duty = raw.startsWith("duty:") ? raw.slice("duty:".length) : "";
-  if (!(DUTIES as readonly string[]).includes(duty)) throw new Error(`contract key table: unknown recipient ${raw}`);
-  return { kind: "duty", duty: duty as Duty };
+  if (!known.has(duty)) throw new Error(`contract key table: unknown recipient ${raw}`);
+  return { kind: "duty", duty };
 }
 
 export function parseContract(value: unknown): ZqContract {
@@ -104,19 +100,25 @@ export function parseContract(value: unknown): ZqContract {
     return key;
   };
   const known = new Set(Object.keys(feature));
+  const duties = stringMap(value["duties"], "duties");
+  if (!Object.keys(duties).length) throw new Error("contract key table: duties must name at least one duty");
+  for (const key of Object.keys(duties))
+    if (!DUTY_KEY.test(key)) throw new Error(`contract key table: duties.${key} is not a duty key`);
+  const knownDuties = new Set(Object.keys(duties));
+  const typeDutyMap = typeDuties(value["typeDuties"]);
+  for (const [type, duty] of Object.entries(typeDutyMap))
+    if (!knownDuties.has(duty)) throw new Error(`contract key table: typeDuties.${type} is not a duty`);
   const stageOwners = Object.fromEntries(
     Object.entries(owners).map(([stage, list]) => {
       if (!known.has(stage)) throw new Error(`contract key table: stageOwners names unknown feature stage ${stage}`);
-      return [stage, strings(list, `stageOwners.${stage}`).map(recipient)];
+      return [stage, strings(list, `stageOwners.${stage}`).map((raw) => recipient(raw, knownDuties))];
     }),
   );
   const fields = stringMap(value["fields"], "fields");
-  const duties = stringMap(value["duties"], "duties");
-  for (const duty of DUTIES) text(duties[duty], `duties.${duty}`);
   return {
     version: text(value["version"], "version"),
     featureType: text(value["featureType"], "featureType"),
-    typeDuties: typeDuties(value["typeDuties"]),
+    typeDuties: typeDutyMap,
     stages: { feature, task },
     stageRoles: {
       plannerUnassigned: stageRole("plannerUnassigned", feature),
@@ -142,7 +144,7 @@ export function parseContract(value: unknown): ZqContract {
       plannedStart: text(fields["plannedStart"], "fields.plannedStart"),
       plannedEnd: text(fields["plannedEnd"], "fields.plannedEnd"),
     },
-    duties: duties as Record<Duty, string>,
+    duties,
     tools: optionalTools(value["tools"]),
   };
 }
@@ -153,4 +155,11 @@ export function lifecycleOf(raw: unknown): Lifecycle | undefined {
 
 export function paused(lifecycle: Lifecycle | undefined): boolean {
   return lifecycle === "suspended" || lifecycle === "cancelled";
+}
+
+export function checkConfiguredDuties(contract: ZqContract, configured: Record<string, readonly string[]>): void {
+  for (const [setting, list] of Object.entries(configured))
+    for (const duty of list)
+      if (!(duty in contract.duties))
+        throw new Error(`${setting} names a duty the contract key table does not have: ${duty}`);
 }

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { lifecycleOf, paused, parseContract } from "../src/zq/contract.ts";
+import { checkConfiguredDuties, lifecycleOf, paused, parseContract } from "../src/zq/contract.ts";
 
 const raw = (): Record<string, unknown> =>
   JSON.parse(readFileSync(new URL("./fixtures/zq-contract-keys.json", import.meta.url), "utf8"));
@@ -54,5 +54,34 @@ test("only the four lifecycle keys are understood, and suspended and cancelled p
   assert.deepEqual(
     [undefined, "normal", "delayed", "suspended", "cancelled"].map((l) => paused(lifecycleOf(l))),
     [false, false, false, true, true],
+  );
+});
+
+test("the duties are whatever the table names, so a new duty such as the UI lead needs no code change", () => {
+  const base = raw();
+  const table = {
+    ...base,
+    typeDuties: { ...(base["typeDuties"] as object), fgui: "ui_lead" },
+    duties: { ...(base["duties"] as object), ui_lead: "lead_ui" },
+    stageOwners: {
+      ...(base["stageOwners"] as object),
+      "feature.staffing": ["field:responsiblePlanner", "duty:ui_lead"],
+    },
+  };
+  const c = parseContract(table);
+  assert.equal(c.typeDuties["fgui"], "ui_lead");
+  assert.equal(c.duties["ui_lead"], "lead_ui");
+  assert.deepEqual(c.stageOwners["feature.staffing"]?.[1], { kind: "duty", duty: "ui_lead" });
+  assert.throws(() => parseContract({ ...table, duties: base["duties"] }), /typeDuties\.fgui is not a duty/);
+  assert.throws(() => parseContract({ ...table, duties: {} }), /at least one duty/);
+  assert.throws(() => parseContract({ ...table, duties: { "Lead UI": "x" } }), /is not a duty key/);
+});
+
+test("the duties set in the configuration must exist in the table, and the check names the setting", () => {
+  const c = parseContract(raw());
+  checkConfiguredDuties(c, { ZQ_ESCALATION_DUTIES: ["pm", "producer"], ZQ_UNSET_RESPONSIBILITY_DUTIES: [] });
+  assert.throws(
+    () => checkConfiguredDuties(c, { ZQ_ESCALATION_DUTIES: ["boss"] }),
+    /ZQ_ESCALATION_DUTIES names a duty the contract key table does not have: boss/,
   );
 });

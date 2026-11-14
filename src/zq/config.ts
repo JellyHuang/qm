@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { Cron } from "croner";
-import { DUTIES, parseContract, type Duty, type ZqContract } from "./contract.ts";
+import { parseContract, type Duty, type ZqContract } from "./contract.ts";
 
 export interface ZqConfig {
   identityMap: boolean;
@@ -44,8 +44,8 @@ function duties(name: string, raw: string | undefined): Duty[] {
     .map((s) => s.trim())
     .filter(Boolean);
   for (const duty of list)
-    if (!(DUTIES as readonly string[]).includes(duty)) throw new Error(`${name} names an unknown duty: ${duty}`);
-  return list as Duty[];
+    if (!/^[a-z][a-z0-9_]*$/.test(duty)) throw new Error(`${name} must list duty keys such as pm,lead_ui: ${duty}`);
+  return list;
 }
 
 export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
