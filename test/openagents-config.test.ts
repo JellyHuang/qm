@@ -54,3 +54,10 @@ test("allowed principals are trimmed and lowercased", () => {
   const config = parse({ OA_ALLOWED_PRINCIPALS: " Jelly.Huang@IGG.com ,,Bob@X.io" });
   assert.deepEqual(config.allowedPrincipals, ["jelly.huang@igg.com", "bob@x.io"]);
 });
+
+test("inbound limit defaults to 200 and falls back on invalid values", () => {
+  assert.equal(parse().inboundPerHour, 200);
+  assert.equal(parse({ OA_INBOUND_PER_HOUR: " 500 " }).inboundPerHour, 500);
+  for (const v of ["0", "-3", "1.5", "abc", "", "1e400"])
+    assert.equal(parse({ OA_INBOUND_PER_HOUR: v }).inboundPerHour, 200, v);
+});

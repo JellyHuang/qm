@@ -25,7 +25,7 @@ export interface OaThreadLink {
   tasks?: Array<{ id: string; title: string; assignee?: string }>;
   createdAt: number;
   lastInboundAt?: number;
-  inboundWindow?: { start: number; count: number };
+  inboundWindow?: { start: number; count: number; noticed?: boolean };
 }
 
 export interface OaChatBridge {
@@ -40,7 +40,7 @@ const MAX_CONTENT = 6_000;
 const MAX_MESSAGE = 20_000;
 const HEARTBEAT_MS = 30_000;
 const SEEN_TTL_MS = 7 * 24 * 3_600_000;
-const INBOUND_PER_HOUR = 30;
+const INBOUND_WINDOW_MS = 3_600_000;
 const SKIP_TYPES = new Set(["thinking", "status", "todos"]);
 
 type Args = Record<string, unknown>;
@@ -242,7 +242,7 @@ export function createOpenAgentsService(deps: {
 
   const channelOf = (e: OaEvent) => (e.target?.startsWith("channel/") ? e.target.slice("channel/".length) : undefined);
 
-  async function deliverGroup(channel: string, events: OaEvent[]): Promise<void> {
+  async function deliverGroup(channel: string, events: OaEvent[]): Promise<boolean> {
     const link = await deps.threads.get(channel);
     if (!link) {
       const key = `unlinked:${channel}`;
@@ -256,25 +256,26 @@ export function createOpenAgentsService(deps: {
           )
           .catch(swallowAs("openagents: unlinked notice", undefined));
       }
-      return;
+      return true;
     }
     const at = now();
     const window =
-      link.inboundWindow && at - link.inboundWindow.start < 3_600_000 ? link.inboundWindow : { start: at, count: 0 };
-    if (window.count >= INBOUND_PER_HOUR) {
-      console.warn(`[openagents] inbound limit reached for ${channel}; dropping ${events.length} message(s)`);
-      if (window.count === INBOUND_PER_HOUR) {
-        window.count += 1;
-        await deps.threads.put(channel, { ...link, inboundWindow: window });
+      link.inboundWindow && at - link.inboundWindow.start < INBOUND_WINDOW_MS
+        ? link.inboundWindow
+        : { start: at, count: 0 };
+    if (window.count >= cfg.inboundPerHour) {
+      if (!window.noticed) {
+        await deps.threads.put(channel, { ...link, inboundWindow: { ...window, noticed: true } });
+        const resumeAt = new Date(window.start + INBOUND_WINDOW_MS).toISOString();
         await client
           .post(
             channel,
-            `@${self} is pausing: more than ${INBOUND_PER_HOUR} messages to QM in an hour. A person will follow up.`,
+            `Delivery to @${self} is delayed, not dropped: this thread passed ${cfg.inboundPerHour} messages to QM in an hour. Queued messages will be delivered from ${resumeAt}.`,
             [],
           )
           .catch(swallowAs("openagents: limit notice", undefined));
       }
-      return;
+      return false;
     }
     const chat = deps.chat();
     if (!chat) throw new Error("no chat surface to deliver OpenAgents messages to");
@@ -291,8 +292,9 @@ export function createOpenAgentsService(deps: {
     await deps.threads.put(channel, {
       ...link,
       lastInboundAt: at,
-      inboundWindow: { start: window.start, count: window.count + 1 },
+      inboundWindow: { ...window, count: window.count + 1 },
     });
+    return true;
   }
 
   async function pollOnce(): Promise<boolean> {
@@ -304,8 +306,10 @@ export function createOpenAgentsService(deps: {
       ...(st.cursor ? { after: st.cursor } : {}),
     });
     const groups = new Map<string, OaEvent[]>();
+    const before = new Map<string, string | undefined>();
     let cursor = st.cursor;
     for (const e of page.events ?? []) {
+      before.set(e.id, cursor);
       cursor = e.id;
       if (!addressedToMe(e)) continue;
       if (await deps.seen.get(e.id)) continue;
@@ -313,18 +317,24 @@ export function createOpenAgentsService(deps: {
       if (!channel) continue;
       groups.set(channel, [...(groups.get(channel) ?? []), e]);
     }
+    const deferred = new Set<string>();
     for (const [channel, events] of groups) {
       try {
-        await deliverGroup(channel, events);
-        for (const e of events) await deps.seen.put(e.id, { at: now() });
+        if (await deliverGroup(channel, events)) {
+          for (const e of events) await deps.seen.put(e.id, { at: now() });
+        } else {
+          for (const e of events) deferred.add(e.id);
+        }
       } catch (e) {
         console.error(`[openagents] delivering ${events.length} message(s) from ${channel} failed: ${errMessage(e)}`);
         return false; // keep the cursor; retry the whole page next time (seen events are skipped)
       }
     }
-    cursor = page.next_cursor ?? cursor;
+    const firstDeferred = (page.events ?? []).find((e) => deferred.has(e.id));
+    if (firstDeferred) cursor = before.get(firstDeferred.id);
+    else cursor = page.next_cursor ?? cursor;
     if (cursor && cursor !== st.cursor) await deps.state.put("cursor", { cursor });
-    return page.has_more === true;
+    return !firstDeferred && page.has_more === true;
   }
 
   async function initCursor(): Promise<void> {

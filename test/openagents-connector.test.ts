@@ -75,12 +75,21 @@ function fakeClient(agents?: () => Promise<Array<{ address: string; status?: str
   return { client: client as unknown as OaClient, posted, setInbox: (e: OaEvent[]) => (inbox = e) };
 }
 
-function setup(opts: { admin?: boolean; anchor?: string; agents?: Parameters<typeof fakeClient>[0] } = {}) {
+function setup(
+  opts: {
+    admin?: boolean;
+    anchor?: string;
+    agents?: Parameters<typeof fakeClient>[0];
+    limit?: number;
+    clock?: { t: number };
+  } = {},
+) {
   const fake = fakeClient(opts.agents);
   const delivered: Array<{ postId: string; text: string; key: string }> = [];
   const threads = memoryMap<OaThreadLink>();
   const svc = createOpenAgentsService({
-    cfg: CFG,
+    cfg: { ...CFG, inboundPerHour: opts.limit ?? CFG.inboundPerHour },
+    now: opts.clock ? () => opts.clock!.t : undefined,
     client: fake.client,
     threads,
     state: memoryMap(),
@@ -233,4 +242,51 @@ test("messages from threads QM did not start are answered once and never reach a
 test("config requires URL, workspace and token together", () => {
   assert.equal(openAgentsConfigFromEnv({}), undefined);
   assert.throws(() => openAgentsConfigFromEnv({ OA_URL: "http://x" }), /must be set together/);
+});
+
+async function start(svc: ReturnType<typeof setup>["svc"], runId = "run-1") {
+  await svc.call(
+    { action: "start_thread", title: "t", message: "m", workers: ["qm-dev-worker"] },
+    { runId, principalId: "a@igg.com" },
+  );
+}
+
+test("over the inbound limit, messages are deferred not lost, other threads keep flowing, and delivery resumes after the window", async () => {
+  const clock = { t: 1_000_000 };
+  const { svc, fake, delivered } = setup({ limit: 2, clock });
+  await start(svc);
+  await start(svc);
+  const inbox: OaEvent[] = [];
+  const add = (id: string, ch: string) => {
+    inbox.push(msg(id, "qm-dev-worker", ch, ["qm-master"], `body-${id}`));
+    fake.setInbox([...inbox]);
+  };
+  add("a1", "channel-1");
+  await svc.pollOnce();
+  add("a2", "channel-1");
+  await svc.pollOnce();
+  assert.equal(delivered.length, 2, "under the limit delivers");
+  add("a3", "channel-1");
+  add("b1", "channel-2");
+  await svc.pollOnce();
+  await svc.pollOnce();
+  assert.deepEqual(
+    delivered.map((d) => d.key),
+    ["oa:a1", "oa:a2", "oa:b1"],
+    "channel-2 is served while channel-1 is deferred",
+  );
+  const notices = fake.posted.filter((p) => p.channel === "channel-1" && /delayed, not dropped/.test(p.content));
+  assert.equal(notices.length, 1, "one notice per window");
+  assert.deepEqual(notices[0]!.targets, []);
+  assert.match(notices[0]!.content, /delivered from 1970-01-01T01:16:40/);
+  clock.t += 3_600_001;
+  await svc.pollOnce();
+  assert.deepEqual(
+    delivered.map((d) => d.key),
+    ["oa:a1", "oa:a2", "oa:b1", "oa:a3"],
+    "deferred message arrives after the window resets",
+  );
+  assert.match(delivered.at(-1)!.text, /body-a3/);
+  await svc.pollOnce();
+  assert.equal(delivered.length, 4, "not delivered twice");
 });
