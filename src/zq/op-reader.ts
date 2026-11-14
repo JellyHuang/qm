@@ -57,8 +57,22 @@ function individual(value: unknown): OpUserRef | undefined {
   return type && !/^user$/i.test(type) ? undefined : person(value);
 }
 
+const BRACKET_ERROR = /\[([A-Za-z][A-Za-z0-9_]*)\]\s*(.*)$/s;
+
+function asOpError(e: unknown): OpError | undefined {
+  if (e instanceof OpError) return e;
+  const match = e instanceof Error ? BRACKET_ERROR.exec(e.message) : null;
+  return match ? new OpError(match[1]!.toLowerCase(), match[2]!.trim()) : undefined;
+}
+
 function parseJson(text: string): unknown {
-  const parsed: unknown = JSON.parse(text);
+  const parsed: unknown = (() => {
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw asOpError(new Error(text)) ?? e;
+    }
+  })();
   const error = isObject(parsed) ? parsed["error"] : undefined;
   if (isObject(error)) throw new OpError(str(error["code"]) ?? "error", str(error["message"]) ?? "request failed");
   return parsed;
@@ -176,7 +190,10 @@ export function createMcpOpReader(opts: { call: OpCall; contract: ZqContract; se
     }
   }
 
-  const invisible = (e: unknown) => e instanceof OpError && (e.code === "not_found" || e.code === "404");
+  const invisible = (e: unknown) => {
+    const code = asOpError(e)?.code;
+    return code === "not_found" || code === "404";
+  };
 
   return {
     async features(scanner: ScanPerson) {
@@ -222,7 +239,7 @@ export function createMcpOpReader(opts: { call: OpCall; contract: ZqContract; se
       if (!contract.tools.dutyHolders) return undefined;
       const rows = await pages(
         contract.tools.dutyHolders,
-        { project_id: projectId, duty: contract.duties[duty] },
+        { project_id: /^\d+$/.test(projectId) ? Number(projectId) : projectId, duty: contract.duties[duty] },
         scanner.principalId,
       );
       return rows.flatMap((r) => person(r) ?? []);

@@ -210,3 +210,40 @@ test("the personal responsibility properties are read as people, and an empty on
     ["21", "22", "23", "24", undefined],
   );
 });
+
+test("OpenProject's real error text, with the code in brackets, is understood whether it is returned or thrown", async () => {
+  const list = { openproject_zq_list_work_packages: () => ({ next_offset: null, results: [wp({ id: 1 })] }) };
+  const throwing = (message: string) => async (tool: string, args: Record<string, unknown>) => {
+    if (tool.endsWith("zq_check_exit")) throw new Error(message);
+    return fake({ ...list, openproject_zq_meetings_for_feature: () => ({ next_offset: null, results: [] }) }).call(
+      tool,
+      args,
+    );
+  };
+  const hidden = await createMcpOpReader({
+    call: throwing(
+      "mcp tool zq_check_exit error: Error executing tool zq_check_exit: [NOT_FOUND] 对象不可见或键不存在",
+    ),
+    contract,
+  }).features(PERSON);
+  assert.equal(hidden.facts[0]!.exit, undefined, "not visible: the answer is left out");
+  await assert.rejects(
+    createMcpOpReader({ call: throwing("mcp tool zq_check_exit error: [FORBIDDEN] 无权限"), contract }).features(
+      PERSON,
+    ),
+    (e: unknown) => e instanceof Error && /FORBIDDEN/.test(e.message),
+  );
+  const returned = fake({ ...list, openproject_zq_meetings_for_feature: () => ({ next_offset: null, results: [] }) });
+  const asText = async (tool: string, args: Record<string, unknown>) =>
+    tool.endsWith("zq_check_exit") ? "[validation_error] Invalid argument(s)" : returned.call(tool, args);
+  await assert.rejects(
+    createMcpOpReader({ call: asText, contract }).features(PERSON),
+    (e: unknown) => e instanceof OpError && e.code === "validation_error",
+  );
+});
+
+test("a numeric project id is sent as a number, because zq_duty_holders refuses a string", async () => {
+  const f = fake({ openproject_zq_duty_holders: () => ({ next_offset: null, results: [] }) });
+  await createMcpOpReader({ call: f.call, contract }).dutyHolders(PERSON, "3", "pm");
+  assert.ok(f.calls[0]!.includes('"project_id":3,'), f.calls[0]);
+});
