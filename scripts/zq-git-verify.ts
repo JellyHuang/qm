@@ -5,13 +5,14 @@ import { pathToFileURL } from "node:url";
 import type { DurableMap } from "../src/persistence/durable-map.ts";
 import { createGitAudit, type GitAuditRow } from "../src/zq/git/audit.ts";
 import { DEFAULT_GIT_LIMITS, createGitLimits } from "../src/zq/git/limits.ts";
-import { createGitRunner, keyFileFrom, type GitRunner } from "../src/zq/git/runner.ts";
+import { createGitRunner, keyFileFrom, killLiveGitGroups, type GitRunner } from "../src/zq/git/runner.ts";
 import { createGitReadonly, parseLsRemote, type GitReadonly } from "../src/zq/git/readonly.ts";
-import { GIT_REPOS, GitDenied, isGitRepo } from "../src/zq/git/validate.ts";
+import { GIT_REPOS, GitDenied, checkFilter, isGitRepo } from "../src/zq/git/validate.ts";
 
 const HOST = "lab.skyunion.net";
 const KNOWN_HOSTS_LINE = `${HOST} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMEIOBJ8sBR+8HAyJpzbusIiN8rPdGAu3EyAlE0/abrv\n`;
 const DEFAULT_DIR = "/tmp/zq-git-verify";
+const DEFAULT_DEADLINE_MS = 45 * 60_000;
 const DEFAULT_REPOS = ["gameconfig", "CommonMessage", "jenkinstasks"];
 const READ_REPOS = ["gameconfig", "CommonMessage"];
 const OUTSIDER = "qm-test";
@@ -32,6 +33,8 @@ export interface VerifyEnv {
   keyFile: string;
   dir: string;
   repos: string[];
+  filter?: string;
+  deadlineMs: number;
 }
 
 export function parseVerifyEnv(env: Record<string, string | undefined>): VerifyEnv {
@@ -43,7 +46,36 @@ export function parseVerifyEnv(env: Record<string, string | undefined>): VerifyE
     .filter(Boolean);
   const unknown = repos.filter((name) => !isGitRepo(name));
   if (unknown.length > 0) throw new Error(`ZQ_GIT_VERIFY_REPOS names unknown repositories: ${unknown.join(", ")}`);
-  return { keyFile, dir: env.ZQ_GIT_DIR?.trim() || DEFAULT_DIR, repos };
+  const filter = env.ZQ_GIT_VERIFY_FILTER?.trim();
+  const deadlineMs = Number(env.ZQ_GIT_VERIFY_DEADLINE_MS?.trim() || DEFAULT_DEADLINE_MS);
+  if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 1000)
+    throw new Error("ZQ_GIT_VERIFY_DEADLINE_MS must be an integer of at least 1000");
+  return {
+    keyFile,
+    dir: env.ZQ_GIT_DIR?.trim() || DEFAULT_DIR,
+    repos,
+    ...(filter ? { filter: checkFilter(filter) } : {}),
+    deadlineMs,
+  };
+}
+
+export function guardRunner(
+  runner: GitRunner,
+  deadlineMs: number,
+  onExpire: () => void,
+): { runner: GitRunner; cancel: () => void } {
+  let expired = false;
+  const timer = setTimeout(() => {
+    expired = true;
+    onExpire();
+  }, deadlineMs);
+  return {
+    runner: {
+      run: (gitDir, args, opts) =>
+        expired ? Promise.reject(new Error("verify deadline exceeded")) : runner.run(gitDir, args, opts),
+    },
+    cancel: () => clearTimeout(timer),
+  };
 }
 
 export interface AuditSummary {
@@ -101,6 +133,7 @@ export interface VerifyOptions {
   defaults: Readonly<Record<string, string>>;
   dir: string;
   repos: readonly string[];
+  filter?: string;
   runner: GitRunner;
   log: (line: string) => void;
 }
@@ -151,13 +184,13 @@ export async function runVerify(options: VerifyOptions): Promise<VerifyReport> {
   for (const repo of repos) {
     const started = Date.now();
     try {
-      await readonly.fetchRepo(repo);
+      await readonly.fetchRepo(repo, options.filter === undefined ? {} : { filter: options.filter });
       fetched.push(repo);
       const head = (await runner.run(join(dir, `${repo}.git`), ["symbolic-ref", "--short", "HEAD"])).stdout
         .toString("utf8")
         .trim();
       log(
-        `${repo}: fetched ms=${Date.now() - started} bytes=${await directoryBytes(join(dir, `${repo}.git`))} head=${head}`,
+        `${repo}: fetched filter=${options.filter ?? "none"} ms=${Date.now() - started} bytes=${await directoryBytes(join(dir, `${repo}.git`))} head=${head}`,
       );
       check(`HEAD of ${repo} is the default branch`, head === defaults[repo]);
     } catch (e) {
@@ -232,23 +265,37 @@ async function exerciseReads(
 async function main(): Promise<void> {
   const env = parseVerifyEnv(process.env);
   const scratch = await mkdtemp(join(tmpdir(), "zq-git-verify-"));
-  try {
-    const knownHosts = join(scratch, "known_hosts");
-    await writeFile(knownHosts, KNOWN_HOSTS_LINE);
-    const runner = createGitRunner({
-      knownHosts,
+  let step = "start";
+  let expired = false;
+  const guard = guardRunner(
+    createGitRunner({
+      knownHosts: join(scratch, "known_hosts"),
       withKeyFile: keyFileFrom(() => readFile(env.keyFile, "utf8")),
-    });
+    }),
+    env.deadlineMs,
+    () => {
+      expired = true;
+      console.log(`deadline of ${env.deadlineMs} ms exceeded during ${step}`);
+      killLiveGitGroups();
+    },
+  );
+  try {
+    await writeFile(join(scratch, "known_hosts"), KNOWN_HOSTS_LINE);
     const { failures } = await runVerify({
       remotes: ZQ_REMOTES,
       defaults: ZQ_DEFAULT_BRANCHES,
       dir: env.dir,
       repos: env.repos,
-      runner,
-      log: (line) => console.log(line),
+      ...(env.filter ? { filter: env.filter } : {}),
+      runner: guard.runner,
+      log: (line) => {
+        if (line.startsWith("step ")) step = line;
+        console.log(line);
+      },
     });
-    if (failures.length > 0) process.exitCode = 1;
+    if (failures.length > 0 || expired) process.exitCode = 1;
   } finally {
+    guard.cancel();
     await rm(scratch, { recursive: true, force: true });
   }
 }

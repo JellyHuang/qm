@@ -190,13 +190,13 @@ export function createZqRuntime(deps: {
   const git = config.git.enabled ? buildGit() : undefined;
 
   function buildGit(): GitReadonly {
-    const { dir, knownHosts, remotes, limits } = config.git;
+    const { dir, knownHosts, remotes, limits, fetchTimeoutMs } = config.git;
     if (!dir) throw new Error("ZQ_GIT_READONLY needs ZQ_GIT_DIR (the bare clone directory)");
     if (!deps.readKey) throw new Error("ZQ_GIT_READONLY needs access to the keychain key");
     const now = deps.now ?? Date.now;
     const audit = createGitAudit({ map: deps.map<GitAuditRow>("zq_git_audit"), now });
     return createGitReadonly({
-      config: { dir, remotes },
+      config: { dir, remotes, fetchTimeoutMs },
       runner: createGitRunner({ withKeyFile: keyFileFrom(deps.readKey), ...(knownHosts ? { knownHosts } : {}) }),
       audit,
       limits: createGitLimits({ config: limits, bytesSince: audit.bytesSince, now }),

@@ -49,6 +49,14 @@ function refLike(kind: string, value: unknown, shape: RegExp): string {
   return value;
 }
 
+export const GIT_FETCH_FILTERS = ["blob:none"] as const;
+
+export function checkFilter(value: unknown): string {
+  if (typeof value !== "string" || !(GIT_FETCH_FILTERS as readonly string[]).includes(value))
+    throw new GitDenied("bad_filter", `only ${GIT_FETCH_FILTERS.join(", ")} is accepted`);
+  return value;
+}
+
 export function checkBranch(value: unknown): string {
   return refLike("branch", value, BRANCH);
 }

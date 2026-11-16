@@ -60,7 +60,7 @@ test("who hears about an empty responsibility field is configured and never chos
 
 test("repository monitoring is off by default and takes only allowlisted repositories", () => {
   const { limits, ...off } = zqConfigFromEnv({}).git;
-  assert.deepEqual(off, { enabled: false, remotes: {} });
+  assert.deepEqual(off, { enabled: false, remotes: {}, fetchTimeoutMs: 30 * 60_000 });
   assert.equal(limits.callsPerMinute, 30);
   const on = zqConfigFromEnv({
     ZQ_GIT_READONLY: "1",
@@ -74,6 +74,7 @@ test("repository monitoring is off by default and takes only allowlisted reposit
     dir: "/srv/clones",
     knownHosts: "/srv/known_hosts",
     remotes: { server: "host.example.test:g/server.git", "zq-ui": "/tmp/zq-ui" },
+    fetchTimeoutMs: 30 * 60_000,
   });
   assert.throws(() => zqConfigFromEnv({ ZQ_GIT_READONLY: "1" }), /ZQ_GIT_DIR/);
   assert.throws(() => zqConfigFromEnv({ ZQ_GIT_REMOTES: '{"other":"x"}' }), /allowlist: other/);

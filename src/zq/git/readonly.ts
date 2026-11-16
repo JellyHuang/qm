@@ -2,11 +2,12 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { resultBytes, type GitAudit, type GitAuditTarget } from "./audit.ts";
 import type { GitLimits } from "./limits.ts";
-import type { GitRunner } from "./runner.ts";
+import { GIT_FETCH_TIMEOUT_MS, type GitRunner } from "./runner.ts";
 import {
   GitDenied,
   checkBranch,
   checkCount,
+  checkFilter,
   checkLine,
   checkPath,
   checkPattern,
@@ -34,10 +35,12 @@ const BINARY_SNIFF_BYTES = 8000;
 const BINARY_EXTENSIONS = /\.(xlsx|xlsm|xls)$/i;
 const FIELD = "\u001f";
 const FETCH_PRINCIPAL = "system";
+const PARTIAL_CLONE_CONFIG = ["-c", "extensions.partialClone=origin", "-c", "remote.origin.promisor=true"];
 
 export interface GitReadonlyConfig {
   dir: string;
   remotes: Readonly<Record<string, string>>;
+  fetchTimeoutMs?: number;
 }
 
 export interface Cut {
@@ -149,7 +152,7 @@ export interface GitReadonly {
   fileAt(principal: string, repo: string, ref: string, path: string): Promise<FileAtResult>;
   blame(principal: string, repo: string, ref: string, path: string, start: number, end: number): Promise<BlameResult>;
   branches(principal: string, repo: string, pattern?: string): Promise<BranchesResult>;
-  fetchRepo(repo: string): Promise<FetchResult>;
+  fetchRepo(repo: string, opts?: { filter?: string }): Promise<FetchResult>;
 }
 
 function clipUtf8(text: string, maxBytes: number): { text: string; cutBytes: number } {
@@ -524,17 +527,29 @@ export function createGitReadonly(deps: {
     });
   }
 
-  async function fetchRepo(repoName: string): Promise<FetchResult> {
+  async function fetchRepo(repoName: string, opts: { filter?: string } = {}): Promise<FetchResult> {
     return audit.audited(FETCH_PRINCIPAL, "git_fetch", { repo: repoName }, async () => {
       const repo = checkRepo(repoName);
       const url = config.remotes[repo];
       if (!url) throw new GitDenied("no_remote", "no remote configured");
-      const args = ["fetch", "--prune", "--update-head-ok", "--no-write-fetch-head", "--quiet"];
+      const filter = opts.filter === undefined ? undefined : checkFilter(opts.filter);
+      const args = [
+        ...(filter ? PARTIAL_CLONE_CONFIG : []),
+        "fetch",
+        "--prune",
+        "--update-head-ok",
+        "--no-write-fetch-head",
+        "--quiet",
+        ...(filter ? [`--filter=${filter}`] : []),
+      ];
       const dir = dirOf(repo);
       await mkdir(config.dir, { recursive: true });
       await runner.run(dir, ["init", "--bare", "--quiet"]);
       const listed = await runner.run(dir, ["ls-remote", "--symref", url, "HEAD"], { remote: true });
-      await runner.run(dir, [...args, url, "+refs/heads/*:refs/heads/*"], { remote: true });
+      await runner.run(dir, [...args, url, "+refs/heads/*:refs/heads/*"], {
+        remote: true,
+        timeoutMs: config.fetchTimeoutMs ?? GIT_FETCH_TIMEOUT_MS,
+      });
       const { defaultBranch } = parseLsRemote(listed.stdout.toString("utf8"));
       if (defaultBranch) await runner.run(dir, ["symbolic-ref", "HEAD", `refs/heads/${defaultBranch}`]);
       return { repo, truncated: false };

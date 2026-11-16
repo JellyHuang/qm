@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { Cron } from "croner";
+import { GIT_FETCH_TIMEOUT_MS } from "./git/runner.ts";
 import { DEFAULT_GIT_LIMITS, type GitLimitsConfig } from "./git/limits.ts";
 import { isGitRepo } from "./git/validate.ts";
 import { parseContract, type Duty, type ZqContract } from "./contract.ts";
@@ -23,6 +24,7 @@ export interface ZqConfig {
     dir?: string;
     remotes: Record<string, string>;
     knownHosts?: string;
+    fetchTimeoutMs: number;
     limits: GitLimitsConfig;
   };
 }
@@ -33,6 +35,7 @@ const DEFAULT_DAILY_CEILING = 200;
 const DEFAULT_ESCALATION_DAYS = 2;
 const WEDNESDAY = 3;
 const MAX_GIT_DAILY_BYTES = 10 * 1024 ** 3;
+const MAX_GIT_FETCH_TIMEOUT_MS = 24 * 60 * 60_000;
 
 const on = (value: string | undefined) => value?.trim() === "1";
 
@@ -135,6 +138,13 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
     git: {
       enabled: gitEnabled,
       remotes: gitRemotes(env.ZQ_GIT_REMOTES),
+      fetchTimeoutMs: integer(
+        "ZQ_GIT_FETCH_TIMEOUT_MS",
+        env.ZQ_GIT_FETCH_TIMEOUT_MS,
+        GIT_FETCH_TIMEOUT_MS,
+        1000,
+        MAX_GIT_FETCH_TIMEOUT_MS,
+      ),
       limits: {
         callsPerMinute: integer(
           "ZQ_GIT_CALLS_PER_MINUTE",

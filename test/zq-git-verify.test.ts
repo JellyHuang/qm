@@ -5,9 +5,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { GitAuditRow } from "../src/zq/git/audit.ts";
-import { createGitRunner } from "../src/zq/git/runner.ts";
+import { createGitRunner, killLiveGitGroups } from "../src/zq/git/runner.ts";
 import { GIT_REPOS } from "../src/zq/git/validate.ts";
 import {
+  guardRunner,
   parseVerifyEnv,
   runVerify,
   summarizeAudit,
@@ -36,6 +37,7 @@ function fixture(name: string, branch: string): string {
       },
     });
   run(["init", "-q", "-b", branch]);
+  run(["config", "uploadpack.allowFilter", "true"]);
   writeFileSync(join(dir, "notes.txt"), `${BODY}\nsecond\n`);
   run(["add", "-A"]);
   run(["commit", "-q", "-m", "first"]);
@@ -49,11 +51,13 @@ test("parseVerifyEnv applies defaults and rejects a missing key and unknown repo
     keyFile: "/k",
     dir: "/tmp/zq-git-verify",
     repos: ["gameconfig", "CommonMessage", "jenkinstasks"],
+    deadlineMs: 45 * 60_000,
   });
   assert.deepEqual(parseVerifyEnv({ ZQ_GIT_KEY_FILE: "/k", ZQ_GIT_DIR: "/d", ZQ_GIT_VERIFY_REPOS: "server, client" }), {
     keyFile: "/k",
     dir: "/d",
     repos: ["server", "client"],
+    deadlineMs: 45 * 60_000,
   });
   assert.throws(() => parseVerifyEnv({}), /ZQ_GIT_KEY_FILE/);
   assert.throws(() => parseVerifyEnv({ ZQ_GIT_KEY_FILE: "/k", ZQ_GIT_VERIFY_REPOS: "qm-test" }), /qm-test/);
@@ -123,4 +127,50 @@ test("runVerify fails when the remote default branch is not the expected one", a
   });
   assert.ok(report.failures.includes("default branch of server"));
   assert.match(lines.join("\n"), /gameconfig: skipped, not fetched/);
+});
+
+test("parseVerifyEnv reads the filter and the deadline and rejects bad values", () => {
+  const env = { ZQ_GIT_KEY_FILE: "/k" };
+  const parsed = parseVerifyEnv({ ...env, ZQ_GIT_VERIFY_FILTER: "blob:none", ZQ_GIT_VERIFY_DEADLINE_MS: "5000" });
+  assert.equal(parsed.filter, "blob:none");
+  assert.equal(parsed.deadlineMs, 5000);
+  assert.throws(() => parseVerifyEnv({ ...env, ZQ_GIT_VERIFY_FILTER: "tree:0" }), /bad_filter/);
+  for (const bad of ["0", "999", "soon", "1.5"])
+    assert.throws(() => parseVerifyEnv({ ...env, ZQ_GIT_VERIFY_DEADLINE_MS: bad }), /ZQ_GIT_VERIFY_DEADLINE_MS/);
+});
+
+test("runVerify prints the filter, elapsed time and clone size of every fetched repository", async () => {
+  const remote = fixture("filter-src", "main");
+  for (const filter of [undefined, "blob:none"]) {
+    const lines: string[] = [];
+    await runVerify({
+      remotes: Object.fromEntries(GIT_REPOS.map((r) => [r, remote])),
+      defaults: ZQ_DEFAULT_BRANCHES,
+      dir: join(root, `clones-${filter ?? "full"}`),
+      repos: ["gameconfig"],
+      ...(filter ? { filter } : {}),
+      runner: createGitRunner(),
+      log: (line) => lines.push(line),
+    });
+    assert.match(
+      lines.join("\n"),
+      new RegExp(`gameconfig: fetched filter=${filter ?? "none"} ms=\\d+ bytes=\\d+ head=`),
+    );
+  }
+});
+
+test("the verify deadline refuses further git runs and reports expiry while running git is killed", async () => {
+  const stuck = join(root, "stuck.sh");
+  writeFileSync(stuck, "#!/bin/sh\nsleep 30\n", { mode: 0o755 });
+  let expired = 0;
+  const guard = guardRunner(createGitRunner({ gitBinary: stuck, timeoutMs: 60_000 }), 300, () => {
+    expired++;
+    killLiveGitGroups();
+  });
+  const started = Date.now();
+  await assert.rejects(guard.runner.run(root, ["status"]), /exited with/);
+  assert.ok(Date.now() - started < 5000);
+  assert.equal(expired, 1);
+  await assert.rejects(guard.runner.run(root, ["status"]), /verify deadline exceeded/);
+  guard.cancel();
 });

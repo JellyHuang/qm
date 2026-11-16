@@ -51,15 +51,16 @@ A commit's author email is matched to a person through Mattermost's verified use
 
 ## Configuration
 
-| Variable                         | Default | Meaning                                                                                    |
-| -------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
-| `ZQ_GIT_READONLY`                | off     | `1` builds the module and offers the six `git_*` tools. Needs Mattermost and `ZQ_GIT_DIR`. |
-| `ZQ_GIT_DIR`                     |         | Directory holding the bare clones (`<repo>.git`).                                          |
-| `ZQ_GIT_REMOTES`                 | none    | JSON object of repository name (allowlist only) to SSH URL, used by fetch only.            |
-| `ZQ_GIT_KNOWN_HOSTS`             |         | Pinned `known_hosts` file for fetch.                                                       |
-| `ZQ_GIT_CALLS_PER_MINUTE`        | 30      | Calls one person may make per minute (1 to 10000).                                         |
-| `ZQ_GIT_GLOBAL_CALLS_PER_MINUTE` | 120     | Calls everyone together may make per minute (1 to 100000).                                 |
-| `ZQ_GIT_DAILY_BYTES`             | 20 MiB  | Bytes one person may be returned per UTC day (1 to 10 GiB).                                |
+| Variable                         | Default | Meaning                                                                                                    |
+| -------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------- |
+| `ZQ_GIT_READONLY`                | off     | `1` builds the module and offers the six `git_*` tools. Needs Mattermost and `ZQ_GIT_DIR`.                 |
+| `ZQ_GIT_DIR`                     |         | Directory holding the bare clones (`<repo>.git`).                                                          |
+| `ZQ_GIT_REMOTES`                 | none    | JSON object of repository name (allowlist only) to SSH URL, used by fetch only.                            |
+| `ZQ_GIT_KNOWN_HOSTS`             |         | Pinned `known_hosts` file for fetch.                                                                       |
+| `ZQ_GIT_FETCH_TIMEOUT_MS`        | 30 min  | Time one `git fetch` may run before its whole process group is killed (1000 to 86400000). Reads keep 60 s. |
+| `ZQ_GIT_CALLS_PER_MINUTE`        | 30      | Calls one person may make per minute (1 to 10000).                                                         |
+| `ZQ_GIT_GLOBAL_CALLS_PER_MINUTE` | 120     | Calls everyone together may make per minute (1 to 100000).                                                 |
+| `ZQ_GIT_DAILY_BYTES`             | 20 MiB  | Bytes one person may be returned per UTC day (1 to 10 GiB).                                                |
 
 The deploy key is read from the org keychain credential `gitlab-qm-readonly-key` (the same service-credential store the broker uses) each time a fetch needs it.
 
@@ -81,12 +82,16 @@ ZQ_GIT_KEY_FILE=/path/to/key ZQ_GIT_DIR=/tmp/zq-git-verify \
   node scripts/zq-git-verify.ts
 ```
 
+Optional: `ZQ_GIT_VERIFY_FILTER=blob:none` fetches partial clones (commits and trees, no file contents) so clone size and time can be measured; it is the only accepted value, and with it file reads of missing blobs fail as errors. `ZQ_GIT_VERIFY_DEADLINE_MS` (default 45 minutes, at least 1000) is a hard overall deadline: when it passes, the script prints the step that was running, kills every running git process group, and exits non-zero.
+
+Git runs in its own process group. On a timeout or output cap the whole group (git, ssh, index-pack) is killed, and the call settles within 2 s even if a surviving grandchild still holds the output pipe.
+
 `ZQ_GIT_KEY_FILE` is required. `ZQ_GIT_DIR` defaults to `/tmp/zq-git-verify`. `ZQ_GIT_VERIFY_REPOS` defaults to `gameconfig,CommonMessage,jenkinstasks`; the large repositories only get `ls-remote` unless listed.
 
 Output holds only repository names, counts, shas shortened to 10 characters, byte counts, truncated flags and durations:
 
 1. `step a: remote heads`: per repository `branches=<n> default=<branch>`; `main`, or `master` for `jenkinstasks`.
-2. `step b: fetch`: per selected repository `fetched ms=<n> bytes=<clone size> head=<branch>`; `head` must be the default branch.
+2. `step b: fetch`: per selected repository `fetched filter=<none|blob:none> ms=<n> bytes=<clone size> head=<branch>`; `head` must be the default branch.
 3. `step c: read tools`: for `gameconfig` and `CommonMessage`, one line per tool (`recentCommits`, `commit`, `diff`, `branches`, `fileAt`, `blame`) as `ok bytes=<n> truncated=<bool>` or the error class. `fileAt` and `blame` are skipped with a note when the latest commit changed no text file.
 4. `step d: refused repository`: `qm-test` is refused as `denied:repo_not_allowed` with `git processes=0`.
 5. `step e: audit`: row counts by result and by tool, and a check that rows carry no content fields.
