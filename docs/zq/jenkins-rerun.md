@@ -1,12 +1,36 @@
 # Jenkins automatic rerun (design, not implemented)
 
-Status: design only. No Jenkins call, write or read, exists in QM. Nothing is built until the dedicated account is delivered and Jelly confirms the whitelist.
+Status: design only. No Jenkins call, write or read, exists in QM code. Nothing that writes is built until Jelly decides between the two rerun mechanisms below and approves a controlled verification.
+
+## Findings from the read-only check
+
+A read-only check against the real Jenkins (version 2.568.3, account `AI-Agent`, handle `jenkins-qm-bot`) found:
+
+- Exactly eight jobs are visible, the whitelist below.
+- The parameters of the last completed builds are all readable and none is masked. Empty-string parameters are real values (for example `CONFIG` and `BUILD` of `Server-Run`, `COMMIT_END_HASH` and `VCPKG_INCLUDE_SRC` of `Server-Clang-Tidy`) and are passed back as empty.
+- Builds are started by the upstream `Trigger-*` jobs, by hand or by a timer. No "rebuilt" cause exists.
+- Console text is readable, but Jenkins ignores `Range` requests and returns the whole log (about 127 KB), so QM reads it fully under a hard size cap and takes the tail itself.
+- `Server-Run` #6235 is paused on an input step. A build waiting for input is not a failure and is never rerun; only finished builds with result `FAILURE` qualify.
+- **The account has more than the design allows.** The "Rebuild" link on the build page points to `/replay`, and the Replay form opens, so the account holds Run/Replay. It can also open "Edit Build Information", so it holds Run/Update. Jelly is to revoke both. QM must not rely on that being done: the client contains no code path that uses either.
+- **The Rebuild plugin was not detected** (`/rebuild` returns 404; the plugin list needs a permission the account lacks).
 
 ## Decision recap
 
-- A failed build is rerun automatically **once**, as a **full rebuild** through the Rebuild plugin, keeping the original parameters. Pipeline Replay is not used.
+- A failed build is rerun automatically **once**, as a **full rerun with the original parameters**. Two mechanisms are possible; Jelly decides (see the next section). Pipeline Replay is not used in either.
 - Only failures classified as transient infrastructure or network problems are rerun. Everything else is reported, never rerun.
 - A rerun that fails again is not rerun again. QM posts to the backend group channel and mentions the responsible person.
+
+## Rerun mechanism: two options, pending Jelly
+
+**Option A, Rebuild plugin.** Install and confirm the plugin, then request its rebuild endpoint for the failed build number. The plugin reuses the original parameters. The new build's cause names the original build.
+
+**Option B, `buildWithParameters` (no plugin).** QM reads every parameter of the failed build and posts them all, verbatim and including empty values, to `/job/<job>/buildWithParameters` with a crumb. A job without parameters uses `/build`. The new build's cause is "Started by user AI-Agent", so Jenkins itself does not say it is a rerun. The once-only guarantee therefore rests only on QM's own table:
+
+- The rerun request is made only after the claim row exists in `zq_jenkins_reruns`.
+- The response carries the queue item location. QM resolves it to the new build number and stores that number on the claim row. A failed build whose number is stored on any claim row is never rerun, whatever its cause says.
+- No marker is written into Jenkins (build description needs Run/Update, which is not granted) and no parameter is added or changed to carry one.
+
+Whichever option is chosen, QM sends no other write request, and nothing is sent before the controlled verification is approved.
 
 ## Identity and permissions
 
@@ -18,11 +42,11 @@ Granted permissions, and nothing else:
 | ------------ | ------------------------------------------------- |
 | Overall/Read | Reach Jenkins                                     |
 | Job/Read     | Read builds, console logs, parameters, changesets |
-| Job/Build    | Start the rebuild                                 |
+| Job/Build    | Start the rerun                                   |
 
-Scope: exactly the jobs the account can see, listed in the next section. Not granted: Job/Configure, Job/Create, Job/Delete, Run/Replay, Run/Update, Run/Delete, Overall/Administer, Credentials, Agent/Configure. Without Run/Replay the account cannot replay a pipeline with an edited script even if a bug asked it to.
+Scope: exactly the jobs the account can see, listed in the next section. Not granted (and to be revoked where the check found it granted): Job/Configure, Job/Create, Job/Delete, Run/Replay, Run/Update, Run/Delete, Overall/Administer, Credentials, Agent/Configure. Without Run/Replay the account cannot replay a pipeline with an edited script even if a bug asked it to.
 
-The same account reads for monitoring. The QM client for it exposes exactly one write, `rebuild(job, number)`; there is no generic POST in the client, so a code path cannot call anything else.
+The same account reads for monitoring. The QM client for it exposes exactly one write, `rerun(job, number)`; there is no generic POST in the client, so a code path cannot call anything else.
 
 ## Job whitelist
 
@@ -35,7 +59,7 @@ Accepted risk, decided by Jelly: `Server-Run` has a `DROP_DATABASE` parameter an
 ## What triggers a rerun
 
 1. A build of a whitelisted job ends with result `FAILURE`. `ABORTED`, `UNSTABLE` and `NOT_BUILT` are ignored.
-2. The build is not itself a rebuild created by QM (see the once-only rule).
+2. The build is not itself a rerun created by QM (see the once-only rule).
 3. The failure is classified `network_transient` by the deterministic pattern list below, with the matching log line quoted as evidence.
 4. The job is on the rerun whitelist, the per-job hourly cap is not reached, and the kill switch is on.
 5. The original build's parameters were read completely (see Parameters).
@@ -46,9 +70,10 @@ Other classes, never rerun, always reported: `config` (parse or validation error
 
 ## Once per failure, guaranteed by code
 
-- Table `zq_jenkins_reruns` (durable, Postgres), key `job:buildNumber`, written with insert-if-absent **before** the rebuild call. If the insert does not create the row, nothing is called.
-- A build whose cause is "rebuilt from build N" where N is in the table is never rerun, so a rerun of a rerun cannot happen.
-- A crash between claim and call is not retried blindly: before acting on a claimed row older than a few minutes, QM asks Jenkins whether a build with a rebuild cause from that build already exists, and records it instead of calling again.
+- Table `zq_jenkins_reruns` (durable, Postgres), key `job:buildNumber`, written with insert-if-absent **before** the rerun call. If the insert does not create the row, nothing is called.
+- A build whose number is recorded as the result of an earlier rerun is never rerun, so a rerun of a rerun cannot happen. With option A the "rebuilt from build N" cause is an additional signal; with option B the table is the only one.
+- A crash between claim and call is not retried blindly: before acting on a claimed row older than a few minutes, QM asks Jenkins for builds of that job newer than the failed one and for the queue, and records a matching one instead of calling again; if it cannot tell, it does nothing and reports.
+- A build that is waiting for input, queued, or still running is never a candidate.
 - Per-job hourly cap and a global kill switch (`ZQ_JENKINS_RERUN`, default off).
 - A job whose builds have unreadable or masked parameters can never be rerun automatically; it is reported instead.
 
@@ -56,11 +81,11 @@ Other classes, never rerun, always reported: `config` (parse or validation error
 
 A rerun carries the original build's parameters exactly: nothing changed, nothing added, nothing dropped.
 
-1. Before the rebuild QM reads the full parameter list of the failed build from Jenkins (names, types, values).
-2. The rebuild is requested with exactly those values.
-3. QM refuses to rerun, and treats the build as not rerunnable, when the parameters cannot be read, when the list is incomplete (a parameter defined on the job and missing from the build, or the reverse), when any value is masked or unreadable (password and secret parameters), or when the job defines parameters the Rebuild plugin cannot reproduce.
+1. Before the rerun QM reads the full parameter list of the failed build from Jenkins (names, types, values).
+2. The rerun is requested with exactly those values, empty strings included.
+3. QM refuses to rerun, and treats the build as not rerunnable, when the parameters cannot be read, when the list is incomplete (a parameter defined on the job and missing from the build, or the reverse), when any value is masked or unreadable (password and secret parameters), or when the job defines parameters the chosen mechanism cannot reproduce.
 4. A refused rerun is not retried. QM posts to the backend group channel and mentions the responsible person, with the reason ("parameters unreadable" or "parameters incomplete") and the build link.
-5. After the rebuild QM compares the new build's parameters with the original's and records any difference in the log and the notice.
+5. After the rerun QM compares the new build's parameters with the original's and records any difference in the log and the notice.
 
 ## When the rerun fails too
 
@@ -88,12 +113,13 @@ Preferred: Jenkins notifies QM when a build finishes (Notification or Generic We
 ## Failure handling
 
 - Jenkins unreachable or token rejected: no rerun, one alert to the channel per outage, retry on the next scan.
-- Permission denied on rebuild: recorded, one alert, no retry.
-- CSRF crumb: with password authentication Jenkins requires a crumb for POST requests; QM fetches one from the crumb issuer for the single rebuild request and never caches it.
+- Permission denied on the rerun: recorded, one alert, no retry.
+- CSRF crumb: with password authentication Jenkins requires a crumb for POST requests; QM fetches one from the crumb issuer (it works for this account) for the single rerun request and never caches it.
 
 ## Open items before building
 
-- Confirm the Rebuild plugin's endpoint and behaviour on this Jenkins (version, parameterised and pipeline jobs).
+- Jelly decides option A or B. For A, the Rebuild plugin must be installed and its endpoint confirmed. For B, a controlled verification on a harmless test job is needed before any real job.
+- Jelly revokes Run/Replay and Run/Update from the account, or accepts that they stay unused.
 - A test job that can be made to fail on purpose with a network-like error, a config error and a code error.
 - The backend group channel and the job owner map.
 - The pattern list and the whitelist from Jelly.
