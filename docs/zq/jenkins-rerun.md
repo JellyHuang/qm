@@ -1,6 +1,6 @@
 # Jenkins automatic rerun (design, not implemented)
 
-Status: design only. No Jenkins call, write or read, exists in QM code. Nothing that writes is built until Jelly decides between the two rerun mechanisms below and approves a controlled verification.
+Status: proposal, awaiting Jelly's explicit OK. Plan B (`buildWithParameters`) is the chosen direction; nobody has objected, but nothing is built and no write request is sent until Jelly says OK and approves a controlled verification on a harmless job. No Jenkins call, write or read, exists in QM code.
 
 ## Findings from the read-only check
 
@@ -11,26 +11,26 @@ A read-only check against the real Jenkins (version 2.568.3, account `AI-Agent`,
 - Builds are started by the upstream `Trigger-*` jobs, by hand or by a timer. No "rebuilt" cause exists.
 - Console text is readable, but Jenkins ignores `Range` requests and returns the whole log (about 127 KB), so QM reads it fully under a hard size cap and takes the tail itself.
 - `Server-Run` #6235 is paused on an input step. A build waiting for input is not a failure and is never rerun; only finished builds with result `FAILURE` qualify.
-- **The account has more than the design allows.** The "Rebuild" link on the build page points to `/replay`, and the Replay form opens, so the account holds Run/Replay. It can also open "Edit Build Information", so it holds Run/Update. Jelly is to revoke both. QM must not rely on that being done: the client contains no code path that uses either.
+- **The account has more than the design needs.** The "Rebuild" link on the build page points to `/replay`, and the Replay form opens, so the account holds Run/Replay. It can also open "Edit Build Information", so it holds Run/Update. Jelly decided to leave both as they are; the client contains no code path that uses either.
 - **The Rebuild plugin was not detected** (`/rebuild` returns 404; the plugin list needs a permission the account lacks).
 
 ## Decision recap
 
-- A failed build is rerun automatically **once**, as a **full rerun with the original parameters**. Two mechanisms are possible; Jelly decides (see the next section). Pipeline Replay is not used in either.
+- A failed build is rerun automatically **once**, as a **full rerun with the original parameters**, by posting them to `buildWithParameters` (plan B). The Rebuild plugin is not installed, so it is not used. Pipeline Replay is not used.
 - Only failures classified as transient infrastructure or network problems are rerun. Everything else is reported, never rerun.
 - A rerun that fails again is not rerun again. QM posts to the backend group channel and mentions the responsible person.
 
-## Rerun mechanism: two options, pending Jelly
+## Rerun mechanism: plan B, `buildWithParameters`
 
-**Option A, Rebuild plugin.** Install and confirm the plugin, then request its rebuild endpoint for the failed build number. The plugin reuses the original parameters. The new build's cause names the original build.
-
-**Option B, `buildWithParameters` (no plugin).** QM reads every parameter of the failed build and posts them all, verbatim and including empty values, to `/job/<job>/buildWithParameters` with a crumb. A job without parameters uses `/build`. The new build's cause is "Started by user AI-Agent", so Jenkins itself does not say it is a rerun. The once-only guarantee therefore rests only on QM's own table:
-
-- The rerun request is made only after the claim row exists in `zq_jenkins_reruns`.
-- The response carries the queue item location. QM resolves it to the new build number and stores that number on the claim row. A failed build whose number is stored on any claim row is never rerun, whatever its cause says.
-- No marker is written into Jenkins (build description needs Run/Update, which is not granted) and no parameter is added or changed to carry one.
-
-Whichever option is chosen, QM sends no other write request, and nothing is sent before the controlled verification is approved.
+- QM reads every parameter of the failed build (names and values), then posts all of them, verbatim and including empty strings, to `/job/<job>/buildWithParameters`. A job without parameters is started with `/build`.
+- Each POST carries a crumb fetched for that request from the crumb issuer, never cached or reused.
+- The new build's cause is "Started by user AI-Agent", so Jenkins does not mark it as a rerun. The once-only guarantee therefore rests only on QM's own table:
+  - The claim row in `zq_jenkins_reruns` exists before the request is made.
+  - The response carries the queue item location. QM resolves it to the new build number and stores that number on the claim row. A failed build whose number is stored on any claim row is never rerun, whatever its cause says.
+  - No marker is written into Jenkins (build description needs Run/Update) and no parameter is added or changed to carry one.
+- A build that is queued, running, or paused on an input step is never a candidate. Only finished builds with result `FAILURE` qualify.
+- The client has one write method, `rerun(job, number)`, and no other POST. It contains no code path that uses Replay or Edit Build Information.
+- Nothing is sent before Jelly's explicit OK and a controlled verification on a harmless test job.
 
 ## Identity and permissions
 
@@ -44,7 +44,7 @@ Granted permissions, and nothing else:
 | Job/Read     | Read builds, console logs, parameters, changesets |
 | Job/Build    | Start the rerun                                   |
 
-Scope: exactly the jobs the account can see, listed in the next section. Not granted (and to be revoked where the check found it granted): Job/Configure, Job/Create, Job/Delete, Run/Replay, Run/Update, Run/Delete, Overall/Administer, Credentials, Agent/Configure. Without Run/Replay the account cannot replay a pipeline with an edited script even if a bug asked it to.
+Scope: exactly the jobs the account can see, listed in the next section. The design needs only the three permissions above. The read-only check found that the account also holds Run/Replay and Run/Update (it can open the Replay form and Edit Build Information). Jelly decided to leave them as they are. QM's client therefore has no code path that uses them: it can neither replay a pipeline with an edited script nor edit build information. Everything else (Job/Configure, Job/Create, Job/Delete, Run/Delete, Overall/Administer, Credentials, Agent/Configure) is not granted and not used.
 
 The same account reads for monitoring. The QM client for it exposes exactly one write, `rerun(job, number)`; there is no generic POST in the client, so a code path cannot call anything else.
 
@@ -71,7 +71,7 @@ Other classes, never rerun, always reported: `config` (parse or validation error
 ## Once per failure, guaranteed by code
 
 - Table `zq_jenkins_reruns` (durable, Postgres), key `job:buildNumber`, written with insert-if-absent **before** the rerun call. If the insert does not create the row, nothing is called.
-- A build whose number is recorded as the result of an earlier rerun is never rerun, so a rerun of a rerun cannot happen. With option A the "rebuilt from build N" cause is an additional signal; with option B the table is the only one.
+- A build whose number is recorded as the result of an earlier rerun is never rerun, so a rerun of a rerun cannot happen. The table is the only record: Jenkins's own cause does not say it was a rerun.
 - A crash between claim and call is not retried blindly: before acting on a claimed row older than a few minutes, QM asks Jenkins for builds of that job newer than the failed one and for the queue, and records a matching one instead of calling again; if it cannot tell, it does nothing and reports.
 - A build that is waiting for input, queued, or still running is never a candidate.
 - Per-job hourly cap and a global kill switch (`ZQ_JENKINS_RERUN`, default off).
@@ -118,8 +118,7 @@ Preferred: Jenkins notifies QM when a build finishes (Notification or Generic We
 
 ## Open items before building
 
-- Jelly decides option A or B. For A, the Rebuild plugin must be installed and its endpoint confirmed. For B, a controlled verification on a harmless test job is needed before any real job.
-- Jelly revokes Run/Replay and Run/Update from the account, or accepts that they stay unused.
+- Jelly's explicit OK for plan B, and a controlled verification on a harmless test job before any real job.
 - A test job that can be made to fail on purpose with a network-like error, a config error and a code error.
 - The backend group channel and the job owner map.
 - The pattern list and the whitelist from Jelly.
