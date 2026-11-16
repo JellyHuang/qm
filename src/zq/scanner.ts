@@ -1,5 +1,6 @@
 import { Cron } from "croner";
 import { paused, type Duty, type ZqContract } from "./contract.ts";
+import type { ZqChanges } from "./changes.ts";
 import type { ZqGroups } from "./groups.ts";
 import { reminderId, type ReminderMode, type ZqReminderStore } from "./reminders.ts";
 import {
@@ -36,6 +37,7 @@ export interface ScanOptions {
   mmUserIdOfOpUser: (opUserId: string) => Promise<string | undefined>;
   reminders: ZqReminderStore;
   groups?: { store: ZqGroups; create: (feature: ZqFeatureRef, memberMmUserIds: string[]) => Promise<string> };
+  changes?: ZqChanges;
   opBaseUrl?: string;
   mode: ReminderMode;
   now: number;
@@ -56,6 +58,7 @@ export interface ScanReport {
   noHolder: number;
   unlinked: number;
   groupsCreated: number;
+  changesRecorded: number;
   unsetResponsibility: number;
   contractProblems: number;
   problemSamples: string[];
@@ -90,6 +93,7 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
     noHolder: 0,
     unlinked: 0,
     groupsCreated: 0,
+    changesRecorded: 0,
     unsetResponsibility: 0,
     contractProblems: 0,
     problemSamples: [],
@@ -172,6 +176,14 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
           if (created) report.created++;
           else report.alreadyKnown++;
         }
+      }
+      if (opts.changes && opts.mode === "live") {
+        const pm = fact.feature.pm ? await opts.mmUserIdOfOpUser(fact.feature.pm.id) : undefined;
+        report.changesRecorded += await opts.changes.record(fact, opts.contract, {
+          day: (at) => dayKeyIn(opts.timezone, at),
+          link: (id) => (opts.opBaseUrl ? `${opts.opBaseUrl}/work_packages/${id}` : `#${id}`),
+          ...(pm ? { fallbackMmUserId: pm } : {}),
+        });
       }
       if (
         opts.groups &&

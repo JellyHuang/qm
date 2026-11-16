@@ -279,6 +279,9 @@ export function createMattermost(deps: MattermostDeps) {
         ...(props ? { props } : {}),
       });
     },
+    async postToChannel(channelId: string, message: string): Promise<void> {
+      await client.createPost({ channel_id: channelId, message });
+    },
     async createFeatureChannel(feature: FeatureChannelInput, memberMmUserIds: readonly string[]): Promise<string> {
       return createFeatureChannel(client, rt.bot().teamId, feature, memberMmUserIds);
     },

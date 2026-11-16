@@ -2,6 +2,7 @@ import type { DurableMap } from "../persistence/durable-map.ts";
 import type { LeaderLease } from "../persistence/leader-lease.ts";
 import type { Sweeper } from "../util/sweeper.ts";
 import type { ZqConfig } from "./config.ts";
+import { createZqChanges, type ZqChangeLine, type ZqSnapshot } from "./changes.ts";
 import { createZqIdentityMap, type ZqIdentityLink, type ZqIdentityMap } from "./identity-map.ts";
 import { loadZqContract } from "./config.ts";
 import { checkConfiguredDuties, type ZqContract } from "./contract.ts";
@@ -32,6 +33,7 @@ export interface ZqChat {
   mmUserIdOf(principalId: string): Promise<string | undefined>;
   principalOf(mmUserId: string): Promise<string | undefined>;
   createGroup?(feature: ZqFeatureRef, memberMmUserIds: string[]): Promise<string>;
+  postToChannel?(channelId: string, text: string): Promise<void>;
 }
 
 export type ZqIdentityAdmin = Pick<ZqIdentityMap, "enabled" | "list" | "confirm" | "unlink">;
@@ -100,6 +102,17 @@ export function createZqRuntime(deps: {
       ? { store: createZqGroups({ map: deps.map<ZqGroup>("zq_groups") }), create: chat.createGroup.bind(chat) }
       : undefined;
 
+  const changes =
+    config.changeDigest && chat.postToChannel
+      ? {
+          store: createZqChanges({
+            snapshots: deps.map<ZqSnapshot>("zq_snapshots"),
+            lines: deps.map<ZqChangeLine>("zq_change_lines"),
+          }),
+          channel: chat.postToChannel.bind(chat),
+        }
+      : undefined;
+
   const service = createZqService({
     config,
     ...(contract
@@ -107,6 +120,7 @@ export function createZqRuntime(deps: {
       : { reader: noReader }),
     mmUserIdOfOpUser: async (opUserId) => (await identity.byOpenProject(opUserId))?.mmUserId,
     ...(groups ? { groups } : {}),
+    ...(changes ? { changes } : {}),
     people,
     reminders,
     state: deps.map<ZqRunState>("zq_run_state"),

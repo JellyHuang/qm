@@ -10,6 +10,7 @@ export interface ZqConfig {
   contractFile?: string;
   opBaseUrl?: string;
   featureChannels: boolean;
+  changeDigest: boolean;
   escalation: { duties: readonly Duty[]; afterDays: number };
   unsetResponsibilityDuties: readonly Duty[];
   reports: { enabled: boolean; dailyCron?: string; weeklyCron?: string };
@@ -82,6 +83,7 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
     ...(contractFile ? { contractFile } : {}),
     ...(opBaseUrl ? { opBaseUrl } : {}),
     featureChannels: on(env.ZQ_FEATURE_CHANNELS),
+    changeDigest: on(env.ZQ_CHANGE_DIGEST),
     escalation: {
       duties: duties("ZQ_ESCALATION_DUTIES", env.ZQ_ESCALATION_DUTIES),
       afterDays: integer("ZQ_ESCALATION_AFTER_DAYS", env.ZQ_ESCALATION_AFTER_DAYS, DEFAULT_ESCALATION_DAYS, 1, 365),

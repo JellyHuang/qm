@@ -1,6 +1,7 @@
 import type { DurableMap } from "../persistence/durable-map.ts";
 import { reportFailureAs } from "../util/errors.ts";
 import type { ZqConfig } from "./config.ts";
+import type { FlushResult, ZqChanges } from "./changes.ts";
 import { deliverDue } from "./delivery.ts";
 import type { ReminderMode, ZqReminderStore } from "./reminders.ts";
 import type { ReportInput, ZqReports } from "./reports.ts";
@@ -23,6 +24,7 @@ export interface ZqServiceDeps {
   contract?: ZqContract;
   mmUserIdOfOpUser: (opUserId: string) => Promise<string | undefined>;
   groups?: { store: ZqGroups; create: (feature: ZqFeatureRef, memberMmUserIds: string[]) => Promise<string> };
+  changes?: { store: ZqChanges; channel: (channelId: string, text: string) => Promise<void> };
   people: () => Promise<ScanPerson[]>;
   reminders: ZqReminderStore;
   state: DurableMap<ZqRunState>;
@@ -36,7 +38,12 @@ export interface ZqServiceDeps {
 }
 
 export interface ZqService {
-  tick(): Promise<{ scanned?: ScanReport; delivered?: { sent: number; failed: number }; reportsSent: number }>;
+  tick(): Promise<{
+    scanned?: ScanReport;
+    delivered?: { sent: number; failed: number };
+    changes?: FlushResult;
+    reportsSent: number;
+  }>;
 }
 
 const DAY = 86_400_000;
@@ -91,6 +98,7 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
             mmUserIdOfOpUser: deps.mmUserIdOfOpUser,
             reminders: deps.reminders,
             ...(deps.groups ? { groups: deps.groups } : {}),
+            ...(deps.changes ? { changes: deps.changes.store } : {}),
             ...(config.opBaseUrl ? { opBaseUrl: config.opBaseUrl } : {}),
             mode,
             now: at,
@@ -103,6 +111,11 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
         }
         if (config.deliverReminders)
           out.delivered = await deliverDue({ reminders: deps.reminders, send: deps.send, now: at });
+        if (config.deliverReminders && deps.changes)
+          out.changes = await deps.changes.store.flush(deps.groups?.store, {
+            channel: deps.changes.channel,
+            dm: deps.send,
+          });
       }
       out.reportsSent = await reportsTick(at);
       return out;

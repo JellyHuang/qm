@@ -2672,6 +2672,7 @@ export function buildApp(
             mmUserIdOf: (principalId) => mattermost!.mmUserIdOf(principalId),
             principalOf: (mmUserId) => mattermost!.principalOf(mmUserId),
             createGroup: (feature, members) => mattermost!.createFeatureChannel(feature, members),
+            postToChannel: (channelId, text) => mattermost!.postToChannel(channelId, text),
           },
           map: (table) => artifactMap(table),
           leaderLease,

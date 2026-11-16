@@ -221,6 +221,7 @@ test("a dry-run scan walks the pages, stores what it would send per rule, target
       noHolder: 0,
       unlinked: 0,
       groupsCreated: 0,
+      changesRecorded: 0,
       unsetResponsibility: 0,
       contractProblems: 0,
       problemSamples: [],
