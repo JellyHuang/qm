@@ -10,7 +10,7 @@ Status: design only. No Jenkins call, write or read, exists in QM. Nothing is bu
 
 ## Identity and permissions
 
-One dedicated Jenkins account, created and handed over by Jelly, authenticated with an API token (HTTP Basic, user plus token). The token lives in QM's credential store, never in chat, Git or logs.
+One dedicated Jenkins account (`jenkins-qm-bot`, the AI-Agent account), created and handed over by Jelly, authenticated with its password over HTTP Basic. The password lives in QM's credential store under the handle `jenkins-qm-bot`, never in chat, Git or logs. If Jenkins later issues an API token for the account, the token replaces the password with no other change.
 
 Granted permissions, and nothing else:
 
@@ -20,9 +20,17 @@ Granted permissions, and nothing else:
 | Job/Read     | Read builds, console logs, parameters, changesets |
 | Job/Build    | Start the rebuild                                 |
 
-Scope: the `jenkinstasks` folder and the jobs of the seven repositories, matched by full job name. Not granted: Job/Configure, Job/Create, Job/Delete, Run/Replay, Run/Update, Run/Delete, Overall/Administer, Credentials, Agent/Configure. Without Run/Replay the account cannot replay a pipeline with an edited script even if a bug asked it to.
+Scope: exactly the jobs the account can see, listed in the next section. Not granted: Job/Configure, Job/Create, Job/Delete, Run/Replay, Run/Update, Run/Delete, Overall/Administer, Credentials, Agent/Configure. Without Run/Replay the account cannot replay a pipeline with an edited script even if a bug asked it to.
 
 The same account reads for monitoring. The QM client for it exposes exactly one write, `rebuild(job, number)`; there is no generic POST in the client, so a code path cannot call anything else.
+
+## Job whitelist
+
+Monitoring and automatic rerun cover exactly these eight Jenkins jobs, matched by exact full job name: `CheckServerConfig`, `LLM-Wiki`, `PackageSent`, `Server-Build`, `Server-Clang-Tidy`, `Server-CodeReview`, `Server-Config`, `Server-Run`. The `Trigger-*` jobs and `Triger-Build-Config` are out of scope and are never read or rerun. Any other job name is refused before a request is made.
+
+`jenkinstasks` is a Git repository (one of the seven read-only repositories in `gitlab-readonly.md`), not a Jenkins job, and does not appear in this whitelist.
+
+Accepted risk, decided by Jelly: `Server-Run` has a `DROP_DATABASE` parameter and `PackageSent` publishes a package. A rerun repeats the original parameters exactly, so a failed build that dropped the database or sent a package is repeated as it was. The mitigations are the ones in this document: only transient infrastructure failures qualify, only once per failure, parameters must be read completely, and every rerun is announced and logged. A job can be taken out of the rerun whitelist by configuration at any time without a code change.
 
 ## What triggers a rerun
 
@@ -81,7 +89,7 @@ Preferred: Jenkins notifies QM when a build finishes (Notification or Generic We
 
 - Jenkins unreachable or token rejected: no rerun, one alert to the channel per outage, retry on the next scan.
 - Permission denied on rebuild: recorded, one alert, no retry.
-- CSRF crumb: a request with API-token Basic authentication does not need one; if the instance requires it, QM fetches a crumb for that request only.
+- CSRF crumb: with password authentication Jenkins requires a crumb for POST requests; QM fetches one from the crumb issuer for the single rebuild request and never caches it.
 
 ## Open items before building
 
