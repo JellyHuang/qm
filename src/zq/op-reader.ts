@@ -121,7 +121,9 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
   const lifecycle = lifecycleOf(item["lifecycle"]);
   const statusChangedAt = time(item["status_changed_at"]);
   const parentId = Number(item["parent_id"]);
-  const projectId = str(item["project_id"]);
+  const project = isObject(item["project"]) ? item["project"] : undefined;
+  const projectId = str(item["project_id"]) ?? str(project?.["id"]);
+  const projectName = str(item["project_name"]) ?? str(project?.["name"]) ?? str(project?.["identifier"]);
   const assignee = individual(item["assignee"]);
   const personAt = (field: keyof ZqContract["fields"]) => person(item[contract.fields[field]]);
   const planner = personAt("responsiblePlanner");
@@ -148,6 +150,7 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
     ...(statusChangedAt !== undefined ? { statusChangedAt } : {}),
     ...(Number.isSafeInteger(parentId) && parentId > 0 ? { parentId } : {}),
     ...(projectId ? { projectId } : {}),
+    ...(projectName ? { projectName } : {}),
     ...(assignee ? { assignee } : {}),
     ...(planner ? { responsiblePlanner: planner } : {}),
     ...(pm ? { pm } : {}),

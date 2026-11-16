@@ -20,6 +20,8 @@ function harness(opts: {
   featurePm?: Record<string, string>;
   duty?: Record<string, string[]>;
   daily?: boolean;
+  names?: Record<string, string>;
+  failSends?: Record<string, number>;
 }) {
   const config = zqConfigFromEnv({
     ZQ_REPORTS: "1",
@@ -36,6 +38,7 @@ function harness(opts: {
     now: () => 1000,
   });
   const dutyCalls: string[] = [];
+  const attempts: string[] = [];
   const service = createZqService({
     config,
     reader: {
@@ -74,19 +77,32 @@ function harness(opts: {
               hours: 2,
               projectId: p,
             })),
-            projects: projects.map((id) => ({ id, pmOpUserIds: opts.featurePm?.[id] ? [opts.featurePm[id]!] : [] })),
+            projects: projects.map((id) => ({
+              id,
+              ...(opts.names?.[id] ? { name: opts.names[id] } : {}),
+              pmOpUserIds: opts.featurePm?.[id] ? [opts.featurePm[id]!] : [],
+            })),
           };
         },
       },
-      sendCard: async (to, id, text) => void cards.push({ to, id, text }),
+      sendCard: async (to, id, text) => {
+        attempts.push(to);
+        const left = opts.failSends?.[to] ?? 0;
+        if (left > 0) {
+          opts.failSends![to] = left - 1;
+          throw new Error("mattermost down");
+        }
+        cards.push({ to, id, text });
+      },
     },
     now: () => clock.now,
+    sendRetryDelayMs: 0,
   });
   const tickAt = async (at: number) => {
     clock.now = at;
     return service.tick();
   };
-  return { store, cards, state, dutyCalls, tickAt };
+  return { store, cards, attempts, state, dutyCalls, tickAt };
 }
 
 test("a weekly report goes to the project manager only, one draft with a section per person", async () => {
@@ -194,4 +210,86 @@ test("the daily report still goes to each person as before", async () => {
   const draft = await h.store.decide(h.cards[0]!.id, true, h.cards[0]!.to, h.cards[0]!.to);
   assert.equal(draft.status, "confirmed");
   await assert.rejects(h.store.decide(h.cards[1]!.id, true, "mm-pm", "mm-pm"), /只有报告对应的本人/);
+});
+
+test("the draft names the project and falls back to the id when the name is unknown", async () => {
+  const h = harness({
+    projectsOf: { "mm-alice": ["3", "4"] },
+    featurePm: { "3": "10", "4": "11" },
+    names: { "3": "ZQ" },
+  });
+  await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
+  await h.tickAt(WEEKLY_DUE);
+  const byTo = new Map(h.cards.map((c) => [c.to, c.text]));
+  assert.match(byTo.get("mm-pm")!, /^项目 ZQ 的周报草稿/);
+  assert.match(byTo.get("mm-pm2")!, /^项目 4 的周报草稿/);
+});
+
+test("a project skipped for no manager gets its draft and cards once a manager appears in the same week", async () => {
+  const featurePm: Record<string, string> = {};
+  const h = harness({ projectsOf: { "mm-alice": ["3"] }, featurePm, duty: { "3": [] } });
+  await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
+  const first = await h.tickAt(WEEKLY_DUE);
+  assert.deepEqual([first.reportsSent, first.weeklyNoPm], [0, 1]);
+  const still = await h.tickAt(WEEKLY_DUE + 3_600_000);
+  assert.deepEqual([still.reportsSent, still.weeklyNoPm], [0, 0]);
+  assert.equal(h.cards.length, 0);
+  featurePm["3"] = "10";
+  const found = await h.tickAt(WEEKLY_DUE + 7_200_000);
+  assert.deepEqual([found.reportsSent, found.weeklyNoPm], [1, 0]);
+  assert.deepEqual(
+    h.cards.map((c) => c.to),
+    ["mm-pm"],
+  );
+  const stored = await h.store.openProjectDrafts("2026-11-09");
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0]!.status, "pending");
+  assert.equal(stored[0]!.skipReason, undefined);
+  const later = await h.tickAt(WEEKLY_DUE + 10_800_000);
+  assert.equal(later.reportsSent, 0);
+  assert.equal(h.cards.length, 1);
+});
+
+test("a card send that fails twice then succeeds is delivered once and marked delivered", async () => {
+  const h = harness({ projectsOf: { "mm-alice": ["3"] }, featurePm: { "3": "10" }, failSends: { "mm-pm": 2 } });
+  await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
+  const out = await h.tickAt(WEEKLY_DUE);
+  assert.deepEqual([out.reportsSent, out.weeklyCardFailed], [1, 0]);
+  assert.deepEqual(h.attempts, ["mm-pm", "mm-pm", "mm-pm"]);
+  assert.equal(h.cards.length, 1);
+  const [draft] = await h.store.openProjectDrafts("2026-11-09");
+  assert.deepEqual(draft!.delivered, ["mm-pm"]);
+  assert.equal(draft!.status, "pending");
+});
+
+test("a card send that always fails stops after three tries, is counted and is not retried by later scans", async () => {
+  const h = harness({ projectsOf: { "mm-alice": ["3"] }, featurePm: { "3": "10" }, failSends: { "mm-pm": 99 } });
+  await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
+  const out = await h.tickAt(WEEKLY_DUE);
+  assert.deepEqual([out.reportsSent, out.weeklyCardFailed], [0, 1]);
+  assert.equal(h.attempts.length, 3);
+  const later = await h.tickAt(WEEKLY_DUE + 3_600_000);
+  assert.deepEqual([later.reportsSent, later.weeklyCardFailed], [0, 0]);
+  assert.equal(h.attempts.length, 3);
+  const [draft] = await h.store.openProjectDrafts("2026-11-09");
+  assert.equal(draft!.sendFailures?.["mm-pm"], 3);
+  assert.equal(draft!.status, "pending");
+});
+
+test("a later scan never resends to an addressee who already received the card", async () => {
+  const h = harness({
+    projectsOf: { "mm-alice": ["3"] },
+    duty: { "3": ["10", "11"] },
+    failSends: { "mm-pm2": 99 },
+  });
+  await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
+  const out = await h.tickAt(WEEKLY_DUE);
+  assert.deepEqual([out.reportsSent, out.weeklyCardFailed], [1, 1]);
+  assert.deepEqual(h.attempts, ["mm-pm", "mm-pm2", "mm-pm2", "mm-pm2"]);
+  await h.tickAt(WEEKLY_DUE + 3_600_000);
+  assert.equal(h.attempts.length, 4);
+  assert.deepEqual(
+    h.cards.map((c) => c.to),
+    ["mm-pm"],
+  );
 });

@@ -15,6 +15,7 @@ export interface WorkView {
   statusChangedAt?: number;
   parentId?: number;
   projectId?: string;
+  projectName?: string;
   assignee?: OpUserRef;
   responsiblePlanner?: OpUserRef;
   pm?: OpUserRef;

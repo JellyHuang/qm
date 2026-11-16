@@ -81,6 +81,9 @@ export function createReportSource(opts: {
     const views = facts.flatMap((f) => [f.feature, ...f.children, ...(f.bugs ?? [])]);
     const subjects = new Map(views.map((w) => [w.id, w.subject]));
     const projectOf = new Map(views.flatMap((w) => (w.projectId ? [[w.id, w.projectId] as const] : [])));
+    const nameOf = new Map(
+      views.flatMap((w) => (w.projectId && w.projectName ? [[w.projectId, w.projectName] as const] : [])),
+    );
     const bugIds = new Set(facts.flatMap((f) => (f.bugs ?? []).map((b) => b.id)));
     const bugStages = new Set(Object.keys(contract.stages.bug));
     const me = person.opUserId;
@@ -116,6 +119,7 @@ export function createReportSource(opts: {
 
     const reportProjects = projectIds.map((id) => ({
       id,
+      ...(nameOf.has(id) ? { name: nameOf.get(id)! } : {}),
       pmOpUserIds: [
         ...new Set(facts.flatMap((f) => (f.feature.projectId === id && f.feature.pm ? [f.feature.pm.id] : []))),
       ],

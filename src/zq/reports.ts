@@ -20,6 +20,7 @@ export interface ReportTimeEntry {
 
 export interface ReportProject {
   id: string;
+  name?: string;
   pmOpUserIds: string[];
 }
 
@@ -36,6 +37,7 @@ export interface ReportInput {
 
 export interface ProjectReportInput {
   projectId: string;
+  projectName?: string;
   weekKey: string;
   since: number;
   until: number;
@@ -55,7 +57,11 @@ export interface ZqReportDraft {
   status: "pending" | "confirmed" | "discarded" | "skipped";
   kind?: "person" | "project";
   projectId?: string;
+  projectName?: string;
+  weekKey?: string;
   addressees?: string[];
+  delivered?: string[];
+  sendFailures?: Record<string, number>;
   skipReason?: "no_pm";
   createdAt: number;
   decidedAt?: number;
@@ -118,7 +124,7 @@ function personSection(input: ReportInput): string[] {
 
 function projectReport(input: ProjectReportInput): string {
   return [
-    `项目 ${input.projectId} 的周报草稿(${input.weekKey} 当周)`,
+    `项目 ${input.projectName ?? input.projectId} 的周报草稿(${input.weekKey} 当周)`,
     ...input.sections.flatMap((s) => personSection(s)),
   ].join("\n");
 }
@@ -138,6 +144,8 @@ export function sectionForProject(input: ReportInput, projectId: string): Report
 export interface ZqReports {
   draft(input: ReportInput): Promise<ZqReportDraft>;
   draftProject(input: ProjectReportInput): Promise<{ draft: ZqReportDraft; created: boolean }>;
+  openProjectDrafts(weekKey: string): Promise<ZqReportDraft[]>;
+  recordSend(id: string, to: string, delivered: boolean): Promise<ZqReportDraft | null>;
   decide(id: string, approve: boolean, decidedBy: string, clickerMmUserId: string): Promise<ZqReportDraft>;
 }
 
@@ -176,6 +184,8 @@ export function createZqReports(opts: {
         period: "weekly",
         kind: "project",
         projectId: input.projectId,
+        ...(input.projectName ? { projectName: input.projectName } : {}),
+        weekKey: input.weekKey,
         addressees: input.addressees,
         since: input.since,
         until: input.until,
@@ -184,8 +194,25 @@ export function createZqReports(opts: {
         ...(noPm ? { skipReason: "no_pm" as const } : {}),
         createdAt: now(),
       };
-      const created = await opts.map.insertIfAbsent(id, draft);
-      return { draft: (await opts.map.get(id)) ?? draft, created };
+      const inserted = await opts.map.insertIfAbsent(id, draft);
+      if (inserted || noPm) return { draft: (await opts.map.get(id)) ?? draft, created: inserted };
+      let replaced = false;
+      const current = await opts.map.update(id, (d) => {
+        replaced = d.status === "skipped";
+        return replaced ? draft : d;
+      });
+      return { draft: current ?? draft, created: replaced };
+    },
+    async openProjectDrafts(weekKey) {
+      const rows = await opts.map.select({ where: { field: "weekKey", anyOfFold: [weekKey] } });
+      return rows.filter((d) => d.kind === "project" && (d.status === "pending" || d.status === "skipped"));
+    },
+    async recordSend(id, to, delivered) {
+      return opts.map.update(id, (d) =>
+        delivered
+          ? { ...d, delivered: [...new Set([...(d.delivered ?? []), to])] }
+          : { ...d, sendFailures: { ...d.sendFailures, [to]: (d.sendFailures?.[to] ?? 0) + 1 } },
+      );
     },
     async decide(id, approve, decidedBy, clickerMmUserId) {
       const draft = await opts.map.get(id);

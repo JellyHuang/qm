@@ -67,6 +67,17 @@ test("a group assignee does not count as a person being assigned", () => {
   assert.equal(parseWorkView(wp({ assignee: { ...user, type: "Group" } }), contract)!.assignee, undefined);
 });
 
+test("the project name is read from the row when OpenProject sends it, and stays unknown otherwise", () => {
+  assert.equal(parseWorkView(wp(), contract)!.projectName, undefined);
+  assert.equal(parseWorkView(wp({ project_name: "ZQ" }), contract)!.projectName, "ZQ");
+  const nested = parseWorkView(
+    wp({ project_id: undefined, project: { id: 3, name: "ZQ", identifier: "zq-sandbox" } }),
+    contract,
+  )!;
+  assert.deepEqual([nested.projectId, nested.projectName], ["3", "ZQ"]);
+  assert.equal(parseWorkView(wp({ project: { identifier: "zq-sandbox" } }), contract)!.projectName, "zq-sandbox");
+});
+
 function fake(handlers: Record<string, (args: Record<string, unknown>) => unknown>) {
   const calls: string[] = [];
   return {
