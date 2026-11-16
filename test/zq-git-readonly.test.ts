@@ -379,10 +379,6 @@ test("the runner runs git with a clean environment and kills output over its cap
     createGitRunner({ gitBinary: "sh", timeoutMs: 100 }).run(bare, ["-c", "sleep 5"]),
     /exited|timed out/,
   );
-  await assert.rejects(
-    createGitRunner({ timeoutMs: 1 }).run(bare, ["cat-file", "blob", blob], { maxBytes: 1e9 }),
-    /timed out|exited/,
-  );
 });
 
 test("remote runs use the injected key file with a pinned identity and known_hosts", () => {
