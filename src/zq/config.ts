@@ -3,6 +3,7 @@ import { Cron } from "croner";
 import { GIT_FETCH_TIMEOUT_MS } from "./git/runner.ts";
 import { DEFAULT_GIT_LIMITS, type GitLimitsConfig } from "./git/limits.ts";
 import { isGitRepo } from "./git/validate.ts";
+import { JENKINS_JOBS } from "./jenkins/client.ts";
 import { parseContract, type Duty, type ZqContract } from "./contract.ts";
 
 export interface ZqConfig {
@@ -19,6 +20,7 @@ export interface ZqConfig {
   escalation: { duties: readonly Duty[]; afterDays: number };
   unsetResponsibilityDuties: readonly Duty[];
   reports: { enabled: boolean; dailyCron?: string; weeklyCron?: string };
+  jenkins: { url?: string; rerun: boolean; jobs: readonly string[]; rerunJobs: readonly string[]; hourlyCap: number };
   git: {
     enabled: boolean;
     dir?: string;
@@ -61,6 +63,16 @@ function duties(name: string, raw: string | undefined): Duty[] {
     .filter(Boolean);
   for (const duty of list)
     if (!/^[a-z][a-z0-9_]*$/.test(duty)) throw new Error(`${name} must list duty keys such as pm,lead_ui: ${duty}`);
+  return list;
+}
+
+function jobNames(name: string, raw: string | undefined, fallback: readonly string[]): string[] {
+  if (raw === undefined || !raw.trim()) return [...fallback];
+  const list = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const job of list) if (!/^[\w.-]+$/.test(job)) throw new Error(`${name} must list plain job names: ${job}`);
   return list;
 }
 
@@ -108,6 +120,15 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   const gitKnownHosts = env.ZQ_GIT_KNOWN_HOSTS?.trim();
   const gitEnabled = on(env.ZQ_GIT_READONLY);
   if (gitEnabled && !gitDir) throw new Error("ZQ_GIT_READONLY needs ZQ_GIT_DIR (the bare clone directory)");
+  const jenkinsUrl = env.ZQ_JENKINS_URL?.trim().replace(/\/+$/, "");
+  if (jenkinsUrl && !/^https?:\/\//.test(jenkinsUrl)) throw new Error("ZQ_JENKINS_URL must be an http(s) URL");
+  const jenkinsRerun = on(env.ZQ_JENKINS_RERUN);
+  if (jenkinsRerun && !jenkinsUrl) throw new Error("ZQ_JENKINS_RERUN needs ZQ_JENKINS_URL");
+  const jenkinsJobs = jobNames("ZQ_JENKINS_JOBS", env.ZQ_JENKINS_JOBS, JENKINS_JOBS);
+  const rerunJobs = jobNames("ZQ_JENKINS_RERUN_JOBS", env.ZQ_JENKINS_RERUN_JOBS, []);
+  const outside = rerunJobs.filter((job) => !jenkinsJobs.includes(job));
+  if (outside.length > 0)
+    throw new Error(`ZQ_JENKINS_RERUN_JOBS names jobs outside ZQ_JENKINS_JOBS: ${outside.join(", ")}`);
   return {
     identityMap: on(env.ZQ_IDENTITY_MAP),
     scanner: { enabled: scannerEnabled, cron, timezone },
@@ -134,6 +155,13 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
       enabled: on(env.ZQ_REPORTS),
       ...(dailyCron ? { dailyCron } : {}),
       ...(weeklyCron ? { weeklyCron } : {}),
+    },
+    jenkins: {
+      ...(jenkinsUrl ? { url: jenkinsUrl } : {}),
+      rerun: jenkinsRerun,
+      jobs: jenkinsJobs,
+      rerunJobs,
+      hourlyCap: integer("ZQ_JENKINS_RERUN_HOURLY_CAP", env.ZQ_JENKINS_RERUN_HOURLY_CAP, 3, 1, 100),
     },
     git: {
       enabled: gitEnabled,
