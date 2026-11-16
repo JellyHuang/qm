@@ -187,12 +187,14 @@ test("suspending the feature is one line naming the affected orders, and an auto
   await h.flush();
   const lines = h.channel[0]!.text.split("\n").slice(1);
   assert.equal(lines.length, 2, lines.join("|"));
-  assert.match(lines[0]!, /功能「单1」.*已挂起/);
+  assert.match(lines[0]!, /功能 \[#1\].*已挂起/);
+  assert.doesNotMatch(lines[0]!, /单1/);
+  assert.match(h.channel[0]!.text.split("\n")[0]!, /功能「单1」/);
   assert.match(lines[1]!, /随总单已挂起,影响 3 张执行单:#2、#3、#4/);
 
   await h.scan({ feature: feature({ statusKey: "feature.acceptance" }), children: kids() });
   await h.flush();
-  assert.match(h.channel.at(-1)!.text, /功能「单1」.*阶段 研发制作中 → 策划验收\(自动推进\)/);
+  assert.match(h.channel.at(-1)!.text, /功能 \[#1\].*阶段 研发制作中 → 策划验收\(自动推进\)/);
 });
 
 test("a long digest is split into several posts without losing a line", async () => {
@@ -265,7 +267,7 @@ test("with the change feed, the first read is only a baseline and later events b
   assert.match(text, /被标记延期;执行人 Bob B → Dan D\(Bob B\)/);
   assert.match(
     text,
-    /功能「单1」.*阶段 研发制作中 → 策划验收\(自动推进\)\(规则 zq-feature-rule,原因:全部非取消执行单已完成;子单:#2 #3\)/,
+    /功能 \[#1\].*阶段 研发制作中 → 策划验收\(自动推进\)\(规则 zq-feature-rule,原因:全部非取消执行单已完成;子单:#2 #3\)/,
   );
 
   const again = await h.scan(fact, true);
@@ -309,7 +311,7 @@ test("a feed event read twice, and a batch of lifecycle changes, give single lin
   await h.flush();
   const lines = h.channel[0]!.text.split("\n").slice(1);
   assert.equal(lines.length, 2);
-  assert.match(lines.join("|"), /功能「单1」.*已挂起/);
+  assert.match(lines.join("|"), /功能 \[#1\].*已挂起/);
   assert.match(lines.join("|"), /随总单已挂起,影响 3 张执行单:#2、#3、#4/);
 });
 

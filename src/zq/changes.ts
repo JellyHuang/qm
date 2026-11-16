@@ -121,7 +121,7 @@ export function createZqChanges(opts: {
     planner: string,
   ): Pending[] {
     const at = (kind: string, text: string): Pending => ({ key: `${prev.id}:${prev.seq}:${kind}`, kind, text });
-    const ref = `「${w.subject}」[#${w.id}](${ctx.link(w.id)})`;
+    const ref = `${isFeature ? "功能 " : `执行单「${w.subject}」`}[#${w.id}](${ctx.link(w.id)})`;
     const label = (stage: string) => contract.stages.feature[stage] ?? contract.stages.task[stage] ?? stage;
     const out: Pending[] = [];
     if (prev.stage !== w.statusKey) {
@@ -130,29 +130,26 @@ export function createZqChanges(opts: {
         !isFeature && w.statusKey === contract.stageRoles.taskDone
           ? "已完成"
           : `阶段 ${label(prev.stage)} → ${label(w.statusKey)}${auto}`;
-      out.push(at("stage", `${isFeature ? "功能" : "执行单"}${ref} ${verb}`));
+      out.push(at("stage", `${ref} ${verb}`));
     }
     const lifecycle = w.lifecycle ?? "normal";
-    if (prev.lifecycle !== lifecycle)
-      out.push(at("lifecycle", `${isFeature ? "功能" : "执行单"}${ref} ${LIFECYCLE_TEXT[lifecycle] ?? lifecycle}`));
+    if (prev.lifecycle !== lifecycle) out.push(at("lifecycle", `${ref} ${LIFECYCLE_TEXT[lifecycle] ?? lifecycle}`));
     if (prev.delayMarked !== (w.delayMarked === true))
       out.push(
         at(
           "delay",
           w.delayMarked
-            ? `执行单${ref} 被标记延期(执行人:${w.assignee?.name ?? "未指定"},负责策划:${planner || "未设置"})`
-            : `执行单${ref} 的延期标记已清除`,
+            ? `${ref} 被标记延期(执行人:${w.assignee?.name ?? "未指定"},负责策划:${planner || "未设置"})`
+            : `${ref} 的延期标记已清除`,
         ),
       );
     if (prev.assigneeId !== (w.assignee?.id ?? ""))
-      out.push(
-        at("assignee", `执行单${ref} 执行人 ${prev.assigneeName || "未指定"} → ${w.assignee?.name ?? "未指定"}`),
-      );
+      out.push(at("assignee", `${ref} 执行人 ${prev.assigneeName || "未指定"} → ${w.assignee?.name ?? "未指定"}`));
     if (prev.plannedEnd !== (w.plannedEnd ?? 0))
       out.push(
         at(
           "planned-end",
-          `${isFeature ? "功能" : "执行单"}${ref} 计划结束时间 ${prev.plannedEnd ? ctx.day(prev.plannedEnd) : "未设置"} → ${w.plannedEnd ? ctx.day(w.plannedEnd) : "未设置"}`,
+          `${ref} 计划结束时间 ${prev.plannedEnd ? ctx.day(prev.plannedEnd) : "未设置"} → ${w.plannedEnd ? ctx.day(w.plannedEnd) : "未设置"}`,
         ),
       );
     return out;
@@ -241,7 +238,7 @@ export function createZqChanges(opts: {
           featureId: e.featureId,
           featureTitle: fact.feature.subject,
           at: e.at,
-          text: `${isFeature ? "功能" : "执行单"}「${subject}」[#${e.ticketId}](${ctx.link(e.ticketId)}) ${parts.join(";")}${by}`,
+          text: `${isFeature ? "功能 " : `执行单「${subject}」`}[#${e.ticketId}](${ctx.link(e.ticketId)}) ${parts.join(";")}${by}`,
         });
       }
       for (const [batchId, group] of batches) {
