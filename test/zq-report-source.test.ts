@@ -138,7 +138,7 @@ test("recorded hours come from time entries per work package and an estimate is 
   assert.doesNotMatch(draft.text, /#4 英雄动作: \d/);
   assert.ok(
     calls.includes(
-      'openproject_list_time_entries:{"user":"12","spent_on_from":"2026-11-16","spent_on_to":"2026-11-16","offset":0,"limit":100}',
+      'openproject_list_time_entries:{"user":"12","spent_on_from":"2026-11-16","spent_on_to":"2026-11-16","offset":1,"limit":100}',
     ),
   );
 });

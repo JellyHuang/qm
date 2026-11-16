@@ -36,7 +36,7 @@ export function createReportSource(opts: {
     subjects: ReadonlyMap<number, string>,
   ): Promise<ReportTimeEntry[]> {
     const spent = new Map<number, { hours: number; comments: string[] }>();
-    let offset = 0;
+    let offset = 1;
     for (let page = 0; page < PAGE_CAP; page++) {
       const read = parsePage(
         await opts.call(
