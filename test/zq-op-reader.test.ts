@@ -346,7 +346,8 @@ test("the change feed is read page by page until has_more is false, with the pro
     'openproject_zq_changes_since:{"project_id":3,"cursor":null,"limit":100}',
     'openproject_zq_changes_since:{"project_id":3,"cursor":"c1","limit":100}',
   ]);
-  assert.equal(createMcpOpReader({ call: f.call, contract }).changes, undefined);
+  const { changesSince: _unused, ...rest } = contract.tools;
+  assert.equal(createMcpOpReader({ call: f.call, contract: { ...contract, tools: rest } }).changes, undefined);
 });
 
 test("a cursor the server refuses surfaces as an error with the lower-cased code, whether returned or thrown", async () => {

@@ -75,6 +75,8 @@ export interface ZqContract {
     addSystemRemark?: string;
     changesSince?: string;
     createChildOrders?: string;
+    createBug?: string;
+    workingDays?: string;
   };
 }
 
@@ -134,6 +136,8 @@ function optionalTools(v: unknown): ZqContract["tools"] {
     "addSystemRemark",
     "changesSince",
     "createChildOrders",
+    "createBug",
+    "workingDays",
   ];
   for (const key of Object.keys(map))
     if (!known.includes(key)) throw new Error(`contract key table: unknown tool ${key}`);

@@ -1,10 +1,14 @@
 {
-  "version": "0.4-draft",
+  "version": "0.4",
   "featureType": "feature",
   "typeDuties": {
     "planning": "planning_lead",
     "acceptance": "planning_lead",
-    "configuration": { "kind": "field", "field": "planner", "on": "task" },
+    "configuration": {
+      "kind": "field",
+      "field": "planner",
+      "on": "task"
+    },
     "character_concept": "art_lead",
     "scene_concept": "art_lead",
     "ui": "ui_lead",
@@ -95,7 +99,11 @@
     "meetingsForFeature": "zq_meetings_for_feature",
     "dutyHolders": "zq_duty_holders",
     "bugsForFeature": "zq_bugs_for_feature",
-    "addSystemRemark": "zq_add_system_remark"
+    "addSystemRemark": "zq_add_system_remark",
+    "changesSince": "zq_changes_since",
+    "createBug": "zq_create_bug",
+    "workingDays": "zq_working_days",
+    "createChildOrders": "zq_create_child_orders"
   },
   "stageRoles": {
     "plannerUnassigned": "feature.planning_unassigned",
@@ -110,25 +118,82 @@
   "lifecycleValues": ["normal", "suspended", "cancelled"],
   "bugType": "bug",
   "typeFlags": {
-    "feature": { "artResource": false },
-    "planning": { "artResource": false },
-    "acceptance": { "artResource": false },
-    "configuration": { "artResource": false },
-    "character_concept": { "artResource": true },
-    "scene_concept": { "artResource": true },
-    "ui": { "artResource": true },
-    "character_model": { "artResource": true },
-    "scene_model": { "artResource": true },
-    "level_art": { "artResource": true },
-    "animation": { "artResource": true },
-    "vfx": { "artResource": true },
-    "fgui": { "artResource": true },
-    "frontend": { "artResource": false },
-    "backend": { "artResource": false },
-    "qa_test": { "artResource": false },
-    "bug": { "artResource": false }
+    "feature": {
+      "artResource": false
+    },
+    "planning": {
+      "artResource": false
+    },
+    "acceptance": {
+      "artResource": false
+    },
+    "configuration": {
+      "artResource": false
+    },
+    "character_concept": {
+      "artResource": true
+    },
+    "scene_concept": {
+      "artResource": true
+    },
+    "ui": {
+      "artResource": true
+    },
+    "character_model": {
+      "artResource": true
+    },
+    "scene_model": {
+      "artResource": true
+    },
+    "level_art": {
+      "artResource": true
+    },
+    "animation": {
+      "artResource": true
+    },
+    "vfx": {
+      "artResource": true
+    },
+    "fgui": {
+      "artResource": true
+    },
+    "frontend": {
+      "artResource": false
+    },
+    "backend": {
+      "artResource": false
+    },
+    "qa_test": {
+      "artResource": false
+    },
+    "bug": {
+      "artResource": false
+    }
   },
-  "defaultTypeFlags": { "artResource": false },
-  "typeCreationStage": { "acceptance": "feature.acceptance", "qa_test": "feature.qa" },
-  "autoAdvanceStages": ["feature.development", "feature.resources"]
+  "defaultTypeFlags": {
+    "artResource": false
+  },
+  "typeCreationStage": {
+    "acceptance": "feature.acceptance",
+    "qa_test": "feature.qa"
+  },
+  "autoAdvanceStages": ["feature.development", "feature.resources"],
+  "proposalOnly": false,
+  "revision": "signed-off-test-implementation",
+  "compatibility": "breaking-draft-only; do not load with v0.3.1",
+  "approvedReminderRules": [
+    "development-missing-planned-end-reminder",
+    "delay-marked-one-time-notice",
+    "task-unassigned-any-nonterminal-stage",
+    "blocking-bug-open-owner-qa",
+    "stage-entered-notice",
+    "execution-every-business-change"
+  ],
+  "notificationPolicy": {
+    "notifications": "feature_private_channel",
+    "missingChannel": "pm_dm",
+    "actionRequests": "personal_dm",
+    "digestSeconds": 300,
+    "retainEveryChange": true
+  }
 }
