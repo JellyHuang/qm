@@ -330,3 +330,52 @@ test("an invalid or out-of-scope cursor is read again from the start as a new ba
   await h.scan(fact, true);
   assert.deepEqual(h.feedCalls.at(-1), "c9");
 });
+
+test("events as OpenProject really sends them: stage at the top, assignees as ids, the actor by login, a created order in one line", async () => {
+  const h = harness();
+  await h.groups.ensure(1, [], async () => "ch-1");
+  const bob = { id: "12", name: "Bob B" };
+  const fact: FeatureFacts = {
+    feature: feature(),
+    children: [work(2, { assignee: bob }), work(3, { assignee: ALICE_OP })],
+  };
+  h.setFeed(() => ({ events: [], nextCursor: "c1" }));
+  await h.scan(fact, true);
+  h.setFeed(() => ({
+    events: [
+      event({
+        id: "10",
+        kinds: ["stage", "planned_end"],
+        oldStage: "execution.active",
+        newStage: "execution.done",
+        old: { assignee: 12, planned_end: null },
+        new: { assignee: 12, planned_end: "2026-11-16" },
+        actorName: "zq_p1_planner",
+      }),
+      event({
+        id: "11",
+        ticketId: 3,
+        kinds: ["assignee"],
+        old: { assignee: 12 },
+        new: { assignee: 11 },
+        actorName: "zq_p1_manager",
+      }),
+      event({
+        id: "12",
+        ticketId: 2,
+        kinds: ["created", "stage", "assignee", "lifecycle"],
+        oldStage: undefined,
+        newStage: "execution.unassigned",
+        old: {},
+        new: { assignee: 12 },
+      }),
+    ],
+    nextCursor: "c2",
+  }));
+  assert.equal((await h.scan(fact, true)).changesRecorded, 3);
+  await h.flush();
+  const text = h.channel[0]!.text;
+  assert.match(text, /已完成;计划结束时间 未设置 → 2026-11-16\(zq_p1_planner\)/);
+  assert.match(text, /执行人 Bob B → Alice A\(zq_p1_manager\)/);
+  assert.match(text, /已新增,阶段 待分配,执行人 Bob B/);
+});

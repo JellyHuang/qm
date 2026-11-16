@@ -195,11 +195,15 @@ function parseFeedEvent(item: Json): FeedEvent | undefined {
   const reason = str(item["reason"]);
   const batchId = str(item["batch_id"]);
   const actorName = actor ? (str(actor["name"]) ?? str(actor["rule_key"]) ?? str(actor["login"])) : undefined;
+  const oldStage = str(item["old_stage"]);
+  const newStage = str(item["new_stage"]);
   return {
     id,
     ticketId,
     featureId: Number.isSafeInteger(parent) && parent > 0 ? parent : ticketId,
     kinds: kinds.length || !kind ? kinds : [kind],
+    ...(oldStage ? { oldStage } : {}),
+    ...(newStage ? { newStage } : {}),
     old: isObject(item["old"]) ? item["old"] : {},
     new: isObject(item["new"]) ? item["new"] : {},
     ...(actorName ? { actorName } : {}),

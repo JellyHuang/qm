@@ -31,6 +31,8 @@ export interface FeedEvent {
   ticketId: number;
   featureId: number;
   kinds: string[];
+  oldStage?: string;
+  newStage?: string;
   old: Record<string, unknown>;
   new: Record<string, unknown>;
   actorName?: string;
@@ -157,18 +159,33 @@ export function createZqChanges(opts: {
 
   const text = (v: unknown) => (typeof v === "string" ? v : "");
   const stageOf = (side: Record<string, unknown>) => text(side["stage"]) || text(side["stage_key"]);
-  const nameOf = (v: unknown) =>
-    typeof v === "object" && v !== null ? text((v as Record<string, unknown>)["name"]) : "";
   const lifecycleOf = (side: Record<string, unknown>) => text(side["lifecycle"]) || "normal";
   const REASON_MAX = 200;
 
-  function describe(e: FeedEvent, isFeature: boolean, contract: ZqContract): string[] {
+  const PEOPLE_FIELDS = ["responsiblePlanner", "pm", "reviewer", "qaOwner", "acceptor", "regressionOwner"] as const;
+
+  function namesOf(facts: readonly FeatureFacts[]): Map<string, string> {
+    const names = new Map<string, string>();
+    for (const f of facts) {
+      const views = [f.feature, ...f.children];
+      for (const w of views) {
+        if (w.assignee) names.set(w.assignee.id, w.assignee.name);
+        for (const field of PEOPLE_FIELDS) if (w[field]) names.set(w[field]!.id, w[field]!.name);
+      }
+    }
+    return names;
+  }
+
+  function describe(e: FeedEvent, isFeature: boolean, contract: ZqContract, nameOf: (v: unknown) => string): string[] {
     const label = (stage: string) => contract.stages.feature[stage] ?? contract.stages.task[stage] ?? stage;
+    const from = e.oldStage ?? stageOf(e.old);
+    const to = e.newStage ?? stageOf(e.new);
+    if (e.kinds.includes("created")) {
+      const who = nameOf(e.new["assignee"]);
+      return [`已新增${to ? `,阶段 ${label(to)}` : ""}${who ? `,执行人 ${who}` : ""}`];
+    }
     const parts: string[] = [];
-    if (e.kinds.includes("created")) parts.push("已新增");
     if (e.kinds.includes("stage")) {
-      const from = stageOf(e.old);
-      const to = stageOf(e.new);
       const auto = isFeature && e.byRule ? "(自动推进)" : "";
       parts.push(
         !isFeature && to === contract.stageRoles.taskDone ? "已完成" : `阶段 ${label(from)} → ${label(to)}${auto}`,
@@ -195,6 +212,11 @@ export function createZqChanges(opts: {
 
     async ingest(events, contract, ctx) {
       const byFeature = new Map<number, FeatureFacts>(ctx.facts.map((f) => [f.feature.id, f]));
+      const names = namesOf(ctx.facts);
+      const nameOf = (v: unknown) => {
+        if (typeof v === "object" && v !== null) return text((v as Record<string, unknown>)["name"]);
+        return v === null || v === undefined || v === "" ? "" : (names.get(String(v)) ?? `用户#${String(v)}`);
+      };
       const lines: Array<{ id: string; featureId: number; featureTitle: string; text: string; at: number }> = [];
       const batches = new Map<string, FeedEvent[]>();
       for (const e of [...events].sort((a, b) => a.at - b.at)) {
@@ -207,7 +229,7 @@ export function createZqChanges(opts: {
           batches.set(e.batchId, [...(batches.get(e.batchId) ?? []), e]);
           continue;
         }
-        const parts = describe(e, isFeature, contract);
+        const parts = describe(e, isFeature, contract, nameOf);
         if (!parts.length) continue;
         const subject = isFeature ? fact.feature.subject : child!.subject;
         const who = e.byRule ? `规则${e.actorName ? ` ${e.actorName}` : ""}` : (e.actorName ?? "");
