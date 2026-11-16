@@ -2,7 +2,7 @@ import type { DurableMap } from "../src/persistence/durable-map.ts";
 import { createJenkinsClient } from "../src/zq/jenkins/client.ts";
 import { createJenkinsRerunner, type JenkinsRerunRow } from "../src/zq/jenkins/rerun.ts";
 
-const SANDBOX = "qm-rerun-sandbox";
+const JOB = "LLM-Wiki";
 
 function memoryMap(): DurableMap<JenkinsRerunRow> {
   const rows = new Map<string, JenkinsRerunRow>();
@@ -31,37 +31,47 @@ function required(name: string): string {
 }
 
 async function main(): Promise<void> {
-  const number = Number(required("ZQ_JENKINS_VERIFY_BUILD"));
-  if (!Number.isSafeInteger(number) || number < 1) throw new Error("ZQ_JENKINS_VERIFY_BUILD must be a build number");
   const client = createJenkinsClient({
     baseUrl: required("ZQ_JENKINS_URL"),
     user: required("ZQ_JENKINS_USER"),
     password: required("ZQ_JENKINS_PASSWORD"),
-    jobs: [SANDBOX],
+    jobs: [JOB],
   });
-  const original = await client.build(SANDBOX, number);
-  if (!original) throw new Error(`${SANDBOX} #${number} was not found`);
-  console.log(
-    `original #${number}: result=${original.result ?? "none"} building=${original.building} parameters=${original.params.length} masked=${original.maskedParams.length}`,
-  );
+  const raw = process.env.ZQ_JENKINS_VERIFY_BUILD?.trim();
+  if (!raw) {
+    const latest = (await client.recentBuilds(JOB)).find((b) => !b.building && b.result === "FAILURE");
+    if (!latest) {
+      console.log(`no finished FAILURE build among the most recent ${JOB} builds`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(
+      `latest failed build: #${latest.number} parameters=${latest.params.length} masked=${latest.maskedParams.length}`,
+    );
+    console.log(`parameter names: ${[...latest.params.map((p) => p.name), ...latest.maskedParams].join(", ")}`);
+    return;
+  }
+  const number = Number(raw);
+  if (!Number.isSafeInteger(number) || number < 1) throw new Error("ZQ_JENKINS_VERIFY_BUILD must be a build number");
+  if (process.env.ZQ_JENKINS_CONFIRM?.trim() !== `rerun ${JOB} #${number}`)
+    throw new Error(`set ZQ_JENKINS_CONFIRM to "rerun ${JOB} #${number}" to send the one rerun`);
   const rerunner = createJenkinsRerunner({
     client,
     map: memoryMap(),
     enabled: true,
-    jobs: [SANDBOX],
+    jobs: [JOB],
     hourlyCap: 1,
   });
-  const result = await rerunner.rerun(SANDBOX, number);
-  console.log(JSON.stringify(result));
-  if (result.status === "started") {
-    const created = await client.build(SANDBOX, result.row.newBuildNumber ?? 0);
-    console.log(
-      `rerun #${result.row.newBuildNumber}: parameters=${created?.params.length ?? "unreadable"} differences=${result.row.parameterDifferences?.length ?? 0}`,
-    );
+  const result = await rerunner.rerun(JOB, number);
+  console.log(result.status === "skipped" ? `skipped: ${result.reason}` : JSON.stringify(result));
+  if (result.status !== "started") {
+    process.exitCode = 1;
+    return;
   }
-  const again = await rerunner.rerun(SANDBOX, number);
-  console.log(`second attempt: ${JSON.stringify(again)}`);
-  if (result.status !== "started" || again.status !== "skipped") process.exitCode = 1;
+  const created = await client.build(JOB, result.row.newBuildNumber ?? 0);
+  console.log(
+    `rerun #${result.row.newBuildNumber}: parameters=${created?.params.length ?? "unreadable"} differences=${result.row.parameterDifferences?.join(",") || "none"}`,
+  );
 }
 
 main().catch((e: unknown) => {
