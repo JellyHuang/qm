@@ -60,7 +60,7 @@ export function reportPrompt(input: ReportInput): string {
 }
 
 function templateReport(input: ReportInput): string {
-  const hours = input.timeEntries.reduce((sum, e) => sum + e.hours, 0);
+  const hours = Math.round(input.timeEntries.reduce((sum, e) => sum + e.hours, 0) * 100) / 100;
   const lines = [`${input.opName}的${input.period === "daily" ? "日报" : "周报"}草稿`];
   if (input.statusChanges.length) {
     lines.push(

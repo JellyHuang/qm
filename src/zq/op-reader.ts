@@ -18,10 +18,10 @@ export class OpError extends Error {
   }
 }
 
-const isObject = (value: unknown): value is Json =>
+export const isObject = (value: unknown): value is Json =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-function str(value: unknown): string | undefined {
+export function str(value: unknown): string | undefined {
   if (typeof value === "string") return value.trim() || undefined;
   if (typeof value === "number") return String(value);
   return undefined;
@@ -36,7 +36,7 @@ function time(value: unknown, edge: "start" | "end" = "start"): number | undefin
   return Number.isNaN(ms) ? undefined : ms;
 }
 
-function hours(value: unknown): number | undefined {
+export function hours(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value !== "string") return undefined;
   const iso = /^P(?:(\d+)D)?(?:T(?:(\d+(?:\.\d+)?)H)?(?:(\d+)M)?)?$/.exec(value.trim());
@@ -79,12 +79,12 @@ function parseJson(text: string): unknown {
   return parsed;
 }
 
-interface Page {
+export interface Page {
   results: Json[];
   nextOffset: number | null;
 }
 
-function parsePage(text: string): Page {
+export function parsePage(text: string): Page {
   const parsed = parseJson(text);
   if (!isObject(parsed) || !Array.isArray(parsed["results"])) throw new Error("OpenProject returned no results list");
   const next = parsed["next_offset"];
@@ -195,6 +195,7 @@ function parseFeedEvent(item: Json): FeedEvent | undefined {
   const reason = str(item["reason"]);
   const batchId = str(item["batch_id"]);
   const actorName = actor ? (str(actor["name"]) ?? str(actor["rule_key"]) ?? str(actor["login"])) : undefined;
+  const actorId = actor ? str(actor["id"]) : undefined;
   const oldStage = str(item["old_stage"]);
   const newStage = str(item["new_stage"]);
   return {
@@ -207,6 +208,7 @@ function parseFeedEvent(item: Json): FeedEvent | undefined {
     old: isObject(item["old"]) ? item["old"] : {},
     new: isObject(item["new"]) ? item["new"] : {},
     ...(actorName ? { actorName } : {}),
+    ...(actorId ? { actorId } : {}),
     byRule: actor !== undefined && str(actor["kind"]) === "rule",
     at,
     ...(reason ? { reason } : {}),

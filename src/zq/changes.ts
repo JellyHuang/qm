@@ -36,6 +36,7 @@ export interface FeedEvent {
   old: Record<string, unknown>;
   new: Record<string, unknown>;
   actorName?: string;
+  actorId?: string;
   byRule: boolean;
   at: number;
   reason?: string;

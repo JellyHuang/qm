@@ -10,7 +10,8 @@ import { checkConfiguredDuties, type ZqContract } from "./contract.ts";
 import { channelRemarkArgs, createZqGroups, type ZqGroup } from "./groups.ts";
 import { createMcpOpReader, type OpCall } from "./op-reader.ts";
 import { createZqReminderStore, type ZqReminder } from "./reminders.ts";
-import { createZqReports, type ReportInput, type ZqReportDraft } from "./reports.ts";
+import { createZqReports, type ZqReportDraft } from "./reports.ts";
+import { createReportSource } from "./report-source.ts";
 import type { ScanPerson, ZqFeatureRef } from "./scanner.ts";
 import { createZqService, type ZqRunState } from "./service.ts";
 
@@ -61,12 +62,6 @@ export function createZqRuntime(deps: {
   leaderLease: LeaderLease;
   createSweeper: (work: () => unknown, intervalMs: number, opts?: { label?: string }) => Sweeper;
   contract?: ZqContract;
-  reportSource?: (
-    person: ScanPerson,
-    period: ReportInput["period"],
-    since: number,
-    until: number,
-  ) => Promise<ReportInput>;
 }): ZqRuntime {
   const { config, chat } = deps;
   const identity = createZqIdentityMap({
@@ -129,11 +124,21 @@ export function createZqRuntime(deps: {
         }
       : undefined;
 
+  const reader = contract ? createMcpOpReader({ call: deps.call, contract, serverId: OPENPROJECT_SERVER }) : undefined;
+  const reportSource =
+    reader && contract
+      ? createReportSource({
+          reader,
+          call: deps.call,
+          contract,
+          timezone: config.scanner.timezone,
+          serverId: OPENPROJECT_SERVER,
+        })
+      : undefined;
+
   const service = createZqService({
     config,
-    ...(contract
-      ? { contract, reader: createMcpOpReader({ call: deps.call, contract, serverId: OPENPROJECT_SERVER }) }
-      : { reader: noReader }),
+    ...(contract && reader ? { contract, reader } : { reader: noReader }),
     mmUserIdOfOpUser: async (opUserId) => (await identity.byOpenProject(opUserId))?.mmUserId,
     ...(groups ? { groups } : {}),
     ...(changes ? { changes } : {}),
@@ -141,11 +146,11 @@ export function createZqRuntime(deps: {
     reminders,
     state: deps.map<ZqRunState>("zq_run_state"),
     send: (to, text) => chat.sendDm(to, text),
-    ...(config.reports.enabled && deps.reportSource
+    ...(config.reports.enabled && reportSource
       ? {
           reports: {
             store: reports,
-            source: { build: deps.reportSource },
+            source: { build: reportSource },
             sendCard: (to: string, draftId: string, text: string) =>
               chat.sendButtons(to, text, [
                 { id: "approve", name: "没问题,提交", style: "good", op: "report", ref: draftId, approve: true },
@@ -194,7 +199,7 @@ export function createZqRuntime(deps: {
       }
       if (op === "report") {
         const draft = await reports.decide(id, approve, clickerMmUserId, clickerMmUserId);
-        return draft.status === "confirmed" ? "已确认日报。" : "已放弃这份草稿。";
+        return draft.status === "confirmed" ? "已确认。这份草稿不会写回 OpenProject。" : "已放弃这份草稿。";
       }
       if (id !== clickerMmUserId) throw new Error("只有被关联的本人可以回答");
       if (!approve) {
