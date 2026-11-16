@@ -433,16 +433,19 @@ test("the channel receipt is written to OpenProject once after the channel exist
   assert.equal((await groups.get(40))?.remarkWritten, true);
 });
 
-test("the receipt asks zq_add_system_remark for the one supported event, with a stable idempotency key per feature", () => {
+test("the receipt asks zq_add_system_remark for the one supported event, with an idempotency key OpenProject accepts (qm: prefix, 4 to 128 characters)", () => {
   const args = channelRemarkArgs({ featureId: 40, channelId: "channel-1", participantOpUserIds: ["11", "12"] });
   assert.deepEqual(args, {
     work_package_id: 40,
     kind: "channel_created",
     text: "QM 创建了功能讨论频道(channel-1),参与人 OpenProject 用户:#11、#12。",
-    idempotency_key: "feature-channel-created:40",
+    idempotency_key: "qm:mm:channel-created:40:channel-1",
     source: { kind: "qm", ref: "feature-channel:40" },
     confirm: true,
   });
+  const key = String(args["idempotency_key"]);
+  assert.match(key, /^qm:[A-Za-z0-9:._-]+$/);
+  assert.ok(key.length >= 4 && key.length <= 128);
 });
 
 test("the scan schedule follows the cron in its timezone", () => {

@@ -44,6 +44,7 @@ test("a request only previews with OpenProject and sends the requester a card; n
     children: [{ type_key: "frontend", subject: "联调", description: "负责登录页联调", assignee_id: "12" }],
     confirm: false,
   });
+  assert.match(String(h.calls[0]!.args["idempotency_key"]), /^qm:[A-Za-z0-9:._-]+$/);
   assert.equal(h.cards.length, 1);
   assert.equal(h.cards[0]!.to, "mm-alice");
   assert.match(h.cards[0]!.text, /功能 #40 增加 1 张执行单/);

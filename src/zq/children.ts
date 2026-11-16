@@ -99,7 +99,7 @@ export function createZqChildren(opts: {
   const args = (d: ZqChildDraft, confirm: boolean) => ({
     id: d.featureId,
     lockVersion: d.lockVersion,
-    idempotency_key: `qm-children-${d.id}`,
+    idempotency_key: `qm:mm:children:${d.id}`,
     reason: d.reason,
     source: d.source,
     children: wireChildren(d.children),
