@@ -7,6 +7,7 @@ export interface ReportStatusChange {
   from?: string;
   to: string;
   at: number;
+  projectId?: string;
 }
 
 export interface ReportTimeEntry {
@@ -14,6 +15,12 @@ export interface ReportTimeEntry {
   subject: string;
   hours: number;
   comment?: string;
+  projectId?: string;
+}
+
+export interface ReportProject {
+  id: string;
+  pmOpUserIds: string[];
 }
 
 export interface ReportInput {
@@ -24,6 +31,16 @@ export interface ReportInput {
   until: number;
   statusChanges: ReportStatusChange[];
   timeEntries: ReportTimeEntry[];
+  projects?: ReportProject[];
+}
+
+export interface ProjectReportInput {
+  projectId: string;
+  weekKey: string;
+  since: number;
+  until: number;
+  sections: ReportInput[];
+  addressees: string[];
 }
 
 export type ReportWriter = (prompt: string) => Promise<string>;
@@ -35,7 +52,11 @@ export interface ZqReportDraft {
   since: number;
   until: number;
   text: string;
-  status: "pending" | "confirmed" | "discarded";
+  status: "pending" | "confirmed" | "discarded" | "skipped";
+  kind?: "person" | "project";
+  projectId?: string;
+  addressees?: string[];
+  skipReason?: "no_pm";
   createdAt: number;
   decidedAt?: number;
   decidedBy?: string;
@@ -78,8 +99,45 @@ function templateReport(input: ReportInput): string {
   return lines.join("\n");
 }
 
+export function projectDraftId(projectId: string, weekKey: string): string {
+  return `project:${projectId}:weekly:${weekKey}`;
+}
+
+function personSection(input: ReportInput): string[] {
+  const hours = Math.round(input.timeEntries.reduce((sum, e) => sum + e.hours, 0) * 100) / 100;
+  const lines = [`${input.opName}:`];
+  for (const c of input.statusChanges)
+    lines.push(`- 进展 #${c.workPackageId} ${c.subject}: ${c.from ? `${c.from} -> ` : ""}${c.to}`);
+  if (input.timeEntries.length) {
+    lines.push(`- 已记工时:${hours} 小时`);
+    for (const e of input.timeEntries) lines.push(`  - #${e.workPackageId} ${e.subject}: ${e.hours}h`);
+  }
+  if (lines.length === 1) lines.push("- 这周在 OpenProject 里没有记录。");
+  return lines;
+}
+
+function projectReport(input: ProjectReportInput): string {
+  return [
+    `项目 ${input.projectId} 的周报草稿(${input.weekKey} 当周)`,
+    ...input.sections.flatMap((s) => personSection(s)),
+  ].join("\n");
+}
+
+export function sectionForProject(input: ReportInput, projectId: string): ReportInput | undefined {
+  const projects = input.projects ?? [];
+  if (!projects.some((p) => p.id === projectId)) return undefined;
+  const sole = projects.length === 1;
+  const mine = (id: string | undefined) => id === projectId || (id === undefined && sole);
+  return {
+    ...input,
+    statusChanges: input.statusChanges.filter((c) => mine(c.projectId)),
+    timeEntries: input.timeEntries.filter((e) => mine(e.projectId)),
+  };
+}
+
 export interface ZqReports {
   draft(input: ReportInput): Promise<ZqReportDraft>;
+  draftProject(input: ProjectReportInput): Promise<{ draft: ZqReportDraft; created: boolean }>;
   decide(id: string, approve: boolean, decidedBy: string, clickerMmUserId: string): Promise<ZqReportDraft>;
 }
 
@@ -109,10 +167,33 @@ export function createZqReports(opts: {
       await opts.map.insertIfAbsent(id, draft);
       return (await opts.map.get(id)) ?? draft;
     },
+    async draftProject(input) {
+      const id = projectDraftId(input.projectId, input.weekKey);
+      const noPm = input.addressees.length === 0;
+      const draft: ZqReportDraft = {
+        id,
+        mmUserId: input.addressees[0] ?? "",
+        period: "weekly",
+        kind: "project",
+        projectId: input.projectId,
+        addressees: input.addressees,
+        since: input.since,
+        until: input.until,
+        text: noPm ? "" : projectReport(input),
+        status: noPm ? "skipped" : "pending",
+        ...(noPm ? { skipReason: "no_pm" as const } : {}),
+        createdAt: now(),
+      };
+      const created = await opts.map.insertIfAbsent(id, draft);
+      return { draft: (await opts.map.get(id)) ?? draft, created };
+    },
     async decide(id, approve, decidedBy, clickerMmUserId) {
       const draft = await opts.map.get(id);
       if (!draft) throw new Error("这份草稿已经不存在");
-      if (draft.mmUserId !== clickerMmUserId) throw new Error("只有报告对应的本人可以确认");
+      const project = draft.kind === "project";
+      if (!(draft.addressees ?? [draft.mmUserId]).includes(clickerMmUserId))
+        throw new Error(project ? "只有收到这份周报的项目经理可以确认" : "只有报告对应的本人可以确认");
+      if (draft.status === "skipped") throw new Error("这份周报没有可确认的内容");
       if (draft.status !== "pending") return draft;
       const claimToken = randomUUID();
       const claimed = await opts.map.update(id, (d) =>
@@ -121,7 +202,7 @@ export function createZqReports(opts: {
           : d,
       );
       if (!claimed) throw new Error("这份草稿已经不存在");
-      if (approve && claimed.claimToken === claimToken) {
+      if (approve && !project && claimed.claimToken === claimToken) {
         await opts.writeBack(claimed);
         return (await opts.map.merge(id, { writtenBack: true })) ?? claimed;
       }

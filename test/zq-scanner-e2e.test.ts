@@ -198,7 +198,7 @@ test("everything stays off unless switched on", async (t) => {
   const h = await harness(t);
   const before = h.mcp.requests.length;
   const out = await h.service({}).tick();
-  assert.deepEqual(out, { reportsSent: 0 });
+  assert.deepEqual(out, { reportsSent: 0, weeklyNoPm: 0 });
   assert.equal(h.mcp.requests.length, before, "no OpenProject calls while the scanner is off");
   assert.equal(await h.state.get("scanner"), null);
 });

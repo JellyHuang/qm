@@ -34,6 +34,7 @@ export function createReportSource(opts: {
     since: number,
     until: number,
     subjects: ReadonlyMap<number, string>,
+    projectOf: ReadonlyMap<number, string>,
   ): Promise<ReportTimeEntry[]> {
     const spent = new Map<number, { hours: number; comments: string[] }>();
     let offset = 1;
@@ -71,6 +72,7 @@ export function createReportSource(opts: {
       subject: subjects.get(id) ?? UNKNOWN_SUBJECT,
       hours: Math.round(entry.hours * 100) / 100,
       ...(entry.comments.length ? { comment: entry.comments.join("; ") } : {}),
+      ...(projectOf.has(id) ? { projectId: projectOf.get(id)! } : {}),
     }));
   }
 
@@ -78,6 +80,7 @@ export function createReportSource(opts: {
     const { facts } = await opts.reader.features(person);
     const views = facts.flatMap((f) => [f.feature, ...f.children, ...(f.bugs ?? [])]);
     const subjects = new Map(views.map((w) => [w.id, w.subject]));
+    const projectOf = new Map(views.flatMap((w) => (w.projectId ? [[w.id, w.projectId] as const] : [])));
     const bugIds = new Set(facts.flatMap((f) => (f.bugs ?? []).map((b) => b.id)));
     const bugStages = new Set(Object.keys(contract.stages.bug));
     const me = person.opUserId;
@@ -88,10 +91,10 @@ export function createReportSource(opts: {
       bugIds.has(e.ticketId) ||
       [e.oldStage, e.newStage, stageOf(e.old), stageOf(e.new)].some((s) => s !== undefined && bugStages.has(s));
 
+    const projectIds = [...new Set(views.flatMap((w) => (w.projectId ? [w.projectId] : [])))];
     const statusChanges: ReportStatusChange[] = [];
     if (me && opts.reader.changes) {
-      const projects = [...new Set(views.flatMap((w) => (w.projectId ? [w.projectId] : [])))];
-      for (const project of projects) {
+      for (const project of projectIds) {
         const { events } = await opts.reader.changes(person, project, null);
         for (const e of events) {
           if (e.at < since || e.at > until || !e.kinds.includes("stage") || isBug(e) || !concerns(e)) continue;
@@ -104,11 +107,19 @@ export function createReportSource(opts: {
             ...(from ? { from } : {}),
             to,
             at: e.at,
+            projectId: project,
           });
         }
       }
       statusChanges.sort((a, b) => a.at - b.at);
     }
+
+    const reportProjects = projectIds.map((id) => ({
+      id,
+      pmOpUserIds: [
+        ...new Set(facts.flatMap((f) => (f.feature.projectId === id && f.feature.pm ? [f.feature.pm.id] : []))),
+      ],
+    }));
 
     return {
       mmUserId: person.mmUserId,
@@ -117,7 +128,8 @@ export function createReportSource(opts: {
       since,
       until,
       statusChanges,
-      timeEntries: me ? await timeEntries(person, since, until, subjects) : [],
+      timeEntries: me ? await timeEntries(person, since, until, subjects, projectOf) : [],
+      projects: reportProjects,
     };
   };
 }

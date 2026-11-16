@@ -83,7 +83,7 @@ test("only the person can decide, an approval writes back exactly once, and a di
   await assert.rejects(store.decide("nope", true, "mm1", "mm1"), /已经不存在/);
 });
 
-test("the service sends each person a report card at the report time, and not before", async () => {
+test("the service sends the weekly card to the project manager and the daily card to the person at the report time, and not before", async () => {
   const config = zqConfigFromEnv({ ZQ_REPORTS: "1", ZQ_REPORT_DAILY_AT: "18:30", ZQ_REPORT_WEEKLY_AT: "17:00" });
   const clock = { now: Date.UTC(2026, 10, 11, 8, 0) };
   const cards: Array<{ to: string; id: string; text: string }> = [];
@@ -91,7 +91,7 @@ test("the service sends each person a report card at the report time, and not be
   const service = createZqService({
     config,
     reader: { features: async () => ({ facts: [], problems: [] }), dutyHolders: async () => undefined },
-    mmUserIdOfOpUser: async () => undefined,
+    mmUserIdOfOpUser: async () => "mm-pm",
     people: async () => [{ mmUserId: "mm1", principalId: "internal:alice", opName: "Alice A" }],
     reminders: createZqReminderStore({ map: testMap<ZqReminder>() }),
     state: testMap<ZqRunState>(),
@@ -99,7 +99,14 @@ test("the service sends each person a report card at the report time, and not be
     reports: {
       store,
       source: {
-        build: async (person, period, since, until) => ({ ...INPUT, mmUserId: person.mmUserId, period, since, until }),
+        build: async (person, period, since, until) => ({
+          ...INPUT,
+          mmUserId: person.mmUserId,
+          period,
+          since,
+          until,
+          projects: [{ id: "3", pmOpUserIds: ["9"] }],
+        }),
       },
       sendCard: async (to, id, text) => void cards.push({ to, id, text }),
     },
@@ -116,7 +123,7 @@ test("the service sends each person a report card at the report time, and not be
   assert.equal((await service.tick()).reportsSent, 1, "Wednesday 18:31 Shanghai: the daily report");
   assert.deepEqual(
     cards.map((c) => c.to),
-    ["mm1", "mm1"],
+    ["mm-pm", "mm1"],
   );
   clock.now += 60_000;
   assert.equal((await service.tick()).reportsSent, 0);

@@ -199,7 +199,10 @@ export function createZqRuntime(deps: {
       }
       if (op === "report") {
         const draft = await reports.decide(id, approve, clickerMmUserId, clickerMmUserId);
-        return draft.status === "confirmed" ? "已确认。这份草稿不会写回 OpenProject。" : "已放弃这份草稿。";
+        if (draft.status !== "confirmed") return "已放弃这份草稿。";
+        return draft.kind === "project"
+          ? "已确认。这份项目周报不会写回 OpenProject。"
+          : "已确认。这份草稿不会写回 OpenProject。";
       }
       if (id !== clickerMmUserId) throw new Error("只有被关联的本人可以回答");
       if (!approve) {
