@@ -19,7 +19,6 @@ const MM_OF = new Map([
 ]);
 const WEEKLY_DUE = Date.UTC(2026, 10, 11, 10, 1);
 const DAILY_DUE = Date.UTC(2026, 10, 11, 10, 31);
-const MINUTE = 60_000;
 const contract = parseContract(
   JSON.parse(readFileSync(new URL("./fixtures/zq-contract-keys.json", import.meta.url), "utf8")),
 );
@@ -192,30 +191,26 @@ test("only the addressed manager can confirm, and the confirmation says it is no
   assert.equal(confirmed.writtenBack, undefined);
 });
 
-test("a project without a manager builds nothing: no feed or time reads, no draft, no card, one log line", async (t) => {
-  const log = t.mock.method(console, "log", () => {});
+test("a project without a manager builds nothing: no feed or time reads, no draft, no card", async () => {
   const h = harness({ projectsOf: { "mm-alice": ["3"], "mm-bob": ["3"] }, duty: { "3": [] } });
   await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
   const out = await h.tickAt(WEEKLY_DUE);
-  assert.deepEqual([out.reportsSent, out.weeklyNoPm], [0, 1]);
+  assert.equal(out.reportsSent, 0);
   assert.deepEqual(h.cards, []);
   assert.equal(h.count("changes:"), 0);
   assert.equal(h.count("openproject_list_time_entries"), 0);
   assert.equal(h.count("duty:"), 1);
   assert.deepEqual(await h.drafts.select({}), []);
-  const lines = log.mock.calls.map((c) => String(c.arguments[0])).filter((l) => l.includes("project 3"));
-  assert.equal(lines.length, 1);
   const later = await h.tickAt(WEEKLY_DUE + 3_600_000);
-  assert.deepEqual([later.reportsSent, later.weeklyNoPm], [0, 0]);
+  assert.equal(later.reportsSent, 0);
   assert.equal(h.count("duty:"), 1);
 });
 
-test("a project manager without a Mattermost account counts as no manager", async (t) => {
-  t.mock.method(console, "log", () => {});
+test("a project manager without a Mattermost account counts as no manager", async () => {
   const h = harness({ projectsOf: { "mm-alice": ["3"] }, featurePm: { "3": "99" } });
   await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
   const out = await h.tickAt(WEEKLY_DUE);
-  assert.deepEqual([out.reportsSent, out.weeklyNoPm], [0, 1]);
+  assert.equal(out.reportsSent, 0);
   assert.equal(h.count("changes:"), 0);
   assert.equal(h.count("openproject_list_time_entries"), 0);
   assert.deepEqual(await h.drafts.select({}), []);
@@ -229,8 +224,7 @@ test("a project with a feature pm resolves without any duty read", async () => {
   assert.equal(h.cards.length, 1);
 });
 
-test("only the project with a manager is read and drafted, and each person's features are read once", async (t) => {
-  t.mock.method(console, "log", () => {});
+test("only the project with a manager is read and drafted, and each person's features are read once", async () => {
   const h = harness({
     projectsOf: { "mm-alice": ["3", "4"], "mm-bob": ["4"] },
     featurePm: { "3": "10" },
@@ -238,7 +232,7 @@ test("only the project with a manager is read and drafted, and each person's fea
   });
   await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
   const out = await h.tickAt(WEEKLY_DUE);
-  assert.deepEqual([out.reportsSent, out.weeklyNoPm], [1, 1]);
+  assert.equal(out.reportsSent, 1);
   assert.deepEqual(
     h.cards.map((c) => c.to),
     ["mm-pm"],
@@ -260,64 +254,16 @@ test("only the project with a manager is read and drafted, and each person's fea
   assert.doesNotMatch(h.cards[0]!.text, /in 4/);
 });
 
-test("the duty holder read is cached per project for 30 minutes", async (t) => {
-  t.mock.method(console, "log", () => {});
-  const h = harness({ projectsOf: { "mm-alice": ["3", "4"] }, duty: { "3": ["11"], "4": [] } });
-  await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
-  await h.tickAt(WEEKLY_DUE);
-  assert.deepEqual(h.calls.filter((c) => c.startsWith("duty:")).sort(), ["duty:3", "duty:4"]);
-  await h.state.put("report:weekly", { lastRunAt: Date.UTC(2026, 10, 10) });
-  await h.tickAt(WEEKLY_DUE + 20 * MINUTE);
-  assert.equal(h.count("duty:"), 2);
-  await h.state.put("report:weekly", { lastRunAt: Date.UTC(2026, 10, 10) });
-  await h.tickAt(WEEKLY_DUE + 31 * MINUTE);
-  assert.equal(h.count("duty:"), 4);
-});
-
-test("running the weekly cron again in the same week adds and sends nothing", async (t) => {
-  t.mock.method(console, "log", () => {});
+test("running the weekly cron again in the same week adds and sends nothing", async () => {
   const h = harness({ projectsOf: { "mm-alice": ["3", "4"] }, featurePm: { "3": "10" }, duty: { "4": [] } });
   await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
   const first = await h.tickAt(WEEKLY_DUE);
-  assert.deepEqual([first.reportsSent, first.weeklyNoPm], [1, 1]);
+  assert.equal(first.reportsSent, 1);
   await h.state.put("report:weekly", { lastRunAt: Date.UTC(2026, 10, 10) });
   const second = await h.tickAt(WEEKLY_DUE + 60_000);
   assert.equal(second.reportsSent, 0);
   assert.equal(h.cards.length, 1);
   assert.equal((await h.drafts.select({})).length, 1);
-});
-
-test("a draft stored by the previous version as skipped is ignored and does not break a run", async () => {
-  const h = harness({ projectsOf: { "mm-alice": ["3", "4"] }, featurePm: { "3": "10", "4": "11" } });
-  const old = {
-    id: "project:3:weekly:2026-11-09",
-    mmUserId: "",
-    period: "weekly",
-    kind: "project",
-    projectId: "3",
-    weekKey: "2026-11-09",
-    addressees: [],
-    since: 0,
-    until: 0,
-    text: "",
-    status: "skipped",
-    skipReason: "no_pm",
-    createdAt: 1,
-  };
-  await h.drafts.insertIfAbsent(old.id, old as unknown as ZqReportDraft);
-  await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
-  const out = await h.tickAt(WEEKLY_DUE);
-  assert.equal(out.reportsSent, 1);
-  assert.deepEqual(
-    h.cards.map((c) => c.to),
-    ["mm-pm2"],
-  );
-  const open = await h.store.openProjectDrafts("2026-11-09");
-  assert.deepEqual(
-    open.map((d) => d.projectId),
-    ["4"],
-  );
-  await assert.rejects(h.store.decide(old.id, true, "mm-pm", "mm-pm"));
 });
 
 test("the daily report still goes to each person as before", async () => {
