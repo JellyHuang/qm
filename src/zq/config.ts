@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { Cron } from "croner";
+import { isGitRepo } from "./git/validate.ts";
 import { parseContract, type Duty, type ZqContract } from "./contract.ts";
 
 export interface ZqConfig {
@@ -16,6 +17,7 @@ export interface ZqConfig {
   escalation: { duties: readonly Duty[]; afterDays: number };
   unsetResponsibilityDuties: readonly Duty[];
   reports: { enabled: boolean; dailyCron?: string; weeklyCron?: string };
+  git: { enabled: boolean; dir?: string; remotes: Record<string, string>; knownHosts?: string };
 }
 
 const DEFAULT_CRON = "*/5 * * * *";
@@ -51,6 +53,26 @@ function duties(name: string, raw: string | undefined): Duty[] {
   return list;
 }
 
+function gitRemotes(raw: string | undefined): Record<string, string> {
+  if (!raw?.trim()) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error("ZQ_GIT_REMOTES must be a JSON object of repository name to URL", { cause: e });
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    throw new Error("ZQ_GIT_REMOTES must be a JSON object of repository name to URL");
+  const remotes: Record<string, string> = {};
+  for (const [name, url] of Object.entries(parsed)) {
+    if (!isGitRepo(name)) throw new Error(`ZQ_GIT_REMOTES names a repository outside the allowlist: ${name}`);
+    if (typeof url !== "string" || !url.trim() || url.startsWith("-"))
+      throw new Error(`ZQ_GIT_REMOTES needs a URL for ${name}`);
+    remotes[name] = url.trim();
+  }
+  return remotes;
+}
+
 export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   const cron = env.ZQ_SCANNER_CRON?.trim() || DEFAULT_CRON;
   const timezone = env.ZQ_SCANNER_TZ?.trim() || DEFAULT_TIMEZONE;
@@ -71,6 +93,10 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   if (opBaseUrl && !/^https?:\/\//.test(opBaseUrl)) throw new Error("ZQ_OP_BASE_URL must be an http(s) URL");
   const scannerEnabled = on(env.ZQ_SCANNER);
   if (scannerEnabled && !contractFile) throw new Error("ZQ_SCANNER needs ZQ_CONTRACT_FILE (the contract key table)");
+  const gitDir = env.ZQ_GIT_DIR?.trim();
+  const gitKnownHosts = env.ZQ_GIT_KNOWN_HOSTS?.trim();
+  const gitEnabled = on(env.ZQ_GIT_READONLY);
+  if (gitEnabled && !gitDir) throw new Error("ZQ_GIT_READONLY needs ZQ_GIT_DIR (the bare clone directory)");
   return {
     identityMap: on(env.ZQ_IDENTITY_MAP),
     scanner: { enabled: scannerEnabled, cron, timezone },
@@ -97,6 +123,12 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
       enabled: on(env.ZQ_REPORTS),
       ...(dailyCron ? { dailyCron } : {}),
       ...(weeklyCron ? { weeklyCron } : {}),
+    },
+    git: {
+      enabled: gitEnabled,
+      remotes: gitRemotes(env.ZQ_GIT_REMOTES),
+      ...(gitDir ? { dir: gitDir } : {}),
+      ...(gitKnownHosts ? { knownHosts: gitKnownHosts } : {}),
     },
   };
 }
