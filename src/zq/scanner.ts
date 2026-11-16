@@ -115,6 +115,7 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
   const ruleOptions: RuleOptions = {
     ...DEFAULT_RULE_OPTIONS,
     now: opts.now,
+    day: (at) => dayKeyIn(opts.timezone, at),
     escalateAfterMs: opts.escalation.afterDays * DAY,
     escalationDuties: opts.escalation.duties,
     unsetDuties: opts.unsetDuties ?? [],
@@ -170,7 +171,7 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
           else report.unlinked++;
         }
         for (const mm of recipients) {
-          const id = reminderId(action.rule, action.subjectId, mm, dayKey);
+          const id = reminderId(action.rule, action.subjectId, mm, action.once ? "once" : dayKey);
           if (!(await opts.reminders.has(id)) && (await opts.reminders.countForDay(mm, dayKey)) >= opts.dailyCeiling) {
             report.ceilingHit++;
             continue;

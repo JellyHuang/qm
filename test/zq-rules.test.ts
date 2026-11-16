@@ -301,3 +301,36 @@ test("an unclosed meeting is reminded again on every scan day until OpenProject 
   }
   assert.deepEqual(ids(rules({ feature: f, children: [], meetings: [meeting("closed")] })), []);
 });
+
+test("a delayed feature gets one notice to its planner and PM naming the day the delay began, keyed by the delay mark", () => {
+  const PM = { id: "41", name: "Pm P" };
+  const delayed = feature("feature.development", {
+    ...PLANNED,
+    pm: PM,
+    delayMarked: true,
+    delayedSince: NOW - 3 * DAY,
+  });
+  const a = rules({ feature: delayed, children: [] });
+  assert.deepEqual(ids(a), ["delay-notice"]);
+  assert.deepEqual(a[0]!.to, [
+    { kind: "field", field: "responsiblePlanner" },
+    { kind: "field", field: "pm" },
+  ]);
+  assert.equal(a[0]!.subjectId, `wp:1:delay:${NOW - 3 * DAY}`);
+  assert.equal(a[0]!.once, true);
+  assert.match(a[0]!.text, /「单1」\(#1\)/);
+  assert.match(a[0]!.text, /自 2026-11-11 起/);
+  assert.doesNotMatch(a[0]!.text, /@/);
+  const again = rules({ feature: { ...delayed, delayedSince: NOW - DAY }, children: [] });
+  assert.notEqual(again[0]!.subjectId, a[0]!.subjectId);
+});
+
+test("a feature that is not marked delayed gets no delay notice, and a mark without a date does not crash", () => {
+  const dev = (over: Partial<WorkView>) => feature("feature.development", { ...PLANNED, pm: ALICE, ...over });
+  assert.deepEqual(ids(rules({ feature: dev({ delayMarked: false, delayedSince: NOW - DAY }), children: [] })), []);
+  assert.deepEqual(ids(rules({ feature: dev({ lifecycle: "delayed" }), children: [] })), []);
+  const undated = rules({ feature: dev({ delayMarked: true }), children: [] });
+  assert.deepEqual(ids(undated), ["delay-notice"]);
+  assert.equal(undated[0]!.subjectId, "wp:1:delay:unknown");
+  assert.doesNotMatch(undated[0]!.text, /undefined|NaN/);
+});

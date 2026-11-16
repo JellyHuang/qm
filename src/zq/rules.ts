@@ -75,6 +75,7 @@ export type RuleId =
   | "task-unassigned"
   | "production-missing-planned-end"
   | "blocking-bug-open"
+  | "delay-notice"
   | "exit-ready"
   | "formal-assets-pending"
   | "responsibility-not-set";
@@ -85,10 +86,12 @@ export interface RuleAction {
   subjectTitle: string;
   to: Target[];
   text: string;
+  once?: boolean;
 }
 
 export interface RuleOptions {
   now: number;
+  day: (at: number) => string;
   meetingGraceMs: number;
   escalateAfterMs: number;
   escalationDuties: readonly Duty[];
@@ -97,6 +100,7 @@ export interface RuleOptions {
 
 const DAY = 86_400_000;
 export const DEFAULT_RULE_OPTIONS = {
+  day: (at: number) => new Date(at).toISOString().slice(0, 10),
   meetingGraceMs: 10 * 60_000,
   escalateAfterMs: 2 * DAY,
   escalationDuties: [] as readonly Duty[],
@@ -283,6 +287,22 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
         bug,
       ),
     );
+  }
+
+  if (feature.delayMarked) {
+    const since = feature.delayedSince;
+    out.push({
+      ...at(
+        "delay-notice",
+        [
+          { kind: "field", field: "responsiblePlanner" },
+          { kind: "field", field: "pm" },
+        ],
+        `功能${where(feature)}在「${stageName}」已被标记延期${since === undefined ? "" : `(自 ${opts.day(since)} 起)`}。请确认新的计划和影响。`,
+      ),
+      subjectId: `wp:${feature.id}:delay:${since ?? "unknown"}`,
+      once: true,
+    });
   }
 
   if (stage === r.formalAssets) {

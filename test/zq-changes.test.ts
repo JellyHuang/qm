@@ -381,3 +381,38 @@ test("events as OpenProject really sends them: stage at the top, assignees as id
   assert.match(text, /执行人 Bob B → Alice A\(zq_p1_manager\)/);
   assert.match(text, /已新增,阶段 待分配,执行人 Bob B/);
 });
+
+test("a delay notice is stored once per delay mark across days and scans, and a new mark is noticed again", async () => {
+  const store = createZqReminderStore({ map: testMap<ZqReminder>() });
+  const scan = (fact: FeatureFacts, now: number) =>
+    scanOnce({
+      reader: { features: async () => ({ facts: [fact], problems: [] }), dutyHolders: async () => undefined },
+      contract,
+      people: [PERSON],
+      mmUserIdOfOpUser: async (id) => ({ "11": "mm-alice", "13": "mm-pm" })[id],
+      reminders: store,
+      mode: "live",
+      now,
+      timezone: "Asia/Shanghai",
+      dailyCeiling: 1000,
+      escalation: { duties: [], afterDays: 2 },
+    });
+  const delayed = (since: number): FeatureFacts => ({
+    feature: feature({ delayMarked: true, delayedSince: since }),
+    children: [],
+  });
+  const first = await scan(delayed(NOW - DAY), NOW);
+  assert.equal(first.created, 2);
+  assert.deepEqual(
+    (await store.pendingFor("mm-pm")).map((r) => r.rule),
+    ["delay-notice"],
+  );
+  const sameDay = await scan(delayed(NOW - DAY), NOW + 1000);
+  const nextDay = await scan(delayed(NOW - DAY), NOW + 2 * DAY);
+  assert.equal(sameDay.created + nextDay.created, 0);
+  const cleared = await scan({ feature: feature({ delayMarked: false }), children: [] }, NOW + 3 * DAY);
+  assert.equal(cleared.created, 0);
+  const renewed = await scan(delayed(NOW + 3 * DAY), NOW + 4 * DAY);
+  assert.equal(renewed.created, 2);
+  assert.equal((await store.pendingFor("mm-pm")).length, 2);
+});
