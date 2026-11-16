@@ -1,8 +1,13 @@
 import { tenantTest as test } from "./support/tenant-test.ts";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { zqConfigFromEnv } from "../src/zq/config.ts";
 import { createZqReminderStore, type ZqReminder } from "../src/zq/reminders.ts";
+import { createReportSource } from "../src/zq/report-source.ts";
 import { createZqReports, type ZqReportDraft } from "../src/zq/reports.ts";
+import { parseContract } from "../src/zq/contract.ts";
+import type { OpReader, ScanPerson } from "../src/zq/scanner.ts";
+import type { WorkView } from "../src/zq/rules.ts";
 import { createZqService, type ZqRunState } from "../src/zq/service.ts";
 import { testMap } from "./support/test-database.ts";
 
@@ -14,6 +19,10 @@ const MM_OF = new Map([
 ]);
 const WEEKLY_DUE = Date.UTC(2026, 10, 11, 10, 1);
 const DAILY_DUE = Date.UTC(2026, 10, 11, 10, 31);
+const MINUTE = 60_000;
+const contract = parseContract(
+  JSON.parse(readFileSync(new URL("./fixtures/zq-contract-keys.json", import.meta.url), "utf8")),
+);
 
 function harness(opts: {
   projectsOf: Record<string, string[]>;
@@ -31,24 +40,70 @@ function harness(opts: {
   const clock = { now: Date.UTC(2026, 10, 11, 8, 0) };
   const cards: Array<{ to: string; id: string; text: string }> = [];
   const state = testMap<ZqRunState>();
-  const store = createZqReports({
-    map: testMap<ZqReportDraft>(),
-    write: undefined,
-    writeBack: async () => {},
-    now: () => 1000,
-  });
-  const dutyCalls: string[] = [];
+  const drafts = testMap<ZqReportDraft>();
+  const store = createZqReports({ map: drafts, write: undefined, writeBack: async () => {}, now: () => 1000 });
+  const calls: string[] = [];
   const attempts: string[] = [];
-  const builds: number[] = [];
+  const workOf = (person: ScanPerson, project: string) => 100 * Number(person.opUserId) + Number(project);
+  const reader: OpReader = {
+    features: async (person) => {
+      calls.push(`features:${person.mmUserId}`);
+      const facts = (opts.projectsOf[person.mmUserId] ?? []).map((project) => {
+        const view = (id: number, subject: string): WorkView => ({
+          id,
+          subject,
+          typeKey: "feature",
+          statusKey: "feature.development",
+          projectId: project,
+          ...(opts.names?.[project] ? { projectName: opts.names[project]! } : {}),
+        });
+        const pm = opts.featurePm?.[project];
+        return {
+          feature: {
+            ...view(9000 + Number(project), `feature ${project}`),
+            ...(pm ? { pm: { id: pm, name: pm } } : {}),
+          },
+          children: [view(workOf(person, project), `${person.opName} task in ${project}`)],
+        };
+      });
+      return { facts, problems: [] };
+    },
+    dutyHolders: async (_person, projectId) => {
+      calls.push(`duty:${projectId}`);
+      return opts.duty?.[projectId]?.map((id) => ({ id, name: id }));
+    },
+    changes: async (person, projectId) => {
+      calls.push(`changes:${projectId}:${person.mmUserId}`);
+      return {
+        events: [
+          {
+            id: `e-${person.opUserId}-${projectId}`,
+            ticketId: workOf(person, projectId),
+            featureId: 9000 + Number(projectId),
+            kinds: ["stage"],
+            newStage: "execution.active",
+            old: {},
+            new: { assignee: person.opUserId },
+            actorId: person.opUserId,
+            byRule: false,
+            at: WEEKLY_DUE - 3_600_000,
+          },
+        ],
+        nextCursor: "c",
+      };
+    },
+  };
+  const call = async (tool: string, args: Record<string, unknown>) => {
+    calls.push(`${tool}:${String(args["user"])}`);
+    const person = [ALICE, BOB].find((p) => p.opUserId === args["user"])!;
+    return JSON.stringify({
+      next_offset: null,
+      results: (opts.projectsOf[person.mmUserId] ?? []).map((p) => ({ work_package_id: workOf(person, p), hours: 2 })),
+    });
+  };
   const service = createZqService({
     config,
-    reader: {
-      features: async () => ({ facts: [], problems: [] }),
-      dutyHolders: async (_person, projectId) => {
-        dutyCalls.push(projectId);
-        return opts.duty?.[projectId]?.map((id) => ({ id, name: id }));
-      },
-    },
+    reader,
     mmUserIdOfOpUser: async (id) => MM_OF.get(id),
     people: async () => [ALICE, BOB],
     reminders: createZqReminderStore({ map: testMap<ZqReminder>() }),
@@ -56,37 +111,7 @@ function harness(opts: {
     send: async () => {},
     reports: {
       store,
-      source: {
-        build: async (person, period, since, until) => {
-          builds.push(clock.now);
-          const projects = opts.projectsOf[person.mmUserId] ?? [];
-          return {
-            mmUserId: person.mmUserId,
-            opName: person.opName,
-            period,
-            since,
-            until,
-            statusChanges: projects.map((p) => ({
-              workPackageId: 100 + Number(person.opUserId),
-              subject: `${person.opName} task in ${p}`,
-              to: "进行中",
-              at: 5,
-              projectId: p,
-            })),
-            timeEntries: projects.map((p) => ({
-              workPackageId: 900,
-              subject: `${person.opName} hours in ${p}`,
-              hours: 2,
-              projectId: p,
-            })),
-            projects: projects.map((id) => ({
-              id,
-              ...(opts.names?.[id] ? { name: opts.names[id] } : {}),
-              pmOpUserIds: opts.featurePm?.[id] ? [opts.featurePm[id]!] : [],
-            })),
-          };
-        },
-      },
+      source: { build: createReportSource({ reader, call, contract, timezone: config.scanner.timezone }) },
       sendCard: async (to, id, text) => {
         attempts.push(to);
         const left = opts.failSends?.[to] ?? 0;
@@ -104,7 +129,8 @@ function harness(opts: {
     clock.now = at;
     return service.tick();
   };
-  return { store, cards, attempts, builds, state, dutyCalls, tickAt };
+  const count = (prefix: string) => calls.filter((c) => c.startsWith(prefix)).length;
+  return { store, drafts, cards, attempts, state, calls, count, tickAt };
 }
 
 test("a weekly report goes to the project manager only, one draft with a section per person", async () => {
@@ -120,7 +146,7 @@ test("a weekly report goes to the project manager only, one draft with a section
   assert.match(text, /Alice A:/);
   assert.match(text, /Bob B:/);
   assert.match(text, /Alice A task in 3/);
-  assert.match(text, /Bob B hours in 3/);
+  assert.match(text, /已记工时:2 小时/);
 });
 
 test("two projects give two drafts and never mix each other's work", async () => {
@@ -144,7 +170,10 @@ test("without a feature pm the duty holder of the project is the addressee", asy
   const h = harness({ projectsOf: { "mm-alice": ["3"] }, duty: { "3": ["11"] } });
   await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
   await h.tickAt(WEEKLY_DUE);
-  assert.deepEqual(h.dutyCalls, ["3"]);
+  assert.deepEqual(
+    h.calls.filter((c) => c.startsWith("duty:")),
+    ["duty:3"],
+  );
   assert.deepEqual(
     h.cards.map((c) => c.to),
     ["mm-pm2"],
@@ -163,40 +192,132 @@ test("only the addressed manager can confirm, and the confirmation says it is no
   assert.equal(confirmed.writtenBack, undefined);
 });
 
-test("a project without a reachable manager is not sent, is recorded as skipped and counted", async () => {
+test("a project without a manager builds nothing: no feed or time reads, no draft, no card, one log line", async (t) => {
+  const log = t.mock.method(console, "log", () => {});
+  const h = harness({ projectsOf: { "mm-alice": ["3"], "mm-bob": ["3"] }, duty: { "3": [] } });
+  await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
+  const out = await h.tickAt(WEEKLY_DUE);
+  assert.deepEqual([out.reportsSent, out.weeklyNoPm], [0, 1]);
+  assert.deepEqual(h.cards, []);
+  assert.equal(h.count("changes:"), 0);
+  assert.equal(h.count("openproject_list_time_entries"), 0);
+  assert.equal(h.count("duty:"), 1);
+  assert.deepEqual(await h.drafts.select({}), []);
+  const lines = log.mock.calls.map((c) => String(c.arguments[0])).filter((l) => l.includes("project 3"));
+  assert.equal(lines.length, 1);
+  const later = await h.tickAt(WEEKLY_DUE + 3_600_000);
+  assert.deepEqual([later.reportsSent, later.weeklyNoPm], [0, 0]);
+  assert.equal(h.count("duty:"), 1);
+});
+
+test("a project manager without a Mattermost account counts as no manager", async (t) => {
+  t.mock.method(console, "log", () => {});
+  const h = harness({ projectsOf: { "mm-alice": ["3"] }, featurePm: { "3": "99" } });
+  await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
+  const out = await h.tickAt(WEEKLY_DUE);
+  assert.deepEqual([out.reportsSent, out.weeklyNoPm], [0, 1]);
+  assert.equal(h.count("changes:"), 0);
+  assert.equal(h.count("openproject_list_time_entries"), 0);
+  assert.deepEqual(await h.drafts.select({}), []);
+});
+
+test("a project with a feature pm resolves without any duty read", async () => {
+  const h = harness({ projectsOf: { "mm-alice": ["3"] }, featurePm: { "3": "10" } });
+  await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
+  await h.tickAt(WEEKLY_DUE);
+  assert.equal(h.count("duty:"), 0);
+  assert.equal(h.cards.length, 1);
+});
+
+test("only the project with a manager is read and drafted, and each person's features are read once", async (t) => {
+  t.mock.method(console, "log", () => {});
   const h = harness({
-    projectsOf: { "mm-alice": ["3", "4"] },
-    featurePm: { "3": "99" },
+    projectsOf: { "mm-alice": ["3", "4"], "mm-bob": ["4"] },
+    featurePm: { "3": "10" },
     duty: { "4": [] },
   });
   await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
   const out = await h.tickAt(WEEKLY_DUE);
-  assert.equal(out.reportsSent, 0);
-  assert.equal(out.weeklyNoPm, 2);
-  assert.deepEqual(h.cards, []);
-  const again = await h.store.draftProject({
-    projectId: "3",
-    weekKey: "2026-11-09",
-    since: 0,
-    until: 0,
-    sections: [],
-    addressees: [],
-  });
-  assert.equal(again.created, false, "the skipped record exists durably");
-  assert.equal(again.draft.status, "skipped");
-  assert.equal(again.draft.skipReason, "no_pm");
-  await assert.rejects(h.store.decide(again.draft.id, true, "mm-pm", "mm-pm"));
+  assert.deepEqual([out.reportsSent, out.weeklyNoPm], [1, 1]);
+  assert.deepEqual(
+    h.cards.map((c) => c.to),
+    ["mm-pm"],
+  );
+  assert.deepEqual(
+    h.calls.filter((c) => c.startsWith("changes:")),
+    ["changes:3:mm-alice"],
+  );
+  assert.deepEqual(
+    h.calls.filter((c) => c.startsWith("openproject_list_time_entries")),
+    ["openproject_list_time_entries:1"],
+  );
+  assert.equal(h.count("features:"), 2);
+  const stored = await h.drafts.select({});
+  assert.deepEqual(
+    stored.map((d) => d.id),
+    ["project:3:weekly:2026-11-09"],
+  );
+  assert.doesNotMatch(h.cards[0]!.text, /in 4/);
 });
 
-test("running the weekly cron again in the same week adds and sends nothing", async () => {
-  const h = harness({ projectsOf: { "mm-alice": ["3", "4"] }, featurePm: { "3": "10" } });
+test("the duty holder read is cached per project for 30 minutes", async (t) => {
+  t.mock.method(console, "log", () => {});
+  const h = harness({ projectsOf: { "mm-alice": ["3", "4"] }, duty: { "3": ["11"], "4": [] } });
+  await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
+  await h.tickAt(WEEKLY_DUE);
+  assert.deepEqual(h.calls.filter((c) => c.startsWith("duty:")).sort(), ["duty:3", "duty:4"]);
+  await h.state.put("report:weekly", { lastRunAt: Date.UTC(2026, 10, 10) });
+  await h.tickAt(WEEKLY_DUE + 20 * MINUTE);
+  assert.equal(h.count("duty:"), 2);
+  await h.state.put("report:weekly", { lastRunAt: Date.UTC(2026, 10, 10) });
+  await h.tickAt(WEEKLY_DUE + 31 * MINUTE);
+  assert.equal(h.count("duty:"), 4);
+});
+
+test("running the weekly cron again in the same week adds and sends nothing", async (t) => {
+  t.mock.method(console, "log", () => {});
+  const h = harness({ projectsOf: { "mm-alice": ["3", "4"] }, featurePm: { "3": "10" }, duty: { "4": [] } });
   await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
   const first = await h.tickAt(WEEKLY_DUE);
   assert.deepEqual([first.reportsSent, first.weeklyNoPm], [1, 1]);
   await h.state.put("report:weekly", { lastRunAt: Date.UTC(2026, 10, 10) });
   const second = await h.tickAt(WEEKLY_DUE + 60_000);
-  assert.deepEqual([second.reportsSent, second.weeklyNoPm], [0, 0]);
+  assert.equal(second.reportsSent, 0);
   assert.equal(h.cards.length, 1);
+  assert.equal((await h.drafts.select({})).length, 1);
+});
+
+test("a draft stored by the previous version as skipped is ignored and does not break a run", async () => {
+  const h = harness({ projectsOf: { "mm-alice": ["3", "4"] }, featurePm: { "3": "10", "4": "11" } });
+  const old = {
+    id: "project:3:weekly:2026-11-09",
+    mmUserId: "",
+    period: "weekly",
+    kind: "project",
+    projectId: "3",
+    weekKey: "2026-11-09",
+    addressees: [],
+    since: 0,
+    until: 0,
+    text: "",
+    status: "skipped",
+    skipReason: "no_pm",
+    createdAt: 1,
+  };
+  await h.drafts.insertIfAbsent(old.id, old as unknown as ZqReportDraft);
+  await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
+  const out = await h.tickAt(WEEKLY_DUE);
+  assert.equal(out.reportsSent, 1);
+  assert.deepEqual(
+    h.cards.map((c) => c.to),
+    ["mm-pm2"],
+  );
+  const open = await h.store.openProjectDrafts("2026-11-09");
+  assert.deepEqual(
+    open.map((d) => d.projectId),
+    ["4"],
+  );
+  await assert.rejects(h.store.decide(old.id, true, "mm-pm", "mm-pm"));
 });
 
 test("the daily report still goes to each person as before", async () => {
@@ -225,31 +346,6 @@ test("the draft names the project and falls back to the id when the name is unkn
   const byTo = new Map(h.cards.map((c) => [c.to, c.text]));
   assert.match(byTo.get("mm-pm")!, /^项目 ZQ 的周报草稿/);
   assert.match(byTo.get("mm-pm2")!, /^项目 4 的周报草稿/);
-});
-
-test("a project skipped for no manager gets its draft and cards once a manager appears in the same week", async () => {
-  const featurePm: Record<string, string> = {};
-  const h = harness({ projectsOf: { "mm-alice": ["3"] }, featurePm, duty: { "3": [] } });
-  await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
-  const first = await h.tickAt(WEEKLY_DUE);
-  assert.deepEqual([first.reportsSent, first.weeklyNoPm], [0, 1]);
-  const still = await h.tickAt(WEEKLY_DUE + 3_600_000);
-  assert.deepEqual([still.reportsSent, still.weeklyNoPm], [0, 0]);
-  assert.equal(h.cards.length, 0);
-  featurePm["3"] = "10";
-  const found = await h.tickAt(WEEKLY_DUE + 7_200_000);
-  assert.deepEqual([found.reportsSent, found.weeklyNoPm], [1, 0]);
-  assert.deepEqual(
-    h.cards.map((c) => c.to),
-    ["mm-pm"],
-  );
-  const stored = await h.store.openProjectDrafts("2026-11-09");
-  assert.equal(stored.length, 1);
-  assert.equal(stored[0]!.status, "pending");
-  assert.equal(stored[0]!.skipReason, undefined);
-  const later = await h.tickAt(WEEKLY_DUE + 10_800_000);
-  assert.equal(later.reportsSent, 0);
-  assert.equal(h.cards.length, 1);
 });
 
 test("a card send that fails twice then succeeds is delivered once and marked delivered", async () => {
@@ -290,29 +386,6 @@ test("a later scan never resends to an addressee who already received the card",
   assert.deepEqual(h.attempts, ["mm-pm", "mm-pm2", "mm-pm2", "mm-pm2"]);
   await h.tickAt(WEEKLY_DUE + 3_600_000);
   assert.equal(h.attempts.length, 4);
-  assert.deepEqual(
-    h.cards.map((c) => c.to),
-    ["mm-pm"],
-  );
-});
-
-test("the skipped-project recheck rebuilds the weekly reports at most every 30 minutes and picks up a new manager then", async () => {
-  const featurePm: Record<string, string> = {};
-  const h = harness({ projectsOf: { "mm-alice": ["3"] }, featurePm, duty: { "3": [] } });
-  await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
-  await h.tickAt(WEEKLY_DUE);
-  const afterCron = h.builds.length;
-  await h.tickAt(WEEKLY_DUE + 5 * 60_000);
-  const first = h.builds.length;
-  assert.ok(first > afterCron, "the first recheck rebuilds");
-  featurePm["3"] = "10";
-  const early = await h.tickAt(WEEKLY_DUE + 10 * 60_000);
-  assert.equal(h.builds.length, first, "five minutes later nothing is rebuilt");
-  assert.equal(early.reportsSent, 0);
-  assert.equal(h.cards.length, 0);
-  const late = await h.tickAt(WEEKLY_DUE + 36 * 60_000);
-  assert.ok(h.builds.length > first, "after 30 minutes it rebuilds again");
-  assert.equal(late.reportsSent, 1);
   assert.deepEqual(
     h.cards.map((c) => c.to),
     ["mm-pm"],

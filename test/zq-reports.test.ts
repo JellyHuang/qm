@@ -90,7 +90,25 @@ test("the service sends the weekly card to the project manager and the daily car
   const store = reports();
   const service = createZqService({
     config,
-    reader: { features: async () => ({ facts: [], problems: [] }), dutyHolders: async () => undefined },
+    reader: {
+      features: async () => ({
+        facts: [
+          {
+            feature: {
+              id: 1,
+              subject: "feature",
+              typeKey: "feature",
+              statusKey: "feature.development",
+              projectId: "3",
+              pm: { id: "9", name: "PM" },
+            },
+            children: [],
+          },
+        ],
+        problems: [],
+      }),
+      dutyHolders: async () => undefined,
+    },
     mmUserIdOfOpUser: async () => "mm-pm",
     people: async () => [{ mmUserId: "mm1", principalId: "internal:alice", opName: "Alice A" }],
     reminders: createZqReminderStore({ map: testMap<ZqReminder>() }),

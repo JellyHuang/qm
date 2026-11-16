@@ -5,7 +5,16 @@ import type { ZqConfig } from "./config.ts";
 import type { FlushResult, ZqChanges } from "./changes.ts";
 import { deliverDue } from "./delivery.ts";
 import type { ReminderMode, ZqReminderStore } from "./reminders.ts";
-import { sectionForProject, type ReportInput, type ZqReportDraft, type ZqReports } from "./reports.ts";
+import {
+  sectionForProject,
+  type ReportInput,
+  type ReportProject,
+  type ReportScope,
+  type ZqReportDraft,
+  type ZqReports,
+} from "./reports.ts";
+import { projectsOfFacts } from "./report-source.ts";
+import type { FeatureFacts } from "./rules.ts";
 import type { ZqContract } from "./contract.ts";
 import type { ZqGroups } from "./groups.ts";
 import {
@@ -24,7 +33,13 @@ export interface ZqRunState {
 }
 
 export interface ReportSource {
-  build(person: ScanPerson, period: ReportInput["period"], since: number, until: number): Promise<ReportInput>;
+  build(
+    person: ScanPerson,
+    period: ReportInput["period"],
+    since: number,
+    until: number,
+    scope?: ReportScope,
+  ): Promise<ReportInput>;
 }
 
 export interface ZqServiceDeps {
@@ -60,7 +75,13 @@ export interface ZqService {
 
 const DAY = 86_400_000;
 const MAX_SEND_TRIES = 3;
-const RECHECK_INTERVAL_MS = 30 * 60_000;
+const PM_CACHE_MS = 30 * 60_000;
+
+interface PersonScope {
+  person: ScanPerson;
+  facts: FeatureFacts[];
+  projects: ReportProject[];
+}
 
 interface WeeklyOutcome {
   sent: number;
@@ -71,6 +92,7 @@ interface WeeklyOutcome {
 export function createZqService(deps: ZqServiceDeps): ZqService {
   const now = deps.now ?? (() => Date.now());
   const { config } = deps;
+  const dutyPmCache = new Map<string, { at: number; opUserIds: string[] }>();
 
   async function claim(key: string, cron: string, at: number, runOnFirst: boolean): Promise<boolean> {
     const previous = await deps.state.get(key);
@@ -87,14 +109,24 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
     return new Date(local - sinceMonday * DAY).toISOString().slice(0, 10);
   }
 
-  async function projectPms(projectId: string, inputs: ReportInput[], people: ScanPerson[]): Promise<string[]> {
+  async function dutyPms(person: ScanPerson, projectId: string, at: number): Promise<string[]> {
+    const cached = dutyPmCache.get(projectId);
+    if (cached && at - cached.at < PM_CACHE_MS) return cached.opUserIds;
+    const holders = await deps.reader.dutyHolders(person, projectId, "pm").catch(() => undefined);
+    if (!holders) return [];
+    const opUserIds = holders.map((u) => u.id);
+    dutyPmCache.set(projectId, { at, opUserIds });
+    return opUserIds;
+  }
+
+  async function projectPms(projectId: string, scopes: PersonScope[], at: number): Promise<string[]> {
     const fromFeatures = [
-      ...new Set(inputs.flatMap((i) => i.projects?.find((p) => p.id === projectId)?.pmOpUserIds ?? [])),
+      ...new Set(scopes.flatMap((s) => s.projects.find((p) => p.id === projectId)?.pmOpUserIds ?? [])),
     ];
     const opUsers =
       fromFeatures.length > 0
         ? fromFeatures
-        : ((await deps.reader.dutyHolders(people[0]!, projectId, "pm").catch(() => undefined)) ?? []).map((u) => u.id);
+        : await dutyPms(scopes.find((s) => s.projects.some((p) => p.id === projectId))!.person, projectId, at);
     const linked = await Promise.all(opUsers.map((id) => deps.mmUserIdOfOpUser(id)));
     return [...new Set(linked.flatMap((id) => id ?? []))];
   }
@@ -127,29 +159,46 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
     return { sent, failed };
   }
 
-  async function weeklyProjects(
-    reports: NonNullable<ZqServiceDeps["reports"]>,
-    at: number,
-    only?: ReadonlySet<string>,
-  ): Promise<WeeklyOutcome> {
-    const people = await deps.people();
-    const inputs: ReportInput[] = [];
-    for (const person of people) {
+  async function weeklyProjects(reports: NonNullable<ZqServiceDeps["reports"]>, at: number): Promise<WeeklyOutcome> {
+    const scopes: PersonScope[] = [];
+    for (const person of await deps.people()) {
       try {
-        inputs.push(await reports.source.build(person, "weekly", at - 7 * DAY, at));
+        const { facts } = await deps.reader.features(person);
+        scopes.push({ person, facts, projects: projectsOfFacts(facts) });
       } catch (e) {
         reportFailureAs(`zq: weekly report for ${person.mmUserId}`, undefined)(e);
       }
     }
-    const projectIds = [...new Set(inputs.flatMap((i) => (i.projects ?? []).map((p) => p.id)))].filter(
-      (id) => !only || only.has(id),
-    );
-    const weekKey = weekKeyOf(at);
     const out: WeeklyOutcome = { sent: 0, noPm: 0, failed: 0 };
-    for (const projectId of projectIds) {
+    const addresseesOf = new Map<string, string[]>();
+    for (const projectId of new Set(scopes.flatMap((s) => s.projects.map((p) => p.id)))) {
+      try {
+        const addressees = await projectPms(projectId, scopes, at);
+        if (addressees.length > 0) addresseesOf.set(projectId, addressees);
+        else {
+          out.noPm++;
+          console.log(
+            `[zq] weekly report not built: project ${projectId} has no project manager reachable on Mattermost`,
+          );
+        }
+      } catch (e) {
+        reportFailureAs(`zq: weekly report project manager of ${projectId}`, undefined)(e);
+      }
+    }
+    const inputs: ReportInput[] = [];
+    for (const { person, facts, projects } of scopes) {
+      const wanted = new Set(projects.map((p) => p.id).filter((id) => addresseesOf.has(id)));
+      if (wanted.size === 0) continue;
+      try {
+        inputs.push(await reports.source.build(person, "weekly", at - 7 * DAY, at, { facts, projects: wanted }));
+      } catch (e) {
+        reportFailureAs(`zq: weekly report for ${person.mmUserId}`, undefined)(e);
+      }
+    }
+    const weekKey = weekKeyOf(at);
+    for (const [projectId, addressees] of addresseesOf) {
       try {
         const sections = inputs.flatMap((i) => sectionForProject(i, projectId) ?? []);
-        const addressees = await projectPms(projectId, sections, people);
         const projectName = inputs.flatMap((i) => i.projects?.find((p) => p.id === projectId)?.name ?? [])[0];
         const { draft, created } = await reports.store.draftProject({
           projectId,
@@ -161,12 +210,9 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
           addressees,
         });
         if (!created) continue;
-        if (draft.status === "skipped") out.noPm++;
-        else {
-          const delivered = await deliver(reports, draft);
-          out.sent += delivered.sent;
-          out.failed += delivered.failed;
-        }
+        const delivered = await deliver(reports, draft);
+        out.sent += delivered.sent;
+        out.failed += delivered.failed;
       } catch (e) {
         reportFailureAs(`zq: weekly report for project ${projectId}`, undefined)(e);
       }
@@ -174,27 +220,12 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
     return out;
   }
 
-  async function recheckDue(at: number): Promise<boolean> {
-    const previous = await deps.state.get("report:weekly-recheck");
-    if (previous && at - previous.lastRunAt < RECHECK_INTERVAL_MS) return false;
-    await deps.state.put("report:weekly-recheck", { ...previous, lastRunAt: at });
-    return true;
-  }
-
-  async function recheckWeekly(reports: NonNullable<ZqServiceDeps["reports"]>, at: number): Promise<WeeklyOutcome> {
-    const open = await reports.store.openProjectDrafts(weekKeyOf(at));
-    const skipped = new Set(open.flatMap((d) => (d.status === "skipped" && d.projectId ? [d.projectId] : [])));
+  async function resendPending(reports: NonNullable<ZqServiceDeps["reports"]>, at: number): Promise<WeeklyOutcome> {
     const out: WeeklyOutcome = { sent: 0, noPm: 0, failed: 0 };
-    for (const draft of open) {
-      if (draft.status !== "pending") continue;
+    for (const draft of await reports.store.openProjectDrafts(weekKeyOf(at))) {
       const delivered = await deliver(reports, draft);
       out.sent += delivered.sent;
       out.failed += delivered.failed;
-    }
-    if (skipped.size > 0 && (await recheckDue(at))) {
-      const retried = await weeklyProjects(reports, at, skipped);
-      out.sent += retried.sent;
-      out.failed += retried.failed;
     }
     return out;
   }
@@ -211,11 +242,11 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
       if (!(await claim(`report:${period}`, cron, at, false))) {
         if (period === "weekly") {
           try {
-            const rechecked = await recheckWeekly(reports, at);
+            const rechecked = await resendPending(reports, at);
             out.sent += rechecked.sent;
             out.failed += rechecked.failed;
           } catch (e) {
-            reportFailureAs("zq: weekly report recheck", undefined)(e);
+            reportFailureAs("zq: weekly report card retry", undefined)(e);
           }
         }
         continue;

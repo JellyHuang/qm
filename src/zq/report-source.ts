@@ -1,7 +1,8 @@
 import type { FeedEvent } from "./changes.ts";
 import type { ZqContract } from "./contract.ts";
 import { hours, isObject, parsePage, str, type OpCall } from "./op-reader.ts";
-import type { ReportInput, ReportStatusChange, ReportTimeEntry } from "./reports.ts";
+import type { ReportInput, ReportProject, ReportScope, ReportStatusChange, ReportTimeEntry } from "./reports.ts";
+import type { FeatureFacts } from "./rules.ts";
 import { dayKeyIn, type OpReader, type ScanPerson } from "./scanner.ts";
 
 const DAY = 86_400_000;
@@ -17,13 +18,34 @@ function stageOf(side: Record<string, unknown>): string | undefined {
   return str(side["stage"]) ?? str(side["stage_key"]);
 }
 
+export function projectsOfFacts(facts: readonly FeatureFacts[]): ReportProject[] {
+  const views = facts.flatMap((f) => [f.feature, ...f.children, ...(f.bugs ?? [])]);
+  const nameOf = new Map(
+    views.flatMap((w) => (w.projectId && w.projectName ? [[w.projectId, w.projectName] as const] : [])),
+  );
+  const ids = [...new Set(views.flatMap((w) => (w.projectId ? [w.projectId] : [])))];
+  return ids.map((id) => ({
+    id,
+    ...(nameOf.has(id) ? { name: nameOf.get(id)! } : {}),
+    pmOpUserIds: [
+      ...new Set(facts.flatMap((f) => (f.feature.projectId === id && f.feature.pm ? [f.feature.pm.id] : []))),
+    ],
+  }));
+}
+
 export function createReportSource(opts: {
   reader: OpReader;
   call: OpCall;
   contract: ZqContract;
   timezone: string;
   serverId?: string;
-}): (person: ScanPerson, period: ReportInput["period"], since: number, until: number) => Promise<ReportInput> {
+}): (
+  person: ScanPerson,
+  period: ReportInput["period"],
+  since: number,
+  until: number,
+  scope?: ReportScope,
+) => Promise<ReportInput> {
   const { contract } = opts;
   const tool = (name: string) => `${opts.serverId ?? "openproject"}_${name}`;
   const label = (key: string | undefined) =>
@@ -76,14 +98,11 @@ export function createReportSource(opts: {
     }));
   }
 
-  return async (person, period, since, until) => {
-    const { facts } = await opts.reader.features(person);
+  return async (person, period, since, until, scope) => {
+    const facts = scope?.facts ?? (await opts.reader.features(person)).facts;
     const views = facts.flatMap((f) => [f.feature, ...f.children, ...(f.bugs ?? [])]);
     const subjects = new Map(views.map((w) => [w.id, w.subject]));
     const projectOf = new Map(views.flatMap((w) => (w.projectId ? [[w.id, w.projectId] as const] : [])));
-    const nameOf = new Map(
-      views.flatMap((w) => (w.projectId && w.projectName ? [[w.projectId, w.projectName] as const] : [])),
-    );
     const bugIds = new Set(facts.flatMap((f) => (f.bugs ?? []).map((b) => b.id)));
     const bugStages = new Set(Object.keys(contract.stages.bug));
     const me = person.opUserId;
@@ -94,7 +113,8 @@ export function createReportSource(opts: {
       bugIds.has(e.ticketId) ||
       [e.oldStage, e.newStage, stageOf(e.old), stageOf(e.new)].some((s) => s !== undefined && bugStages.has(s));
 
-    const projectIds = [...new Set(views.flatMap((w) => (w.projectId ? [w.projectId] : [])))];
+    const reportProjects = projectsOfFacts(facts).filter((p) => !scope?.projects || scope.projects.has(p.id));
+    const projectIds = reportProjects.map((p) => p.id);
     const statusChanges: ReportStatusChange[] = [];
     if (me && opts.reader.changes) {
       for (const project of projectIds) {
@@ -116,14 +136,6 @@ export function createReportSource(opts: {
       }
       statusChanges.sort((a, b) => a.at - b.at);
     }
-
-    const reportProjects = projectIds.map((id) => ({
-      id,
-      ...(nameOf.has(id) ? { name: nameOf.get(id)! } : {}),
-      pmOpUserIds: [
-        ...new Set(facts.flatMap((f) => (f.feature.projectId === id && f.feature.pm ? [f.feature.pm.id] : []))),
-      ],
-    }));
 
     return {
       mmUserId: person.mmUserId,

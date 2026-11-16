@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DurableMap } from "../persistence/durable-map.ts";
+import type { FeatureFacts } from "./rules.ts";
 
 export interface ReportStatusChange {
   workPackageId: number;
@@ -22,6 +23,11 @@ export interface ReportProject {
   id: string;
   name?: string;
   pmOpUserIds: string[];
+}
+
+export interface ReportScope {
+  facts?: FeatureFacts[];
+  projects?: ReadonlySet<string>;
 }
 
 export interface ReportInput {
@@ -54,7 +60,7 @@ export interface ZqReportDraft {
   since: number;
   until: number;
   text: string;
-  status: "pending" | "confirmed" | "discarded" | "skipped";
+  status: "pending" | "confirmed" | "discarded";
   kind?: "person" | "project";
   projectId?: string;
   projectName?: string;
@@ -62,7 +68,6 @@ export interface ZqReportDraft {
   addressees?: string[];
   delivered?: string[];
   sendFailures?: Record<string, number>;
-  skipReason?: "no_pm";
   createdAt: number;
   decidedAt?: number;
   decidedBy?: string;
@@ -177,7 +182,6 @@ export function createZqReports(opts: {
     },
     async draftProject(input) {
       const id = projectDraftId(input.projectId, input.weekKey);
-      const noPm = input.addressees.length === 0;
       const draft: ZqReportDraft = {
         id,
         mmUserId: input.addressees[0] ?? "",
@@ -189,23 +193,16 @@ export function createZqReports(opts: {
         addressees: input.addressees,
         since: input.since,
         until: input.until,
-        text: noPm ? "" : projectReport(input),
-        status: noPm ? "skipped" : "pending",
-        ...(noPm ? { skipReason: "no_pm" as const } : {}),
+        text: projectReport(input),
+        status: "pending",
         createdAt: now(),
       };
       const inserted = await opts.map.insertIfAbsent(id, draft);
-      if (inserted || noPm) return { draft: (await opts.map.get(id)) ?? draft, created: inserted };
-      let replaced = false;
-      const current = await opts.map.update(id, (d) => {
-        replaced = d.status === "skipped";
-        return replaced ? draft : d;
-      });
-      return { draft: current ?? draft, created: replaced };
+      return { draft: (await opts.map.get(id)) ?? draft, created: inserted };
     },
     async openProjectDrafts(weekKey) {
       const rows = await opts.map.select({ where: { field: "weekKey", anyOfFold: [weekKey] } });
-      return rows.filter((d) => d.kind === "project" && (d.status === "pending" || d.status === "skipped"));
+      return rows.filter((d) => d.kind === "project" && d.status === "pending");
     },
     async recordSend(id, to, delivered) {
       return opts.map.update(id, (d) =>
@@ -220,7 +217,6 @@ export function createZqReports(opts: {
       const project = draft.kind === "project";
       if (!(draft.addressees ?? [draft.mmUserId]).includes(clickerMmUserId))
         throw new Error(project ? "只有收到这份周报的项目经理可以确认" : "只有报告对应的本人可以确认");
-      if (draft.status === "skipped") throw new Error("这份周报没有可确认的内容");
       if (draft.status !== "pending") return draft;
       const claimToken = randomUUID();
       const claimed = await opts.map.update(id, (d) =>
