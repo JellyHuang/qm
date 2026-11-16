@@ -1,3 +1,4 @@
+import { setZqChildren } from "./zq/children.ts";
 import { createZqRuntime, type ZqIdentityAdmin, type ZqRuntime } from "./zq/runtime.ts";
 import { setLogOutboundTools } from "./agent/diagnostics.ts";
 import { createOaClient } from "./integrations/openagents/client.ts";
@@ -2654,7 +2655,8 @@ export function buildApp(
     : undefined;
   setOpenAgentsService(openAgents);
   zq =
-    mattermost && (config.zq.scanner.enabled || config.zq.reports.enabled || config.zq.identityMap)
+    mattermost &&
+    (config.zq.scanner.enabled || config.zq.reports.enabled || config.zq.identityMap || config.zq.childOrders)
       ? createZqRuntime({
           config: config.zq,
           call: (name, args, principalId) => mcpToolService.call(name, args, principalId),
@@ -2679,6 +2681,7 @@ export function buildApp(
           createSweeper,
         })
       : null;
+  setZqChildren(zq?.children);
   setLogOutboundTools(config.logOutboundTools === true);
   const webhookDelivery = createDeliveryRelay(deliveries, {
     type: "webhook",

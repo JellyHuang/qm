@@ -1,3 +1,4 @@
+import { zqChildren, type ProposeInput } from "../zq/children.ts";
 import { openAgentsService } from "../integrations/openagents/service.ts";
 import { trialCronScript, type CronScriptTrial } from "../cron/script.ts";
 import type { AdminToolAccess } from "./admin.ts";
@@ -253,6 +254,7 @@ export interface ToolContext extends SurfaceToolDeps {
   historyOpen(seq: number): Promise<string | null>;
   callMcpTool(name: string, args: Record<string, unknown>, approval?: string): Promise<string>;
   callOpenAgents?(args: Record<string, unknown>): Promise<string>;
+  proposeZqChildren?(input: ProposeInput): Promise<string>;
   mcpToolNeedsApproval(name: string, args: Record<string, unknown>): Promise<boolean>;
   awaitClientResult(
     callId: string,
@@ -1193,6 +1195,13 @@ export function createToolContext(deps: ToolContextDeps): ToolContext {
         ...(runId !== undefined ? { runId } : {}),
         ...(deps.createdBy ? { principalId: deps.createdBy } : {}),
       });
+    },
+
+    async proposeZqChildren(input: ProposeInput): Promise<string> {
+      const service = zqChildren();
+      if (!service) throw new Error("adding execution orders is not enabled on this deployment");
+      if (!deps.createdBy) throw new Error("no requester for this turn");
+      return service.propose(input, deps.createdBy);
     },
 
     async mcpToolNeedsApproval(name: string, args: Record<string, unknown>): Promise<boolean> {

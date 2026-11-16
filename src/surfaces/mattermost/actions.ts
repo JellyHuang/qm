@@ -28,7 +28,7 @@ function settled(text: string, color = "#8d8d8d"): ActionResponse {
 }
 
 export type ZqDecision = (
-  op: "report" | "link",
+  op: "report" | "link" | "children",
   id: string,
   approve: boolean,
   clickerMmUserId: string,

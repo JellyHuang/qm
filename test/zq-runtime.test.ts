@@ -90,3 +90,52 @@ test("a duty the configuration names but the contract key table lacks refuses st
     /ZQ_ESCALATION_DUTIES names a duty the contract key table does not have: lead_ui/,
   );
 });
+
+test("adding orders is off by default, and when on the card click goes through the runtime to OpenProject as the requester", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { parseContract } = await import("../src/zq/contract.ts");
+  const contract = parseContract(
+    JSON.parse(readFileSync(new URL("./fixtures/zq-contract-keys.json", import.meta.url), "utf8")),
+  );
+  const calls: string[] = [];
+  const cards: Array<{ to: string; refs: string[]; ref: string }> = [];
+  const build = (env: NodeJS.ProcessEnv) =>
+    createZqRuntime({
+      config: zqConfigFromEnv(env),
+      contract,
+      call: async (name, args, principalId) => {
+        calls.push(`${name}:${String(args["confirm"])}@${principalId}`);
+        return "{}";
+      },
+      chat: {
+        sendDm: async () => {},
+        sendButtons: async (to, _text, b) =>
+          void cards.push({ to, ref: b[0]!.ref, refs: b.map((x) => `${x.op}:${x.approve}`) }),
+        mmUserIdOf: async (principalId) => (principalId === "internal:alice" ? "mm-alice" : undefined),
+        principalOf: async () => undefined,
+      },
+      map: () => testMap(),
+      leaderLease: leaseOf(),
+      createSweeper: () => ({ start() {}, stop: async () => {} }),
+    });
+  assert.equal(build({}).children, undefined);
+  const runtime = build({ ZQ_CHILD_ORDERS: "1" });
+  await runtime.children!.propose(
+    {
+      featureId: 40,
+      lockVersion: 1,
+      reason: "补单",
+      children: [{ typeKey: "frontend", subject: "联调", description: "登录页" }],
+    },
+    "internal:alice",
+  );
+  assert.deepEqual([cards[0]!.to, cards[0]!.refs], ["mm-alice", ["children:true", "children:false"]]);
+  assert.deepEqual(calls, ["openproject_zq_create_child_orders:false@internal:alice"]);
+  await assert.rejects(runtime.decide("children", cards[0]!.ref, true, "mm-bob"), /只有提出请求的人/);
+  assert.match(await runtime.decide("children", cards[0]!.ref, true, "mm-alice"), /已创建子单/);
+  assert.deepEqual(calls, [
+    "openproject_zq_create_child_orders:false@internal:alice",
+    "openproject_zq_create_child_orders:true@internal:alice",
+  ]);
+  await assert.rejects(build({}).decide("children", "x", true, "mm-alice"), /没有开启/);
+});

@@ -11,6 +11,7 @@ export interface ZqConfig {
   opBaseUrl?: string;
   featureChannels: boolean;
   changeDigest: boolean;
+  childOrders: boolean;
   remarkPrincipal?: string;
   escalation: { duties: readonly Duty[]; afterDays: number };
   unsetResponsibilityDuties: readonly Duty[];
@@ -85,6 +86,7 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
     ...(opBaseUrl ? { opBaseUrl } : {}),
     featureChannels: on(env.ZQ_FEATURE_CHANNELS),
     changeDigest: on(env.ZQ_CHANGE_DIGEST),
+    childOrders: on(env.ZQ_CHILD_ORDERS),
     ...(env.ZQ_REMARK_PRINCIPAL?.trim() ? { remarkPrincipal: env.ZQ_REMARK_PRINCIPAL.trim() } : {}),
     escalation: {
       duties: duties("ZQ_ESCALATION_DUTIES", env.ZQ_ESCALATION_DUTIES),

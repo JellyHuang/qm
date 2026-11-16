@@ -2,6 +2,7 @@ import type { DurableMap } from "../persistence/durable-map.ts";
 import type { LeaderLease } from "../persistence/leader-lease.ts";
 import type { Sweeper } from "../util/sweeper.ts";
 import type { ZqConfig } from "./config.ts";
+import { createZqChildren, type ZqChildDraft, type ZqChildren } from "./children.ts";
 import { createZqChanges, type ZqChangeCursor, type ZqChangeLine, type ZqSnapshot } from "./changes.ts";
 import { createZqIdentityMap, type ZqIdentityLink, type ZqIdentityMap } from "./identity-map.ts";
 import { loadZqContract } from "./config.ts";
@@ -25,7 +26,7 @@ export interface ZqChat {
       id: string;
       name: string;
       style?: "primary" | "danger" | "good" | "default";
-      op: "report" | "link";
+      op: "report" | "link" | "children";
       ref: string;
       approve: boolean;
     }>,
@@ -42,7 +43,8 @@ export interface ZqRuntime {
   identityAdmin: ZqIdentityAdmin;
   start(): void;
   stop(): Promise<void>;
-  decide(op: "report" | "link", id: string, approve: boolean, clickerMmUserId: string): Promise<string>;
+  children?: Pick<ZqChildren, "propose">;
+  decide(op: "report" | "link" | "children", id: string, approve: boolean, clickerMmUserId: string): Promise<string>;
   connectorConnected(provider: string, principalId: string): Promise<void>;
 }
 
@@ -154,6 +156,21 @@ export function createZqRuntime(deps: {
       : {}),
   });
 
+  const children =
+    config.childOrders && contract
+      ? createZqChildren({
+          map: deps.map<ZqChildDraft>("zq_child_drafts"),
+          call: (tool, args, principalId) => deps.call(`${OPENPROJECT_SERVER}_${tool}`, args, principalId),
+          mmUserIdOf: (principalId) => chat.mmUserIdOf(principalId),
+          ...(contract.tools.createChildOrders ? { tool: contract.tools.createChildOrders } : {}),
+          sendCard: (to, draftId, text) =>
+            chat.sendButtons(to, text, [
+              { id: "approve", name: "确认创建", style: "good", op: "children", ref: draftId, approve: true },
+              { id: "discard", name: "放弃", op: "children", ref: draftId, approve: false },
+            ]),
+        })
+      : undefined;
+
   const sweeper = deps.createSweeper(
     () =>
       deps.leaderLease.hold("zq:scanner", async () => {
@@ -165,11 +182,16 @@ export function createZqRuntime(deps: {
 
   return {
     identityAdmin: identity,
+    ...(children ? { children } : {}),
     start() {
       if (config.scanner.enabled || config.reports.enabled) sweeper.start();
     },
     stop: () => sweeper.stop(),
     async decide(op, id, approve, clickerMmUserId) {
+      if (op === "children") {
+        if (!children) throw new Error("增加子单的功能没有开启");
+        return children.decide(id, approve, clickerMmUserId);
+      }
       if (op === "report") {
         const draft = await reports.decide(id, approve, clickerMmUserId, clickerMmUserId);
         return draft.status === "confirmed" ? "已确认日报。" : "已放弃这份草稿。";

@@ -1,4 +1,6 @@
 import { openAgentsTools } from "./agent-tools/openagents.ts";
+import { zqTools } from "./agent-tools/zq.ts";
+import { zqChildren } from "../zq/children.ts";
 import { openAgentsService } from "../integrations/openagents/service.ts";
 import type { DocumentInput } from "../core/documents.ts";
 import type { TurnHandoff } from "./runtime-types.ts";
@@ -155,6 +157,7 @@ export function createAgentTools(ref: ToolContextRef, opts?: AgentToolsOptions):
   const { clientTools } = pageClientTools(kit);
   const { attach, finishSilently, context, runtime, withdrawApproval } = turnTools(kit);
   const { openagents } = openAgentsTools(kit);
+  const { zqAddChildOrders } = zqTools(kit);
 
   const tools = [
     ...(!delegateWork ? [{ ...execute, handlesAbort: true }] : []),
@@ -197,6 +200,7 @@ export function createAgentTools(ref: ToolContextRef, opts?: AgentToolsOptions):
     ...(surfaceTools ? [surface] : [attach]),
     // Offered on any non-read-only turn; the service itself only accepts turns started from Mattermost.
     ...(!opts?.readOnly && openAgentsService() ? [openagents] : []),
+    ...(!opts?.readOnly && zqChildren() ? [zqAddChildOrders] : []),
     finishSilently,
     withdrawApproval,
     { ...resourceTool("goal", { create: createGoal, get: getGoal, update: updateGoal }), handlesAbort: true },

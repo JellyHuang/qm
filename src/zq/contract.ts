@@ -74,6 +74,7 @@ export interface ZqContract {
     bugsForFeature?: string;
     addSystemRemark?: string;
     changesSince?: string;
+    createChildOrders?: string;
   };
 }
 
@@ -125,7 +126,15 @@ function artResourceOf(raw: Record<string, unknown>): (typeKey: string) => boole
 function optionalTools(v: unknown): ZqContract["tools"] {
   if (v === undefined) return {};
   const map = stringMap(v, "tools");
-  const known = ["exitCheck", "meetingsForFeature", "dutyHolders", "bugsForFeature", "addSystemRemark", "changesSince"];
+  const known = [
+    "exitCheck",
+    "meetingsForFeature",
+    "dutyHolders",
+    "bugsForFeature",
+    "addSystemRemark",
+    "changesSince",
+    "createChildOrders",
+  ];
   for (const key of Object.keys(map))
     if (!known.includes(key)) throw new Error(`contract key table: unknown tool ${key}`);
   return map;
