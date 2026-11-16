@@ -60,6 +60,7 @@ export interface ZqService {
 
 const DAY = 86_400_000;
 const MAX_SEND_TRIES = 3;
+const RECHECK_INTERVAL_MS = 30 * 60_000;
 
 interface WeeklyOutcome {
   sent: number;
@@ -173,6 +174,13 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
     return out;
   }
 
+  async function recheckDue(at: number): Promise<boolean> {
+    const previous = await deps.state.get("report:weekly-recheck");
+    if (previous && at - previous.lastRunAt < RECHECK_INTERVAL_MS) return false;
+    await deps.state.put("report:weekly-recheck", { ...previous, lastRunAt: at });
+    return true;
+  }
+
   async function recheckWeekly(reports: NonNullable<ZqServiceDeps["reports"]>, at: number): Promise<WeeklyOutcome> {
     const open = await reports.store.openProjectDrafts(weekKeyOf(at));
     const skipped = new Set(open.flatMap((d) => (d.status === "skipped" && d.projectId ? [d.projectId] : [])));
@@ -183,7 +191,7 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
       out.sent += delivered.sent;
       out.failed += delivered.failed;
     }
-    if (skipped.size > 0) {
+    if (skipped.size > 0 && (await recheckDue(at))) {
       const retried = await weeklyProjects(reports, at, skipped);
       out.sent += retried.sent;
       out.failed += retried.failed;

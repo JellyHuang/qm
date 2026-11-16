@@ -39,6 +39,7 @@ function harness(opts: {
   });
   const dutyCalls: string[] = [];
   const attempts: string[] = [];
+  const builds: number[] = [];
   const service = createZqService({
     config,
     reader: {
@@ -57,6 +58,7 @@ function harness(opts: {
       store,
       source: {
         build: async (person, period, since, until) => {
+          builds.push(clock.now);
           const projects = opts.projectsOf[person.mmUserId] ?? [];
           return {
             mmUserId: person.mmUserId,
@@ -102,7 +104,7 @@ function harness(opts: {
     clock.now = at;
     return service.tick();
   };
-  return { store, cards, attempts, state, dutyCalls, tickAt };
+  return { store, cards, attempts, builds, state, dutyCalls, tickAt };
 }
 
 test("a weekly report goes to the project manager only, one draft with a section per person", async () => {
@@ -288,6 +290,29 @@ test("a later scan never resends to an addressee who already received the card",
   assert.deepEqual(h.attempts, ["mm-pm", "mm-pm2", "mm-pm2", "mm-pm2"]);
   await h.tickAt(WEEKLY_DUE + 3_600_000);
   assert.equal(h.attempts.length, 4);
+  assert.deepEqual(
+    h.cards.map((c) => c.to),
+    ["mm-pm"],
+  );
+});
+
+test("the skipped-project recheck rebuilds the weekly reports at most every 30 minutes and picks up a new manager then", async () => {
+  const featurePm: Record<string, string> = {};
+  const h = harness({ projectsOf: { "mm-alice": ["3"] }, featurePm, duty: { "3": [] } });
+  await h.tickAt(Date.UTC(2026, 10, 11, 8, 0));
+  await h.tickAt(WEEKLY_DUE);
+  const afterCron = h.builds.length;
+  await h.tickAt(WEEKLY_DUE + 5 * 60_000);
+  const first = h.builds.length;
+  assert.ok(first > afterCron, "the first recheck rebuilds");
+  featurePm["3"] = "10";
+  const early = await h.tickAt(WEEKLY_DUE + 10 * 60_000);
+  assert.equal(h.builds.length, first, "five minutes later nothing is rebuilt");
+  assert.equal(early.reportsSent, 0);
+  assert.equal(h.cards.length, 0);
+  const late = await h.tickAt(WEEKLY_DUE + 36 * 60_000);
+  assert.ok(h.builds.length > first, "after 30 minutes it rebuilds again");
+  assert.equal(late.reportsSent, 1);
   assert.deepEqual(
     h.cards.map((c) => c.to),
     ["mm-pm"],
