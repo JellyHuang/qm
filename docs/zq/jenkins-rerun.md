@@ -30,6 +30,7 @@ The same account reads for monitoring. The QM client for it exposes exactly one 
 2. The build is not itself a rebuild created by QM (see the once-only rule).
 3. The failure is classified `network_transient` by the deterministic pattern list below, with the matching log line quoted as evidence.
 4. The job is on the rerun whitelist, the per-job hourly cap is not reached, and the kill switch is on.
+5. The original build's parameters were read completely (see Parameters).
 
 Classification is rules over the log tail, the failed stage and exit codes: connection reset or refused, timeouts, name resolution failures, 502 or 503 from artifact repositories, TLS handshake failures, `git fetch` transport errors, agent disconnects. The pattern list is configuration owned by the PM. A language model never decides a rerun; it may only write the explanation for failures classified `unknown`.
 
@@ -41,11 +42,17 @@ Other classes, never rerun, always reported: `config` (parse or validation error
 - A build whose cause is "rebuilt from build N" where N is in the table is never rerun, so a rerun of a rerun cannot happen.
 - A crash between claim and call is not retried blindly: before acting on a claimed row older than a few minutes, QM asks Jenkins whether a build with a rebuild cause from that build already exists, and records it instead of calling again.
 - Per-job hourly cap and a global kill switch (`ZQ_JENKINS_RERUN`, default off).
-- Jobs with password or secret parameters are excluded from the whitelist, because a rebuild cannot reuse those.
+- A job whose builds have unreadable or masked parameters can never be rerun automatically; it is reported instead.
 
 ## Parameters
 
-QM passes no parameters. The Rebuild plugin reuses the original ones. After the rebuild QM compares the new build's non-secret parameters with the original's and records any mismatch in the log and the notice.
+A rerun carries the original build's parameters exactly: nothing changed, nothing added, nothing dropped.
+
+1. Before the rebuild QM reads the full parameter list of the failed build from Jenkins (names, types, values).
+2. The rebuild is requested with exactly those values.
+3. QM refuses to rerun, and treats the build as not rerunnable, when the parameters cannot be read, when the list is incomplete (a parameter defined on the job and missing from the build, or the reverse), when any value is masked or unreadable (password and secret parameters), or when the job defines parameters the Rebuild plugin cannot reproduce.
+4. A refused rerun is not retried. QM posts to the backend group channel and mentions the responsible person, with the reason ("parameters unreadable" or "parameters incomplete") and the build link.
+5. After the rebuild QM compares the new build's parameters with the original's and records any difference in the log and the notice.
 
 ## When the rerun fails too
 
