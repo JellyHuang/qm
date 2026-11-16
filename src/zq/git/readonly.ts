@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { resultBytes, type GitAudit, type GitAuditTarget } from "./audit.ts";
 import type { GitLimits } from "./limits.ts";
@@ -123,6 +124,18 @@ export interface BranchesResult extends Cut {
 
 export interface FetchResult extends Cut {
   repo: string;
+}
+
+export interface RemoteHeads {
+  defaultBranch?: string;
+  heads: number;
+}
+
+export function parseLsRemote(output: string): RemoteHeads {
+  const lines = output.split("\n");
+  const symref = lines.map((line) => /^ref: refs\/heads\/(\S+)\tHEAD$/.exec(line)?.[1]).find(Boolean);
+  const heads = lines.filter((line) => /\trefs\/heads\/\S+$/.test(line)).length;
+  return { ...(symref === undefined ? {} : { defaultBranch: checkBranch(symref) }), heads };
 }
 
 export interface GitReadonly {
@@ -517,7 +530,13 @@ export function createGitReadonly(deps: {
       const url = config.remotes[repo];
       if (!url) throw new GitDenied("no_remote", "no remote configured");
       const args = ["fetch", "--prune", "--update-head-ok", "--no-write-fetch-head", "--quiet"];
-      await runner.run(dirOf(repo), [...args, url, "+refs/heads/*:refs/heads/*"], { remote: true });
+      const dir = dirOf(repo);
+      await mkdir(config.dir, { recursive: true });
+      await runner.run(dir, ["init", "--bare", "--quiet"]);
+      const listed = await runner.run(dir, ["ls-remote", "--symref", url, "HEAD"], { remote: true });
+      await runner.run(dir, [...args, url, "+refs/heads/*:refs/heads/*"], { remote: true });
+      const { defaultBranch } = parseLsRemote(listed.stdout.toString("utf8"));
+      if (defaultBranch) await runner.run(dir, ["symbolic-ref", "HEAD", `refs/heads/${defaultBranch}`]);
       return { repo, truncated: false };
     });
   }
