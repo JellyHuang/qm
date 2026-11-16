@@ -64,12 +64,11 @@ export function channelRemarkArgs(input: {
   participantOpUserIds: readonly string[];
 }): Record<string, unknown> {
   return {
-    feature_id: input.featureId,
-    event_kind: "feature_channel_created",
-    payload: { channel_id: input.channelId, participant_user_ids: input.participantOpUserIds },
-    reason: "QM 创建了功能讨论频道",
-    source: { kind: "qm" },
+    work_package_id: input.featureId,
+    kind: "channel_created",
+    text: `QM 创建了功能讨论频道(${input.channelId}),参与人 OpenProject 用户:${input.participantOpUserIds.map((id) => `#${id}`).join("、") || "无"}。`,
     idempotency_key: `feature-channel-created:${input.featureId}`,
-    request_id: `qm-feature-channel-${input.featureId}`,
+    source: { kind: "qm", ref: `feature-channel:${input.featureId}` },
+    confirm: true,
   };
 }

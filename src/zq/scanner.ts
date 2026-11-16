@@ -1,6 +1,6 @@
 import { Cron } from "croner";
 import { paused, type Duty, type ZqContract } from "./contract.ts";
-import type { ZqChanges } from "./changes.ts";
+import type { FeedEvent, ZqChanges } from "./changes.ts";
 import type { ZqGroups } from "./groups.ts";
 import { reminderId, type ReminderMode, type ZqReminderStore } from "./reminders.ts";
 import {
@@ -22,6 +22,11 @@ export interface ScanPerson {
 export interface OpReader {
   features(person: ScanPerson): Promise<{ facts: FeatureFacts[]; problems: string[] }>;
   dutyHolders(person: ScanPerson, projectId: string, duty: Duty): Promise<OpUserRef[] | undefined>;
+  changes?(
+    person: ScanPerson,
+    projectId: string,
+    cursor: string | null,
+  ): Promise<{ events: FeedEvent[]; nextCursor: string }>;
 }
 
 export interface ZqFeatureRef {
@@ -64,6 +69,7 @@ export interface ScanReport {
   groupsCreated: number;
   remarkFailed: number;
   changesRecorded: number;
+  changeResync: number;
   unsetResponsibility: number;
   contractProblems: number;
   problemSamples: string[];
@@ -100,6 +106,7 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
     groupsCreated: 0,
     remarkFailed: 0,
     changesRecorded: 0,
+    changeResync: 0,
     unsetResponsibility: 0,
     contractProblems: 0,
     problemSamples: [],
@@ -129,6 +136,8 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
       continue;
     }
     report.peopleScanned++;
+    const feed = opts.changes && opts.mode === "live" && opts.reader.changes ? opts.changes : undefined;
+    if (feed) await readFeed(person, facts, feed, opts, report);
     const holders = new Map<string, OpUserRef[] | undefined>();
 
     async function holdersOf(projectId: string | undefined, duty: Duty): Promise<OpUserRef[] | undefined> {
@@ -183,7 +192,7 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
           else report.alreadyKnown++;
         }
       }
-      if (opts.changes && opts.mode === "live") {
+      if (opts.changes && opts.mode === "live" && !opts.reader.changes) {
         const pm = fact.feature.pm ? await opts.mmUserIdOfOpUser(fact.feature.pm.id) : undefined;
         report.changesRecorded += await opts.changes.record(fact, opts.contract, {
           day: (at) => dayKeyIn(opts.timezone, at),
@@ -201,6 +210,41 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
     }
   }
   return report;
+}
+
+async function readFeed(
+  person: ScanPerson,
+  facts: readonly FeatureFacts[],
+  store: ZqChanges,
+  opts: ScanOptions,
+  report: ScanReport,
+): Promise<void> {
+  const projects = [...new Set(facts.flatMap((f) => f.feature.projectId ?? []))];
+  const pmOf = new Map<number, string | undefined>();
+  for (const fact of facts)
+    pmOf.set(fact.feature.id, fact.feature.pm ? await opts.mmUserIdOfOpUser(fact.feature.pm.id) : undefined);
+  for (const projectId of projects) {
+    const key = `${projectId}:${person.principalId}`;
+    const known = await store.cursor(key);
+    let read: { events: FeedEvent[]; nextCursor: string };
+    try {
+      read = await opts.reader.changes!(person, projectId, known ?? null);
+    } catch (e) {
+      const code = (e as { code?: unknown }).code;
+      if (code !== "cursor_invalid" && code !== "cursor_scope_changed") throw e;
+      report.changeResync++;
+      read = await opts.reader.changes!(person, projectId, null);
+      read.events = [];
+    }
+    if (known !== undefined)
+      report.changesRecorded += await store.ingest(read.events, opts.contract, {
+        facts: facts.filter((f) => f.feature.projectId === projectId),
+        day: (at) => dayKeyIn(opts.timezone, at),
+        link: (id) => (opts.opBaseUrl ? `${opts.opBaseUrl}/work_packages/${id}` : `#${id}`),
+        fallbackMmUserIdOf: (featureId) => pmOf.get(featureId),
+      });
+    await store.saveCursor(key, read.nextCursor);
+  }
 }
 
 async function settleRemark(

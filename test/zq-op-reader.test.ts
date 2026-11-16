@@ -310,3 +310,63 @@ test("the delay marker, the awaited orders and the note are read, and a bug is k
   );
   assert.ok(f.calls.includes('openproject_zq_bugs_for_feature:{"id":1,"offset":1}'));
 });
+
+test("the change feed is read page by page until has_more is false, with the project id as a number and the cursor passed on", async () => {
+  const withFeed = { ...contract, tools: { ...contract.tools, changesSince: "zq_changes_since" } };
+  const row = (id: string) => ({
+    event_id: id,
+    ticket_id: 2,
+    parent_feature_id: 1,
+    kind: "stage",
+    kinds: ["stage"],
+    old: { stage: "execution.active" },
+    new: { stage: "execution.done" },
+    actor: { kind: "user", id: "12", name: "Bob B" },
+    occurred_at: "2026-11-16T01:00:00Z",
+    reason: null,
+    batch_id: null,
+  });
+  const f = fake({
+    openproject_zq_changes_since: (a) =>
+      a["cursor"] === null
+        ? { results: [row("j1")], next_cursor: "c1", has_more: true, watermark: "w" }
+        : { results: [row("j2")], next_cursor: "c2", has_more: false, watermark: "w" },
+  });
+  const reader = createMcpOpReader({ call: f.call, contract: withFeed });
+  const read = await reader.changes!(PERSON, "3", null);
+  assert.deepEqual(
+    read.events.map((e) => [e.id, e.ticketId, e.featureId, e.byRule, e.actorName]),
+    [
+      ["j1", 2, 1, false, "Bob B"],
+      ["j2", 2, 1, false, "Bob B"],
+    ],
+  );
+  assert.equal(read.nextCursor, "c2");
+  assert.deepEqual(f.calls, [
+    'openproject_zq_changes_since:{"project_id":3,"cursor":null,"limit":100}',
+    'openproject_zq_changes_since:{"project_id":3,"cursor":"c1","limit":100}',
+  ]);
+  assert.equal(createMcpOpReader({ call: f.call, contract }).changes, undefined);
+});
+
+test("a cursor the server refuses surfaces as an error with the lower-cased code, whether returned or thrown", async () => {
+  const withFeed = { ...contract, tools: { ...contract.tools, changesSince: "zq_changes_since" } };
+  const thrown = createMcpOpReader({
+    call: async () => {
+      throw new Error("mcp tool error: [CURSOR_INVALID] 游标无效");
+    },
+    contract: withFeed,
+  });
+  await assert.rejects(
+    thrown.changes!(PERSON, "3", "x"),
+    (e: unknown) => e instanceof OpError && e.code === "cursor_invalid",
+  );
+  const returned = createMcpOpReader({
+    call: async () => JSON.stringify({ error: { code: "cursor_scope_changed", message: "范围变化" } }),
+    contract: withFeed,
+  });
+  await assert.rejects(
+    returned.changes!(PERSON, "3", "x"),
+    (e: unknown) => e instanceof OpError && e.code === "cursor_scope_changed",
+  );
+});

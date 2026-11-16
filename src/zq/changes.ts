@@ -26,6 +26,32 @@ export interface ZqChangeLine {
   fallbackMmUserId?: string;
 }
 
+export interface FeedEvent {
+  id: string;
+  ticketId: number;
+  featureId: number;
+  kinds: string[];
+  old: Record<string, unknown>;
+  new: Record<string, unknown>;
+  actorName?: string;
+  byRule: boolean;
+  at: number;
+  reason?: string;
+  batchId?: string;
+}
+
+export interface FeedContext {
+  facts: readonly FeatureFacts[];
+  day: (at: number) => string;
+  link: (id: number) => string;
+  fallbackMmUserIdOf: (featureId: number) => string | undefined;
+}
+
+export interface ZqChangeCursor {
+  id: string;
+  cursor: string;
+}
+
 export interface RecordContext {
   day: (at: number) => string;
   link: (id: number) => string;
@@ -44,6 +70,9 @@ export interface FlushResult {
 }
 
 export interface ZqChanges {
+  cursor(key: string): Promise<string | undefined>;
+  saveCursor(key: string, cursor: string): Promise<void>;
+  ingest(events: readonly FeedEvent[], contract: ZqContract, ctx: FeedContext): Promise<number>;
   record(fact: FeatureFacts, contract: ZqContract, ctx: RecordContext): Promise<number>;
   flush(groups: ZqGroups | undefined, transport: FlushTransport): Promise<FlushResult>;
 }
@@ -74,6 +103,7 @@ interface Pending {
 export function createZqChanges(opts: {
   snapshots: DurableMap<ZqSnapshot>;
   lines: DurableMap<ZqChangeLine>;
+  cursors: DurableMap<ZqChangeCursor>;
   now?: () => number;
 }): ZqChanges {
   const now = opts.now ?? (() => Date.now());
@@ -125,7 +155,100 @@ export function createZqChanges(opts: {
     return out;
   }
 
+  const text = (v: unknown) => (typeof v === "string" ? v : "");
+  const stageOf = (side: Record<string, unknown>) => text(side["stage"]) || text(side["stage_key"]);
+  const nameOf = (v: unknown) =>
+    typeof v === "object" && v !== null ? text((v as Record<string, unknown>)["name"]) : "";
+  const lifecycleOf = (side: Record<string, unknown>) => text(side["lifecycle"]) || "normal";
+  const REASON_MAX = 200;
+
+  function describe(e: FeedEvent, isFeature: boolean, contract: ZqContract): string[] {
+    const label = (stage: string) => contract.stages.feature[stage] ?? contract.stages.task[stage] ?? stage;
+    const parts: string[] = [];
+    if (e.kinds.includes("created")) parts.push("已新增");
+    if (e.kinds.includes("stage")) {
+      const from = stageOf(e.old);
+      const to = stageOf(e.new);
+      const auto = isFeature && e.byRule ? "(自动推进)" : "";
+      parts.push(
+        !isFeature && to === contract.stageRoles.taskDone ? "已完成" : `阶段 ${label(from)} → ${label(to)}${auto}`,
+      );
+    }
+    if (e.kinds.includes("lifecycle")) parts.push(LIFECYCLE_TEXT[lifecycleOf(e.new)] ?? lifecycleOf(e.new));
+    if (e.kinds.includes("delay_marked")) parts.push(e.new["delay_marked"] === true ? "被标记延期" : "延期标记已清除");
+    if (e.kinds.includes("assignee"))
+      parts.push(`执行人 ${nameOf(e.old["assignee"]) || "未指定"} → ${nameOf(e.new["assignee"]) || "未指定"}`);
+    if (e.kinds.includes("planned_end")) {
+      const day = (v: unknown) => (typeof v === "string" && v ? v.slice(0, 10) : "未设置");
+      parts.push(`计划结束时间 ${day(e.old["planned_end"])} → ${day(e.new["planned_end"])}`);
+    }
+    return parts;
+  }
+
   return {
+    async cursor(cursorKey) {
+      return (await opts.cursors.get(cursorKey))?.cursor;
+    },
+    async saveCursor(cursorKey, cursor) {
+      await opts.cursors.put(cursorKey, { id: cursorKey, cursor });
+    },
+
+    async ingest(events, contract, ctx) {
+      const byFeature = new Map<number, FeatureFacts>(ctx.facts.map((f) => [f.feature.id, f]));
+      const lines: Array<{ id: string; featureId: number; featureTitle: string; text: string; at: number }> = [];
+      const batches = new Map<string, FeedEvent[]>();
+      for (const e of [...events].sort((a, b) => a.at - b.at)) {
+        const fact = byFeature.get(e.featureId);
+        if (!fact) continue;
+        const isFeature = e.ticketId === e.featureId;
+        const child = fact.children.find((c) => c.id === e.ticketId);
+        if (!isFeature && !child) continue;
+        if (!isFeature && e.batchId && e.kinds.includes("lifecycle")) {
+          batches.set(e.batchId, [...(batches.get(e.batchId) ?? []), e]);
+          continue;
+        }
+        const parts = describe(e, isFeature, contract);
+        if (!parts.length) continue;
+        const subject = isFeature ? fact.feature.subject : child!.subject;
+        const who = e.byRule ? `规则${e.actorName ? ` ${e.actorName}` : ""}` : (e.actorName ?? "");
+        const why = e.byRule && e.reason ? `,原因:${e.reason.slice(0, REASON_MAX)}` : "";
+        const by = who ? `(${who}${why})` : "";
+        lines.push({
+          id: e.id,
+          featureId: e.featureId,
+          featureTitle: fact.feature.subject,
+          at: e.at,
+          text: `${isFeature ? "功能" : "执行单"}「${subject}」[#${e.ticketId}](${ctx.link(e.ticketId)}) ${parts.join(";")}${by}`,
+        });
+      }
+      for (const [batchId, group] of batches) {
+        const fact = byFeature.get(group[0]!.featureId)!;
+        const state = LIFECYCLE_TEXT[lifecycleOf(group[0]!.new)] ?? "";
+        lines.push({
+          id: `batch:${batchId}`,
+          featureId: fact.feature.id,
+          featureTitle: fact.feature.subject,
+          at: group[0]!.at,
+          text: `随总单${state},影响 ${group.length} 张执行单:${group.map((e) => `#${e.ticketId}`).join("、")}`,
+        });
+      }
+      let created = 0;
+      for (const l of lines) {
+        const pm = ctx.fallbackMmUserIdOf(l.featureId);
+        const line: ZqChangeLine = {
+          id: l.id,
+          featureId: l.featureId,
+          featureTitle: l.featureTitle,
+          text: l.text,
+          createdAt: l.at,
+          status: "pending",
+          ...(pm ? { fallbackMmUserId: pm } : {}),
+        };
+        if (await opts.lines.insertIfAbsent(line.id, line)) created++;
+      }
+      return created;
+    },
+
     async record(fact, contract, ctx) {
       const { feature, children } = fact;
       const featureId = feature.id;

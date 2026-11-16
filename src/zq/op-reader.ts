@@ -1,4 +1,5 @@
 import { lifecycleOf, type Duty, type ZqContract } from "./contract.ts";
+import type { FeedEvent } from "./changes.ts";
 import type { AwaitedChild, ExitCheck, MeetingView, OpUserRef, WorkView } from "./rules.ts";
 import type { OpReader, ScanPerson } from "./scanner.ts";
 
@@ -182,7 +183,36 @@ function parseExit(text: string): ExitCheck | undefined {
   return { ready: parsed["ready"], blockers };
 }
 
+function parseFeedEvent(item: Json): FeedEvent | undefined {
+  const id = str(item["event_id"]);
+  const ticketId = Number(item["ticket_id"]);
+  const parent = Number(item["parent_feature_id"]);
+  const at = time(item["occurred_at"] ?? item["time"]);
+  if (!id || !Number.isSafeInteger(ticketId) || at === undefined) return undefined;
+  const kinds = Array.isArray(item["kinds"]) ? item["kinds"].flatMap((k) => str(k) ?? []) : [];
+  const kind = str(item["kind"]);
+  const actor = isObject(item["actor"]) ? item["actor"] : undefined;
+  const reason = str(item["reason"]);
+  const batchId = str(item["batch_id"]);
+  const actorName = actor ? (str(actor["name"]) ?? str(actor["rule_key"]) ?? str(actor["login"])) : undefined;
+  return {
+    id,
+    ticketId,
+    featureId: Number.isSafeInteger(parent) && parent > 0 ? parent : ticketId,
+    kinds: kinds.length || !kind ? kinds : [kind],
+    old: isObject(item["old"]) ? item["old"] : {},
+    new: isObject(item["new"]) ? item["new"] : {},
+    ...(actorName ? { actorName } : {}),
+    byRule: actor !== undefined && str(actor["kind"]) === "rule",
+    at,
+    ...(reason ? { reason } : {}),
+    ...(batchId ? { batchId } : {}),
+  };
+}
+
 const CONCURRENCY = 5;
+const FEED_PAGE_LIMIT = 100;
+const FEED_PAGE_CAP = 1000;
 
 async function mapLimited<T, R>(items: readonly T[], work: (item: T) => Promise<R>): Promise<R[]> {
   const out: R[] = Array.from({ length: items.length });
@@ -270,6 +300,36 @@ export function createMcpOpReader(opts: { call: OpCall; contract: ZqContract; se
       });
       return { facts, problems };
     },
+    ...(contract.tools.changesSince
+      ? {
+          async changes(scanner: ScanPerson, projectId: string, cursor: string | null) {
+            const events: FeedEvent[] = [];
+            let at = cursor;
+            for (let page = 0; page < FEED_PAGE_CAP; page++) {
+              const text = await opts
+                .call(
+                  tool(contract.tools.changesSince!),
+                  {
+                    project_id: /^\d+$/.test(projectId) ? Number(projectId) : projectId,
+                    cursor: at,
+                    limit: FEED_PAGE_LIMIT,
+                  },
+                  scanner.principalId,
+                )
+                .catch((e: unknown) => {
+                  throw asOpError(e) ?? e;
+                });
+              const parsed = parseJson(text);
+              if (!isObject(parsed) || !Array.isArray(parsed["results"]) || !str(parsed["next_cursor"]))
+                throw new Error("OpenProject returned no change page");
+              events.push(...parsed["results"].filter(isObject).flatMap((r) => parseFeedEvent(r) ?? []));
+              at = str(parsed["next_cursor"])!;
+              if (parsed["has_more"] !== true) return { events, nextCursor: at };
+            }
+            throw new Error("OpenProject change feed did not reach its end");
+          },
+        }
+      : {}),
     async dutyHolders(scanner: ScanPerson, projectId: string, duty: Duty): Promise<OpUserRef[] | undefined> {
       if (!contract.tools.dutyHolders) return undefined;
       const rows = await pages(

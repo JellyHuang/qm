@@ -223,6 +223,7 @@ test("a dry-run scan walks the pages, stores what it would send per rule, target
       groupsCreated: 0,
       remarkFailed: 0,
       changesRecorded: 0,
+      changeResync: 0,
       unsetResponsibility: 0,
       contractProblems: 0,
       problemSamples: [],
@@ -435,13 +436,12 @@ test("the channel receipt is written to OpenProject once after the channel exist
 test("the receipt asks zq_add_system_remark for the one supported event, with a stable idempotency key per feature", () => {
   const args = channelRemarkArgs({ featureId: 40, channelId: "channel-1", participantOpUserIds: ["11", "12"] });
   assert.deepEqual(args, {
-    feature_id: 40,
-    event_kind: "feature_channel_created",
-    payload: { channel_id: "channel-1", participant_user_ids: ["11", "12"] },
-    reason: "QM 创建了功能讨论频道",
-    source: { kind: "qm" },
+    work_package_id: 40,
+    kind: "channel_created",
+    text: "QM 创建了功能讨论频道(channel-1),参与人 OpenProject 用户:#11、#12。",
     idempotency_key: "feature-channel-created:40",
-    request_id: "qm-feature-channel-40",
+    source: { kind: "qm", ref: "feature-channel:40" },
+    confirm: true,
   });
 });
 

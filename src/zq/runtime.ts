@@ -2,7 +2,7 @@ import type { DurableMap } from "../persistence/durable-map.ts";
 import type { LeaderLease } from "../persistence/leader-lease.ts";
 import type { Sweeper } from "../util/sweeper.ts";
 import type { ZqConfig } from "./config.ts";
-import { createZqChanges, type ZqChangeLine, type ZqSnapshot } from "./changes.ts";
+import { createZqChanges, type ZqChangeCursor, type ZqChangeLine, type ZqSnapshot } from "./changes.ts";
 import { createZqIdentityMap, type ZqIdentityLink, type ZqIdentityMap } from "./identity-map.ts";
 import { loadZqContract } from "./config.ts";
 import { checkConfiguredDuties, type ZqContract } from "./contract.ts";
@@ -121,6 +121,7 @@ export function createZqRuntime(deps: {
           store: createZqChanges({
             snapshots: deps.map<ZqSnapshot>("zq_snapshots"),
             lines: deps.map<ZqChangeLine>("zq_change_lines"),
+            cursors: deps.map<ZqChangeCursor>("zq_change_cursors"),
           }),
           channel: chat.postToChannel.bind(chat),
         }

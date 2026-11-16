@@ -1,7 +1,13 @@
 import { tenantTest as test } from "./support/tenant-test.ts";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { createZqChanges, type ZqChangeLine, type ZqSnapshot } from "../src/zq/changes.ts";
+import {
+  createZqChanges,
+  type FeedEvent,
+  type ZqChangeCursor,
+  type ZqChangeLine,
+  type ZqSnapshot,
+} from "../src/zq/changes.ts";
 import { parseContract } from "../src/zq/contract.ts";
 import { createZqGroups, type ZqGroup } from "../src/zq/groups.ts";
 import { createZqReminderStore, type ZqReminder } from "../src/zq/reminders.ts";
@@ -40,7 +46,7 @@ const feature = (over: Partial<WorkView> = {}): WorkView =>
 function harness() {
   const snapshots = testMap<ZqSnapshot>();
   const lines = testMap<ZqChangeLine>();
-  const changes = createZqChanges({ snapshots, lines });
+  const changes = createZqChanges({ snapshots, lines, cursors: testMap<ZqChangeCursor>() });
   const groups = createZqGroups({ map: testMap<ZqGroup>() });
   const channel: Array<{ to: string; text: string }> = [];
   const dm: Array<{ to: string; text: string }> = [];
@@ -52,9 +58,25 @@ function harness() {
     },
     dm: async (to: string, text: string) => void dm.push({ to, text }),
   };
-  const scan = (fact: FeatureFacts) =>
+  const feedCalls: Array<string | null> = [];
+  let feed: (cursor: string | null) => { events: FeedEvent[]; nextCursor: string } = () => ({
+    events: [],
+    nextCursor: "c0",
+  });
+  const scan = (fact: FeatureFacts, withFeed = false) =>
     scanOnce({
-      reader: { features: async () => ({ facts: [fact], problems: [] }), dutyHolders: async () => undefined },
+      reader: {
+        features: async () => ({ facts: [fact], problems: [] }),
+        dutyHolders: async () => undefined,
+        ...(withFeed
+          ? {
+              changes: async (_p: ScanPerson, _project: string, cursor: string | null) => {
+                feedCalls.push(cursor);
+                return feed(cursor);
+              },
+            }
+          : {}),
+      },
       contract,
       people: [PERSON],
       mmUserIdOfOpUser: async (id) => ({ "11": "mm-alice", "13": "mm-pm" })[id],
@@ -73,6 +95,8 @@ function harness() {
     groups,
     channel,
     dm,
+    feedCalls,
+    setFeed: (f: typeof feed) => void (feed = f),
     breakChannel: (broken: boolean) => (fail = broken),
   };
 }
@@ -187,4 +211,122 @@ test("a long digest is split into several posts without losing a line", async ()
     h.channel.map((c) => c.text.split("\n").length - 1).reduce((a, b) => a + b),
     60,
   );
+});
+
+const event = (over: Partial<FeedEvent>): FeedEvent => ({
+  id: "j1",
+  ticketId: 2,
+  featureId: 1,
+  kinds: ["stage"],
+  old: { stage: "execution.active" },
+  new: { stage: "execution.done" },
+  actorName: "Bob B",
+  byRule: false,
+  at: NOW,
+  ...over,
+});
+
+test("with the change feed, the first read is only a baseline and later events become lines keyed by their event id", async () => {
+  const h = harness();
+  await h.groups.ensure(1, [], async () => "ch-1");
+  const fact: FeatureFacts = { feature: feature(), children: [work(2), work(3)] };
+  h.setFeed(() => ({ events: [event({ id: "old" })], nextCursor: "c1" }));
+  const first = await h.scan(fact, true);
+  assert.deepEqual([first.changesRecorded, h.feedCalls], [0, [null]]);
+
+  h.setFeed(() => ({
+    events: [
+      event({ id: "j2" }),
+      event({
+        id: "j3",
+        ticketId: 3,
+        kinds: ["assignee", "delay_marked"],
+        old: { assignee: { name: "Bob B" } },
+        new: { assignee: { name: "Dan D" }, delay_marked: true },
+      }),
+      event({
+        id: "j4",
+        ticketId: 1,
+        kinds: ["stage"],
+        old: { stage: "feature.development" },
+        new: { stage: "feature.acceptance" },
+        actorName: "zq-feature-rule",
+        byRule: true,
+        reason: "全部非取消执行单已完成;子单:#2 #3",
+      }),
+    ],
+    nextCursor: "c2",
+  }));
+  const second = await h.scan(fact, true);
+  assert.deepEqual([second.changesRecorded, h.feedCalls.at(-1)], [3, "c1"]);
+  await h.flush();
+  const text = h.channel[0]!.text;
+  assert.match(text, /执行单「单2」\[#2\].*已完成\(Bob B\)/);
+  assert.match(text, /被标记延期;执行人 Bob B → Dan D\(Bob B\)/);
+  assert.match(
+    text,
+    /功能「单1」.*阶段 研发制作中 → 策划验收\(自动推进\)\(规则 zq-feature-rule,原因:全部非取消执行单已完成;子单:#2 #3\)/,
+  );
+
+  const again = await h.scan(fact, true);
+  assert.equal(again.changesRecorded, 0, "the same events read again add nothing");
+  assert.deepEqual(h.feedCalls.at(-1), "c2");
+});
+
+test("a feed event read twice, and a batch of lifecycle changes, give single lines", async () => {
+  const h = harness();
+  await h.groups.ensure(1, [], async () => "ch-1");
+  const fact: FeatureFacts = { feature: feature(), children: [work(2), work(3), work(4)] };
+  h.setFeed(() => ({ events: [], nextCursor: "c1" }));
+  await h.scan(fact, true);
+  const suspended = (id: string, ticketId: number) =>
+    event({
+      id,
+      ticketId,
+      kinds: ["lifecycle"],
+      old: { lifecycle: "normal" },
+      new: { lifecycle: "suspended" },
+      batchId: "b1",
+    });
+  const events = [
+    event({
+      id: "f1",
+      ticketId: 1,
+      kinds: ["lifecycle"],
+      old: { lifecycle: "normal" },
+      new: { lifecycle: "suspended" },
+      batchId: "b1",
+    }),
+    suspended("c2", 2),
+    suspended("c3", 3),
+    suspended("c4", 4),
+    event({ id: "x9", ticketId: 99, kinds: ["stage"] }),
+  ];
+  h.setFeed(() => ({ events, nextCursor: "c2" }));
+  assert.equal((await h.scan(fact, true)).changesRecorded, 2);
+  h.setFeed(() => ({ events, nextCursor: "c3" }));
+  assert.equal((await h.scan(fact, true)).changesRecorded, 0);
+  await h.flush();
+  const lines = h.channel[0]!.text.split("\n").slice(1);
+  assert.equal(lines.length, 2);
+  assert.match(lines.join("|"), /功能「单1」.*已挂起/);
+  assert.match(lines.join("|"), /随总单已挂起,影响 3 张执行单:#2、#3、#4/);
+});
+
+test("an invalid or out-of-scope cursor is read again from the start as a new baseline and reported", async () => {
+  const h = harness();
+  const fact: FeatureFacts = { feature: feature(), children: [work(2)] };
+  h.setFeed(() => ({ events: [], nextCursor: "c1" }));
+  await h.scan(fact, true);
+  let calls = 0;
+  h.setFeed((cursor) => {
+    calls++;
+    if (cursor !== null) throw Object.assign(new Error("expired"), { code: "cursor_invalid" });
+    return { events: [event({ id: "late" })], nextCursor: "c9" };
+  });
+  const report = await h.scan(fact, true);
+  assert.deepEqual([report.changeResync, report.changesRecorded, calls], [1, 0, 2]);
+  h.setFeed(() => ({ events: [], nextCursor: "c10" }));
+  await h.scan(fact, true);
+  assert.deepEqual(h.feedCalls.at(-1), "c9");
 });

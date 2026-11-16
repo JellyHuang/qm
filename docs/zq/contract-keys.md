@@ -27,6 +27,7 @@ Called with `{ limit: 100, offset }` and paged by `next_offset` until it is `nul
 - `tools.exitCheck`, called with `{ id }`: `{ ready: boolean, blockers: [{ code, message }] }`.
 - `tools.meetingsForFeature`, called with `{ id }` and paged by `next_offset`: `{ results: [{ id, title, end_time, state }] }`; `state` is `draft | open | in_progress | closed | cancelled`.
 - `tools.bugsForFeature`, called with `{ id, offset }` and paged: `{ results: [normalized bug with blocking, assignee, qa_owner] }`.
+- `tools.changesSince`, called with `{ project_id, cursor, limit }`: `{ results: [event], next_cursor, has_more }`; each event has `event_id`, `ticket_id`, `parent_feature_id`, `kinds`, `old`/`new`, `actor`, `occurred_at`, `reason`, `batch_id`.
 - `tools.dutyHolders`, called with `{ project_id, duty }` and paged: `{ results: [{ id, login, name }] }`; empty means nobody holds the duty, several means several.
 
 ## Empty responsibility fields
