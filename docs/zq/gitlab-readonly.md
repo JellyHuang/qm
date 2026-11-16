@@ -68,7 +68,7 @@ The deploy key is read from the org keychain credential `gitlab-qm-readonly-key`
 Limits are checked inside the module before any git process starts, in this order: per-person calls per minute, global calls per minute, per-person daily bytes. A refused call returns `rate_limited: <which limit>` to the agent and is audited with result `rate_limited`, zero bytes, and no git run. Refused calls do not count against the minute windows.
 
 - Calls per minute are fixed one-minute windows held in memory. They are disposable: a restart or deploy only forgets recent counts.
-- The daily budget is the sum of `bytes` in `zq_git_audit` for that person since 00:00 UTC, so it is durable and shared by every instance. It is checked before a call, so the last call of the day may overshoot it by up to one capped result.
+- The daily budget is the sum of `bytes` in `zq_git_audit` for that person since 00:00 UTC, so it is durable and shared by every instance. The budget is strict. A person already at the budget is refused before any git process starts. Otherwise the call runs, its serialized result is measured (the same `bytes` the audit stores), and if the day's bytes so far plus this result exceed the budget the result is discarded and the call is refused with `rate_limited` naming the daily byte budget. The agent gets no partial content, the audit row is `rate_limited` with zero bytes, and a later smaller call that fits is still served the same day. Two truly simultaneous calls are each checked against the bytes recorded so far, so they can jointly pass the check.
 - Scheduled fetches (principal `system`) are not subject to these limits.
 
 ## Milestones

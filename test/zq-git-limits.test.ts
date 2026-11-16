@@ -7,7 +7,7 @@ import { createToolContext } from "../src/tools/primitives.ts";
 import { scopeId } from "../src/types.ts";
 import { zqConfigFromEnv } from "../src/zq/config.ts";
 import { createAuthorResolver } from "../src/zq/git/authors.ts";
-import { createGitAudit, type GitAuditRow } from "../src/zq/git/audit.ts";
+import { createGitAudit, resultBytes, type GitAuditRow } from "../src/zq/git/audit.ts";
 import { DEFAULT_GIT_LIMITS, GitRateLimited, createGitLimits, type GitLimitsConfig } from "../src/zq/git/limits.ts";
 import { createGitReadonly, setZqGit, zqGit } from "../src/zq/git/readonly.ts";
 import { keyFileFrom, type GitRunner } from "../src/zq/git/runner.ts";
@@ -24,10 +24,11 @@ function setup(limits: Partial<GitLimitsConfig> = {}) {
   let clock = START;
   const now = () => clock++;
   const runs: string[][] = [];
+  const output = { stdout: BRANCH_ROW };
   const runner: GitRunner = {
     async run(_dir, args) {
       runs.push([...args]);
-      return { stdout: Buffer.from(BRANCH_ROW), truncated: false, cutBytes: 0 };
+      return { stdout: Buffer.from(output.stdout), truncated: false, cutBytes: 0 };
     },
   };
   const audit = createGitAudit({ map: testMap<GitAuditRow>(), now });
@@ -47,6 +48,7 @@ function setup(limits: Partial<GitLimitsConfig> = {}) {
     readonly,
     audit,
     runs,
+    output,
     advance: (ms: number) => void (clock += ms),
   };
 }
@@ -104,27 +106,44 @@ test("refused calls do not use up the window", async () => {
   await readonly.branches("alice", "server");
 });
 
-test("the daily byte budget is per person, durable in the audit rows, and resets the next day", async () => {
-  const { readonly, audit, runs, advance } = setup({ dailyBytes: 1 });
+test("the daily byte budget is strict: a result that would cross it is refused with no content and no bytes, and a smaller call still fits", async () => {
+  const probe = setup();
+  const full = await probe.readonly.branches("alice", "server");
+  const size = resultBytes(full);
+  const { readonly, audit, runs, output, advance } = setup({ dailyBytes: size + 40 });
   await readonly.branches("alice", "server");
-  const spent = (await audit.rows())[0]!.bytes;
-  assert.ok(spent > 1);
+  assert.equal((await audit.rows())[0]!.bytes, size);
   advance(5 * MINUTE);
-  await assert.rejects(readonly.branches("alice", "server"), /daily git read budget of 1 bytes is spent/);
-  assert.equal(runs.length, 1);
-  assert.equal((await audit.rows())[1]!.result, "rate_limited");
-  await readonly.branches("bob", "server");
+  let content: unknown;
+  await assert.rejects(
+    readonly.branches("alice", "server").then((value) => (content = value)),
+    /rate_limited: this result would exceed the daily git read budget of \d+ bytes/,
+  );
+  assert.equal(content, undefined);
   assert.equal(runs.length, 2);
+  const rows = await audit.rows();
+  assert.deepEqual([rows[1]!.result, rows[1]!.bytes], ["rate_limited", 0]);
+  assert.equal(await audit.bytesSince("alice", 0), size);
+  assert.ok((await readonly.branches("bob", "server")).branches.length > 0);
+  output.stdout = "";
+  assert.deepEqual((await readonly.branches("alice", "server")).branches, []);
+  output.stdout = BRANCH_ROW;
   advance(DAY);
   await readonly.branches("alice", "server");
-  assert.equal(runs.length, 3);
+});
 
-  const rebuilt = createGitLimits({
-    config: { ...DEFAULT_GIT_LIMITS, dailyBytes: 1 },
-    bytesSince: audit.bytesSince,
-    now: () => START + 5 * MINUTE + DAY,
-  });
-  await assert.rejects(rebuilt.admit("alice"), (e) => e instanceof GitRateLimited);
+test("a person already at the budget is refused before any git process starts and the budget resets the next UTC day", async () => {
+  const { readonly, audit, runs, advance } = setup({ dailyBytes: 1 });
+  await refused(readonly.branches("alice", "server"));
+  assert.equal(runs.length, 1);
+  assert.equal((await audit.rows())[0]!.bytes, 0);
+  await audit.audited("alice", "git_branches", {}, async () => ({ truncated: false }));
+  advance(MINUTE);
+  await assert.rejects(readonly.branches("alice", "server"), /daily git read budget of 1 bytes is spent/);
+  assert.equal(runs.length, 1);
+  advance(DAY);
+  await refused(readonly.branches("alice", "server"));
+  assert.equal(runs.length, 2);
 });
 
 test("the fetch path is not subject to the read limits", async () => {

@@ -35,6 +35,8 @@ export interface GitAudit {
   bytesSince(principal: string, since: number): Promise<number>;
 }
 
+export const resultBytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value));
+
 function resultOf(e: unknown): GitAuditResult {
   if (e instanceof GitRateLimited) return "rate_limited";
   return e instanceof GitDenied ? `denied:${e.reason}` : "error";
@@ -70,7 +72,7 @@ export function createGitAudit(deps: { map: DurableMap<GitAuditRow>; now: () => 
       const started = now();
       try {
         const value = await call();
-        const bytes = Buffer.byteLength(JSON.stringify(value));
+        const bytes = resultBytes(value);
         await record(principal, tool, target, started, { bytes, truncated: value.truncated, result: "ok" });
         return value;
       } catch (e) {

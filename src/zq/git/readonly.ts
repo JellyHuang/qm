@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { GitAudit, GitAuditTarget } from "./audit.ts";
+import { resultBytes, type GitAudit, type GitAuditTarget } from "./audit.ts";
 import type { GitLimits } from "./limits.ts";
 import type { GitRunner } from "./runner.ts";
 import {
@@ -215,7 +215,9 @@ export function createGitReadonly(deps: {
   ) =>
     audit.audited(principal, tool, target, async () => {
       await limits.admit(principal);
-      return call();
+      const value = await call();
+      await limits.settle(principal, resultBytes(value));
+      return value;
     });
   const dirOf = (repo: GitRepo) => join(config.dir, `${repo}.git`);
 

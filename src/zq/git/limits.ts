@@ -22,6 +22,7 @@ export class GitRateLimited extends Error {
 
 export interface GitLimits {
   admit(principal: string): Promise<void>;
+  settle(principal: string, resultBytes: number): Promise<void>;
 }
 
 interface Window {
@@ -42,7 +43,18 @@ export function createGitLimits(deps: {
     return current?.minute === minute ? current : { minute, count: 0 };
   }
 
+  const spentBudget = () =>
+    new GitRateLimited(`the daily git read budget of ${config.dailyBytes} bytes is spent; it resets at 00:00 UTC`);
+  const usedToday = (principal: string) => bytesSince(principal, Math.floor(now() / DAY_MS) * DAY_MS);
+
   return {
+    async settle(principal, resultBytes) {
+      const used = await usedToday(principal);
+      if (used + resultBytes > config.dailyBytes)
+        throw new GitRateLimited(
+          `this result would exceed the daily git read budget of ${config.dailyBytes} bytes; ${Math.max(0, config.dailyBytes - used)} bytes remain today, so narrow the request`,
+        );
+    },
     async admit(principal) {
       const at = now();
       const minute = Math.floor(at / MINUTE_MS);
@@ -52,11 +64,7 @@ export function createGitLimits(deps: {
         throw new GitRateLimited(`at most ${config.callsPerMinute} git calls per minute per person; try again shortly`);
       if (all.count >= config.globalCallsPerMinute)
         throw new GitRateLimited(`QM is at its ${config.globalCallsPerMinute} git calls per minute; try again shortly`);
-      const dayStart = Math.floor(at / DAY_MS) * DAY_MS;
-      if ((await bytesSince(principal, dayStart)) >= config.dailyBytes)
-        throw new GitRateLimited(
-          `the daily git read budget of ${config.dailyBytes} bytes is spent; it resets at 00:00 UTC`,
-        );
+      if ((await usedToday(principal)) >= config.dailyBytes) throw spentBudget();
       own.count += 1;
       all.count += 1;
       for (const [key, w] of perPrincipal) if (w.minute !== minute) perPrincipal.delete(key);
