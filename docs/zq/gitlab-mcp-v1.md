@@ -17,7 +17,7 @@ This document supersedes the parts of `gitlab-readonly.md` that it contradicts (
 
 ## Why the key must never leave the service
 
-On this GitLab, `git archive --remote` works over SSH with the key, which would return a whole tree. Any process that can read the key can therefore export a repository with one command. The key lives only inside the MCP service's account and is never passed to QM core, agents, sandboxes or logs. Recommended on the GitLab side: the administrator disables `uploadarchive` server-side. The service itself never runs `git archive`, `git clone` of content, `git bundle` or any export command.
+Anyone who holds the read key can clone every repository it can see, and on this GitLab `git archive --remote` also works with it. Nothing on the server side changes that, so the protection is where the key lives: only inside the MCP service's account, never passed to QM core, agents, sandboxes or logs. The service never runs `git archive`, `git bundle` or any command that hands a repository or a tree to a caller, and its own tools are the only path to the content.
 
 The key currently authenticates as a personal user (`@donghuang`), not as a per-repository deploy key, and it also sees a repository outside the seven (`qm-test`). The allowlist in the service is therefore the only guard on what can be read, and "read-only" holds by the absence of write code. **Open:** replace it with a dedicated read-only key limited to the seven repositories.
 
@@ -109,17 +109,16 @@ New: the MCP service, the LRU blob cache, `list_heads`, `search`, `diff_xlsx`, t
 4. **Search.** `search` with its three kinds.
 5. **Spreadsheets.** `diff_xlsx` with fixtures for header detection, key matching and the overrides.
 6. **QM side.** MCP client registration, the five-minute polling job and its durable tips table, author mapping, handing patch packages to people.
-7. **Operations.** Service unit and runbook, key handling, log retention, the GitLab-side `uploadarchive` change, and the real connectivity check against the seven repositories.
+7. **Operations.** Service unit and runbook, key handling, log retention, and the real connectivity check against the seven repositories.
 
 ## Open points, collected
 
 1. A dedicated read-only key limited to the seven repositories instead of the personal one.
-2. Who disables `uploadarchive` on the GitLab server, and when.
-3. Transport and the shared secret between QM core and the service.
-4. Where the key is read from at start-up and how it is protected on disk.
-5. The exact per-file cap (20 to 50 MB) and how fetched objects are kept inside the 2 GB cap.
-6. Size checks before a fetch (abort-on-exceed proposal).
-7. The scope of content `search`.
-8. The OOXML reader, formula display and the header-detection rule for `diff_xlsx`.
-9. The name and shape of `list_heads` and the response truncation size.
-10. Retention of `zq_git_audit`.
+2. Transport and the shared secret between QM core and the service.
+3. Where the key is read from at start-up and how it is protected on disk.
+4. The exact per-file cap (20 to 50 MB) and how fetched objects are kept inside the 2 GB cap.
+5. Size checks before a fetch (abort-on-exceed proposal).
+6. The scope of content `search`.
+7. The OOXML reader, formula display and the header-detection rule for `diff_xlsx`.
+8. The name and shape of `list_heads` and the response truncation size.
+9. Retention of `zq_git_audit`.
