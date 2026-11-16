@@ -195,15 +195,16 @@ export function createMattermostSender(deps: {
   async function deliverRun(d: Delivery, p: Place, runId: string): Promise<void> {
     const turn = await live.settle(runId);
     const { text, reactions } = cleanReply(d.text);
+    const editRef = turn?.steered ? undefined : d.destination.editRef;
     await postMessage(d, p, text ? withFooter(text, deliveryFooter(d, webBase)) : "", {
-      ...(d.destination.editRef ? { editRef: d.destination.editRef } : {}),
+      ...(editRef ? { editRef } : {}),
       ...(d.attachments?.length ? { attachments: d.attachments } : {}),
     });
     const trigger = turn?.triggerPostId;
     if (trigger && reactions.length) {
       for (const t of reactionTargets(reactions, trigger, new Set([trigger]))) await react(t.postId, t.names);
     }
-    if (turn?.placeholder && turn.placeholder !== d.destination.editRef)
+    if (turn?.placeholder && turn.placeholder !== editRef)
       await rt.client.deletePost(turn.placeholder).catch(swallowAs("mattermost: drop stale placeholder", undefined));
     if (turn) await live.unack(turn);
   }

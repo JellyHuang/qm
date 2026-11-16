@@ -23,6 +23,7 @@ export interface LiveTurn {
 interface Active {
   placeholder?: string;
   consumed?: boolean;
+  steered?: boolean;
   inflight?: Promise<void>;
   stopped: boolean;
   loop: Promise<void>;
@@ -116,6 +117,10 @@ export function createLivePresenter(deps: {
       }
     },
     unack,
+    steer(runId: string): void {
+      const a = active.get(runId);
+      if (a) a.steered = true;
+    },
     async begin(runId: string, turn: LiveTurn, opts: { placeholder: boolean }): Promise<void> {
       const a: Active = { stopped: false, loop: Promise.resolve(), lastText: WORKING, turn };
       active.set(runId, a);
@@ -139,13 +144,17 @@ export function createLivePresenter(deps: {
       }
       a.loop = watch(runId, a).catch(swallowAs("mattermost: live watch", undefined));
     },
-    async settle(runId: string): Promise<(LiveTurn & { placeholder?: string }) | undefined> {
+    async settle(runId: string): Promise<(LiveTurn & { placeholder?: string; steered?: boolean }) | undefined> {
       const a = active.get(runId);
       if (!a) return undefined;
       a.stopped = true;
       active.delete(runId);
       await a.loop;
-      return { ...a.turn, ...(a.placeholder ? { placeholder: a.placeholder } : {}) };
+      return {
+        ...a.turn,
+        ...(a.placeholder ? { placeholder: a.placeholder } : {}),
+        ...(a.steered ? { steered: true } : {}),
+      };
     },
     async stopAll(): Promise<void> {
       const all = [...active.values()];

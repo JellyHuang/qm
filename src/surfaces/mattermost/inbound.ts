@@ -359,6 +359,7 @@ export function createInbound(deps: {
       await live.begin(result.runId, trigger, { placeholder: addressed });
       return;
     }
+    if (result.steered && result.runId) live.steer(result.runId);
     if (addressed) await live.unack(trigger);
     if (addressed && result.status === "refused") await reply(inc, unfinishedTurnText(userFacingFailureClause(result)));
     if (addressed && result.status === "pending_approval")
