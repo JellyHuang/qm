@@ -487,7 +487,13 @@ export function createGitReadonly(deps: {
       const repo = checkRepo(repoName);
       const matcher = patternArg === undefined ? undefined : globToRegExp(checkPattern(patternArg));
       const format = ["%(refname:short)", "%(objectname)", "%(committerdate:iso-strict)"].join("%1f");
-      const out = await gitText(repo, ["for-each-ref", `--format=${format}`, "--sort=-committerdate", "refs/heads"]);
+      const out = await gitText(repo, [
+        "for-each-ref",
+        `--format=${format}`,
+        "--sort=refname",
+        "--sort=-committerdate",
+        "refs/heads",
+      ]);
       const all = out
         .split("\n")
         .filter(Boolean)

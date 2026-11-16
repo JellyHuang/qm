@@ -300,8 +300,13 @@ test("blame returns the requested range with authors and caps at 200 lines", asy
 test("branches filters by glob, sorts by recency and reports tips", async () => {
   const { readonly } = await harness();
   const all = await readonly.branches("p", "server");
-  assert.equal(all.branches[0]?.name, "main");
-  assert.equal(all.branches[0]?.sha, fx.head);
+  assert.deepEqual(all.branches.map((b) => b.name).sort(), ["feature/login", "main"]);
+  assert.equal(all.branches.find((b) => b.name === "main")?.sha, fx.head);
+  const dates = all.branches.map((b) => Date.parse(b.date));
+  assert.deepEqual(
+    dates,
+    [...dates].sort((a, b) => b - a),
+  );
   assert.equal(all.truncated, false);
   assert.deepEqual(
     (await readonly.branches("p", "server", "feature/*")).branches.map((b) => b.name),
