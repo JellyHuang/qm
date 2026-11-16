@@ -6,7 +6,7 @@ import { createZqChanges, type ZqChangeLine, type ZqSnapshot } from "./changes.t
 import { createZqIdentityMap, type ZqIdentityLink, type ZqIdentityMap } from "./identity-map.ts";
 import { loadZqContract } from "./config.ts";
 import { checkConfiguredDuties, type ZqContract } from "./contract.ts";
-import { createZqGroups, type ZqGroup } from "./groups.ts";
+import { channelRemarkArgs, createZqGroups, type ZqGroup } from "./groups.ts";
 import { createMcpOpReader, type OpCall } from "./op-reader.ts";
 import { createZqReminderStore, type ZqReminder } from "./reminders.ts";
 import { createZqReports, type ReportInput, type ZqReportDraft } from "./reports.ts";
@@ -97,9 +97,22 @@ export function createZqRuntime(deps: {
       ZQ_ESCALATION_DUTIES: config.escalation.duties,
       ZQ_UNSET_RESPONSIBILITY_DUTIES: config.unsetResponsibilityDuties,
     });
+  const remarkWriter =
+    (tool: string, principalId: string) =>
+    async (input: { featureId: number; channelId: string; participantOpUserIds: string[] }) => {
+      const text = await deps.call(`${OPENPROJECT_SERVER}_${tool}`, channelRemarkArgs(input), principalId);
+      const error = (JSON.parse(text) as { error?: { code?: string } }).error;
+      if (error) throw new Error(`OpenProject refused the channel remark: ${error.code ?? "error"}`);
+    };
   const groups =
     config.featureChannels && chat.createGroup
-      ? { store: createZqGroups({ map: deps.map<ZqGroup>("zq_groups") }), create: chat.createGroup.bind(chat) }
+      ? {
+          store: createZqGroups({ map: deps.map<ZqGroup>("zq_groups") }),
+          create: chat.createGroup.bind(chat),
+          ...(contract?.tools.addSystemRemark && config.remarkPrincipal
+            ? { remark: remarkWriter(contract.tools.addSystemRemark, config.remarkPrincipal) }
+            : {}),
+        }
       : undefined;
 
   const changes =

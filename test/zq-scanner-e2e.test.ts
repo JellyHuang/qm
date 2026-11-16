@@ -9,7 +9,7 @@ import { createMcpToolService, type McpToolService } from "../src/mcp/mcp-tool-s
 import type { McpToolContract } from "../src/mcp/tool-contract.ts";
 import { zqConfigFromEnv } from "../src/zq/config.ts";
 import { parseContract, type ZqContract } from "../src/zq/contract.ts";
-import { createZqGroups, type ZqGroup } from "../src/zq/groups.ts";
+import { channelRemarkArgs, createZqGroups, type ZqGroup } from "../src/zq/groups.ts";
 import { createMcpOpReader, parseWorkView } from "../src/zq/op-reader.ts";
 import { createZqReminderStore, type ZqReminder } from "../src/zq/reminders.ts";
 import { dayKeyIn, scanIsDue, scanOnce, type ScanPerson } from "../src/zq/scanner.ts";
@@ -221,6 +221,7 @@ test("a dry-run scan walks the pages, stores what it would send per rule, target
       noHolder: 0,
       unlinked: 0,
       groupsCreated: 0,
+      remarkFailed: 0,
       changesRecorded: 0,
       unsetResponsibility: 0,
       contractProblems: 0,
@@ -388,6 +389,60 @@ test("the group for a feature in the briefing stage is made once, only when ever
   assert.equal((await run(ready, first.groups)).report.groupsCreated, 0, "a second scan reuses the group");
   assert.equal(created.length, 1);
   assert.equal((await first.groups.get(40))?.groupRef, "channel-1");
+});
+
+test("the channel receipt is written to OpenProject once after the channel exists, retried while it fails, and never repeated", async () => {
+  const feature = parseWork(detail(40, { type_key: "feature", status_key: "feature.briefing", planner: ALICE_OP }));
+  const children = [parseWork(detail(41, { parent_id: 40, assignee: asUser(BOB_OP) }))];
+  const groups = createZqGroups({ map: testMap<ZqGroup>() });
+  const remarks: Array<{ featureId: number; channelId: string; participantOpUserIds: string[] }> = [];
+  let failing = true;
+  const scan = () =>
+    scanOnce({
+      reader: {
+        features: async () => ({ facts: [{ feature, children, meetings: [] }], problems: [] }),
+        dutyHolders: async () => undefined,
+      },
+      contract,
+      people: [ALICE],
+      mmUserIdOfOpUser: async (id) => MM_OF[id],
+      reminders: createZqReminderStore({ map: testMap<ZqReminder>() }),
+      groups: {
+        store: groups,
+        create: async () => "channel-1",
+        remark: async (input) => {
+          if (failing) throw new Error("OpenProject is down");
+          remarks.push(input);
+        },
+      },
+      mode: "live",
+      now: NOON_SHANGHAI,
+      timezone: "Asia/Shanghai",
+      dailyCeiling: 100,
+      escalation: { duties: [], afterDays: 2 },
+    });
+  const first = await scan();
+  assert.deepEqual([first.groupsCreated, first.remarkFailed], [1, 1]);
+  assert.equal((await groups.get(40))?.remarkWritten, undefined);
+  failing = false;
+  assert.equal((await scan()).remarkFailed, 0);
+  assert.deepEqual(remarks, [{ featureId: 40, channelId: "channel-1", participantOpUserIds: ["11", "12"] }]);
+  await scan();
+  assert.equal(remarks.length, 1);
+  assert.equal((await groups.get(40))?.remarkWritten, true);
+});
+
+test("the receipt asks zq_add_system_remark for the one supported event, with a stable idempotency key per feature", () => {
+  const args = channelRemarkArgs({ featureId: 40, channelId: "channel-1", participantOpUserIds: ["11", "12"] });
+  assert.deepEqual(args, {
+    feature_id: 40,
+    event_kind: "feature_channel_created",
+    payload: { channel_id: "channel-1", participant_user_ids: ["11", "12"] },
+    reason: "QM 创建了功能讨论频道",
+    source: { kind: "qm" },
+    idempotency_key: "feature-channel-created:40",
+    request_id: "qm-feature-channel-40",
+  });
 });
 
 test("the scan schedule follows the cron in its timezone", () => {

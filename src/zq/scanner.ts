@@ -36,7 +36,11 @@ export interface ScanOptions {
   people: readonly ScanPerson[];
   mmUserIdOfOpUser: (opUserId: string) => Promise<string | undefined>;
   reminders: ZqReminderStore;
-  groups?: { store: ZqGroups; create: (feature: ZqFeatureRef, memberMmUserIds: string[]) => Promise<string> };
+  groups?: {
+    store: ZqGroups;
+    create: (feature: ZqFeatureRef, memberMmUserIds: string[]) => Promise<string>;
+    remark?: (input: { featureId: number; channelId: string; participantOpUserIds: string[] }) => Promise<void>;
+  };
   changes?: ZqChanges;
   opBaseUrl?: string;
   mode: ReminderMode;
@@ -58,6 +62,7 @@ export interface ScanReport {
   noHolder: number;
   unlinked: number;
   groupsCreated: number;
+  remarkFailed: number;
   changesRecorded: number;
   unsetResponsibility: number;
   contractProblems: number;
@@ -93,6 +98,7 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
     noHolder: 0,
     unlinked: 0,
     groupsCreated: 0,
+    remarkFailed: 0,
     changesRecorded: 0,
     unsetResponsibility: 0,
     contractProblems: 0,
@@ -191,9 +197,29 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
         (await ensureGroup(fact, opts.contract, opts.groups, opts.mmUserIdOfOpUser, opts.opBaseUrl))
       )
         report.groupsCreated++;
+      if (opts.groups?.remark && opts.mode === "live") await settleRemark(fact.feature.id, opts.groups, report);
     }
   }
   return report;
+}
+
+async function settleRemark(
+  featureId: number,
+  groups: NonNullable<ScanOptions["groups"]>,
+  report: ScanReport,
+): Promise<void> {
+  const group = await groups.store.get(featureId);
+  if (!group?.groupRef || group.remarkWritten) return;
+  try {
+    await groups.remark!({
+      featureId,
+      channelId: group.groupRef,
+      participantOpUserIds: group.participantOpUserIds,
+    });
+    await groups.store.markRemarkWritten(featureId);
+  } catch {
+    report.remarkFailed++;
+  }
 }
 
 async function ensureGroup(
@@ -214,6 +240,11 @@ async function ensureGroup(
     subject: feature.subject,
     ...(opBaseUrl ? { url: `${opBaseUrl}/work_packages/${feature.id}` } : {}),
   };
-  const { created } = await groups.store.ensure(feature.id, members, (list) => groups.create(ref, list));
+  const { created } = await groups.store.ensure(
+    feature.id,
+    members,
+    (list) => groups.create(ref, list),
+    people.map((u) => u.id),
+  );
   return created;
 }
