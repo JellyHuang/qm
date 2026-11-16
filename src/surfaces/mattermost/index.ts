@@ -22,6 +22,7 @@ import { createDirectorySync } from "./directory.ts";
 import {
   createAdmission,
   createLinkRegistry,
+  verifiedEmail,
   type AccessRequest,
   type LinkToken,
   type MattermostLink,
@@ -287,6 +288,10 @@ export function createMattermost(deps: MattermostDeps) {
     },
     async mmUserIdOf(principalId: string): Promise<string | undefined> {
       return (await rt.mmUserForPrincipal(principalId))?.id;
+    },
+    async mmUserIdsOfEmail(email: string): Promise<string[]> {
+      const wanted = email.trim().toLowerCase();
+      return (await rt.allUsers()).filter((u) => verifiedEmail(u) === wanted).map((u) => u.id);
     },
     async principalOf(mmUserId: string): Promise<string | undefined> {
       return (await rt.actorFor(await rt.user(mmUserId)))?.externalId;

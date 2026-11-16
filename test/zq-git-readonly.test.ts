@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createGitAudit, type GitAuditRow } from "../src/zq/git/audit.ts";
+import { DEFAULT_GIT_LIMITS, createGitLimits } from "../src/zq/git/limits.ts";
 import { createGitRunner, sshCommand } from "../src/zq/git/runner.ts";
 import {
   createGitReadonly,
@@ -108,7 +109,8 @@ async function harness(opts: { remotes?: Record<string, string> } = {}) {
   const runner = createGitRunner();
   const dir = mkdtempSync(join(clones, "d-"));
   const config = { dir, remotes: opts.remotes ?? { server: work } };
-  const readonly = createGitReadonly({ config, runner, audit, now });
+  const limits = createGitLimits({ config: DEFAULT_GIT_LIMITS, bytesSince: audit.bytesSince, now });
+  const readonly = createGitReadonly({ config, runner, audit, limits, now });
   git(dir, ["init", "-q", "--bare", "-b", "main", "server.git"]);
   await readonly.fetchRepo("server");
   return { readonly, audit, runner, dir };

@@ -47,17 +47,33 @@ A durable table `zq_git_audit` (Postgres, DurableMap) records each call: time, c
 
 ## Author mapping
 
-A commit's author email is matched to a person through the identity map. A match gives the Mattermost user; no match is never an automatic contact: the result is "unmatched" and goes to the PM. One commit email maps to at most one person; ambiguous matches count as unmatched.
+A commit's author email is matched to a person through Mattermost's verified user emails (the same source QM uses to know who a person is). A match gives the Mattermost user; no match is never an automatic contact: the result is "unmatched" and goes to the PM. One commit email maps to at most one person; ambiguous matches count as unmatched.
 
-## Configuration (planned)
+## Configuration
 
-- `ZQ_GIT_READONLY` (`1` enables, default off).
-- `ZQ_GIT_DIR` (clone directory), the repository name to SSH URL map, the pinned `known_hosts` file, the keychain handle.
-- Rate limits and the daily byte budget.
+| Variable                         | Default | Meaning                                                                                    |
+| -------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
+| `ZQ_GIT_READONLY`                | off     | `1` builds the module and offers the six `git_*` tools. Needs Mattermost and `ZQ_GIT_DIR`. |
+| `ZQ_GIT_DIR`                     |         | Directory holding the bare clones (`<repo>.git`).                                          |
+| `ZQ_GIT_REMOTES`                 | none    | JSON object of repository name (allowlist only) to SSH URL, used by fetch only.            |
+| `ZQ_GIT_KNOWN_HOSTS`             |         | Pinned `known_hosts` file for fetch.                                                       |
+| `ZQ_GIT_CALLS_PER_MINUTE`        | 30      | Calls one person may make per minute (1 to 10000).                                         |
+| `ZQ_GIT_GLOBAL_CALLS_PER_MINUTE` | 120     | Calls everyone together may make per minute (1 to 100000).                                 |
+| `ZQ_GIT_DAILY_BYTES`             | 20 MiB  | Bytes one person may be returned per UTC day (1 to 10 GiB).                                |
+
+The deploy key is read from the org keychain credential `gitlab-qm-readonly-key` (the same service-credential store the broker uses) each time a fetch needs it.
+
+## Rate limits and the budget
+
+Limits are checked inside the module before any git process starts, in this order: per-person calls per minute, global calls per minute, per-person daily bytes. A refused call returns `rate_limited: <which limit>` to the agent and is audited with result `rate_limited`, zero bytes, and no git run. Refused calls do not count against the minute windows.
+
+- Calls per minute are fixed one-minute windows held in memory. They are disposable: a restart or deploy only forgets recent counts.
+- The daily budget is the sum of `bytes` in `zq_git_audit` for that person since 00:00 UTC, so it is durable and shared by every instance. It is checked before a call, so the last call of the day may overshoot it by up to one capped result.
+- Scheduled fetches (principal `system`) are not subject to these limits.
 
 ## Milestones
 
 1. Core module: safe git runner, allowlist, validation, the six tools with caps, the audit table, tests against a local fixture repository (offline).
-2. Rate limits, author resolver, switch, registration as QM agent tools.
+2. Rate limits, author resolver, switch, registration as QM agent tools (done).
 3. Real connectivity test with the real key against one small repository (needs the key and a decision from Jelly on where the clones live).
 4. Scheduled fetch and commit watching rules (what QM does when it sees a commit), designed separately.

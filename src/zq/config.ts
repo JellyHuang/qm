@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { Cron } from "croner";
+import { DEFAULT_GIT_LIMITS, type GitLimitsConfig } from "./git/limits.ts";
 import { isGitRepo } from "./git/validate.ts";
 import { parseContract, type Duty, type ZqContract } from "./contract.ts";
 
@@ -17,7 +18,13 @@ export interface ZqConfig {
   escalation: { duties: readonly Duty[]; afterDays: number };
   unsetResponsibilityDuties: readonly Duty[];
   reports: { enabled: boolean; dailyCron?: string; weeklyCron?: string };
-  git: { enabled: boolean; dir?: string; remotes: Record<string, string>; knownHosts?: string };
+  git: {
+    enabled: boolean;
+    dir?: string;
+    remotes: Record<string, string>;
+    knownHosts?: string;
+    limits: GitLimitsConfig;
+  };
 }
 
 const DEFAULT_CRON = "*/5 * * * *";
@@ -25,6 +32,7 @@ const DEFAULT_TIMEZONE = "Asia/Shanghai";
 const DEFAULT_DAILY_CEILING = 200;
 const DEFAULT_ESCALATION_DAYS = 2;
 const WEDNESDAY = 3;
+const MAX_GIT_DAILY_BYTES = 10 * 1024 ** 3;
 
 const on = (value: string | undefined) => value?.trim() === "1";
 
@@ -127,6 +135,29 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
     git: {
       enabled: gitEnabled,
       remotes: gitRemotes(env.ZQ_GIT_REMOTES),
+      limits: {
+        callsPerMinute: integer(
+          "ZQ_GIT_CALLS_PER_MINUTE",
+          env.ZQ_GIT_CALLS_PER_MINUTE,
+          DEFAULT_GIT_LIMITS.callsPerMinute,
+          1,
+          10_000,
+        ),
+        globalCallsPerMinute: integer(
+          "ZQ_GIT_GLOBAL_CALLS_PER_MINUTE",
+          env.ZQ_GIT_GLOBAL_CALLS_PER_MINUTE,
+          DEFAULT_GIT_LIMITS.globalCallsPerMinute,
+          1,
+          100_000,
+        ),
+        dailyBytes: integer(
+          "ZQ_GIT_DAILY_BYTES",
+          env.ZQ_GIT_DAILY_BYTES,
+          DEFAULT_GIT_LIMITS.dailyBytes,
+          1,
+          MAX_GIT_DAILY_BYTES,
+        ),
+      },
       ...(gitDir ? { dir: gitDir } : {}),
       ...(gitKnownHosts ? { knownHosts: gitKnownHosts } : {}),
     },

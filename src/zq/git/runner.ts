@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 export interface GitRunnerOptions {
   timeoutMs?: number;
@@ -27,6 +30,20 @@ export const GIT_TIMEOUT_MS = 60_000;
 export const GIT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const STDERR_BYTES = 4096;
 const SAFE_PATH = "/usr/local/bin:/usr/bin:/bin";
+
+export function keyFileFrom(readKey: () => Promise<string>): NonNullable<GitRunnerOptions["withKeyFile"]> {
+  return async (fn) => {
+    const dir = await mkdtemp(join(tmpdir(), "qm-gitkey-"));
+    try {
+      const file = join(dir, "key");
+      const key = await readKey();
+      await writeFile(file, key.endsWith("\n") ? key : `${key}\n`, { mode: 0o600 });
+      return await fn(file);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  };
+}
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;

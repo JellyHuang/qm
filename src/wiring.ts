@@ -1,5 +1,6 @@
 import { setZqChildren } from "./zq/children.ts";
-import { createZqRuntime, type ZqIdentityAdmin, type ZqRuntime } from "./zq/runtime.ts";
+import { setZqGit } from "./zq/git/readonly.ts";
+import { createZqRuntime, GIT_KEY_SLUG, type ZqIdentityAdmin, type ZqRuntime } from "./zq/runtime.ts";
 import { setLogOutboundTools } from "./agent/diagnostics.ts";
 import { createOaClient } from "./integrations/openagents/client.ts";
 import { createOpenAgentsService, setOpenAgentsService, type OaThreadLink } from "./integrations/openagents/service.ts";
@@ -2656,7 +2657,11 @@ export function buildApp(
   setOpenAgentsService(openAgents);
   zq =
     mattermost &&
-    (config.zq.scanner.enabled || config.zq.reports.enabled || config.zq.identityMap || config.zq.childOrders)
+    (config.zq.scanner.enabled ||
+      config.zq.reports.enabled ||
+      config.zq.identityMap ||
+      config.zq.childOrders ||
+      config.zq.git.enabled)
       ? createZqRuntime({
           config: config.zq,
           call: (name, args, principalId) => mcpToolService.call(name, args, principalId),
@@ -2675,6 +2680,12 @@ export function buildApp(
             principalOf: (mmUserId) => mattermost!.principalOf(mmUserId),
             createGroup: (feature, members) => mattermost!.createFeatureChannel(feature, members),
             postToChannel: (channelId, text) => mattermost!.postToChannel(channelId, text),
+            mmUserIdsOfEmail: (email) => mattermost!.mmUserIdsOfEmail(email),
+          },
+          readKey: async () => {
+            const key = await serviceCreds.getServiceCredentialSecret(scopeId("org", config.orgId), GIT_KEY_SLUG);
+            if (!key) throw new Error(`the keychain has no credential "${GIT_KEY_SLUG}"`);
+            return key.secret;
           },
           map: (table) => artifactMap(table),
           leaderLease,
@@ -2682,6 +2693,7 @@ export function buildApp(
         })
       : null;
   setZqChildren(zq?.children);
+  setZqGit(zq?.git);
   setLogOutboundTools(config.logOutboundTools === true);
   const webhookDelivery = createDeliveryRelay(deliveries, {
     type: "webhook",

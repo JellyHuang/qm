@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DurableMap } from "../../persistence/durable-map.ts";
+import { GitRateLimited } from "./limits.ts";
 import { GitDenied, printable } from "./validate.ts";
 
 export type GitAuditResult = "ok" | `denied:${string}` | "rate_limited" | "error";
@@ -31,6 +32,12 @@ export interface GitAudit {
     call: () => Promise<T>,
   ): Promise<T>;
   rows(): Promise<GitAuditRow[]>;
+  bytesSince(principal: string, since: number): Promise<number>;
+}
+
+function resultOf(e: unknown): GitAuditResult {
+  if (e instanceof GitRateLimited) return "rate_limited";
+  return e instanceof GitDenied ? `denied:${e.reason}` : "error";
 }
 
 export function createGitAudit(deps: { map: DurableMap<GitAuditRow>; now: () => number }): GitAudit {
@@ -67,13 +74,17 @@ export function createGitAudit(deps: { map: DurableMap<GitAuditRow>; now: () => 
         await record(principal, tool, target, started, { bytes, truncated: value.truncated, result: "ok" });
         return value;
       } catch (e) {
-        const result: GitAuditResult = e instanceof GitDenied ? `denied:${e.reason}` : "error";
-        await record(principal, tool, target, started, { bytes: 0, truncated: false, result });
+        await record(principal, tool, target, started, { bytes: 0, truncated: false, result: resultOf(e) });
         throw e;
       }
     },
     async rows() {
       return (await map.all()).sort((a, b) => a.at - b.at);
+    },
+    async bytesSince(principal, since) {
+      return (await map.all())
+        .filter((row) => row.principal === principal && row.at >= since)
+        .reduce((sum, row) => sum + row.bytes, 0);
     },
   };
 }

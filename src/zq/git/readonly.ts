@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import type { GitAudit } from "./audit.ts";
+import type { GitAudit, GitAuditTarget } from "./audit.ts";
+import type { GitLimits } from "./limits.ts";
 import type { GitRunner } from "./runner.ts";
 import {
   GitDenied,
@@ -202,9 +203,20 @@ export function createGitReadonly(deps: {
   config: GitReadonlyConfig;
   runner: GitRunner;
   audit: GitAudit;
+  limits: GitLimits;
   now: () => number;
 }): GitReadonly {
-  const { config, runner, audit } = deps;
+  const { config, runner, audit, limits } = deps;
+  const limited = <T extends { truncated: boolean }>(
+    principal: string,
+    tool: string,
+    target: GitAuditTarget,
+    call: () => Promise<T>,
+  ) =>
+    audit.audited(principal, tool, target, async () => {
+      await limits.admit(principal);
+      return call();
+    });
   const dirOf = (repo: GitRepo) => join(config.dir, `${repo}.git`);
 
   async function git(repo: GitRepo, args: readonly string[], maxBytes?: number) {
@@ -255,7 +267,7 @@ export function createGitReadonly(deps: {
     repoName: string,
     opts: { branch?: string; since?: string; limit?: number } = {},
   ): Promise<RecentCommits> {
-    return audit.audited(principal, "git_recent_commits", { repo: repoName, ref: opts.branch }, async () => {
+    return limited(principal, "git_recent_commits", { repo: repoName, ref: opts.branch }, async () => {
       const repo = checkRepo(repoName);
       const branch = opts.branch === undefined ? undefined : checkBranch(opts.branch);
       const since = opts.since === undefined ? undefined : checkSince(opts.since);
@@ -299,7 +311,7 @@ export function createGitReadonly(deps: {
   }
 
   async function commit(principal: string, repoName: string, shaArg: string): Promise<CommitDetail> {
-    return audit.audited(principal, "git_commit", { repo: repoName, ref: shaArg }, async () => {
+    return limited(principal, "git_commit", { repo: repoName, ref: shaArg }, async () => {
       const repo = checkRepo(repoName);
       const sha = await resolveCommit(repo, checkSha(shaArg));
       const format = ["%H", "%P", "%an", "%ae", "%aI", "%cn", "%ce", "%cI", "%B"].join("%x1f");
@@ -324,7 +336,7 @@ export function createGitReadonly(deps: {
   }
 
   async function diff(principal: string, repoName: string, target: string, pathArg?: string): Promise<DiffResult> {
-    return audit.audited(principal, "git_diff", { repo: repoName, ref: target, path: pathArg }, async () => {
+    return limited(principal, "git_diff", { repo: repoName, ref: target, path: pathArg }, async () => {
       const repo = checkRepo(repoName);
       const range = typeof target === "string" ? checkRange(target) : undefined;
       const path = pathArg === undefined ? undefined : checkPath(pathArg);
@@ -388,7 +400,7 @@ export function createGitReadonly(deps: {
   }
 
   async function fileAt(principal: string, repoName: string, refArg: string, pathArg: string): Promise<FileAtResult> {
-    return audit.audited(principal, "git_file_at", { repo: repoName, ref: refArg, path: pathArg }, async () => {
+    return limited(principal, "git_file_at", { repo: repoName, ref: refArg, path: pathArg }, async () => {
       const repo = checkRepo(repoName);
       const rev = checkRevision(refArg);
       const path = checkPath(pathArg);
@@ -417,7 +429,7 @@ export function createGitReadonly(deps: {
     startArg: number,
     endArg: number,
   ): Promise<BlameResult> {
-    return audit.audited(principal, "git_blame", { repo: repoName, ref: refArg, path: pathArg }, async () => {
+    return limited(principal, "git_blame", { repo: repoName, ref: refArg, path: pathArg }, async () => {
       const repo = checkRepo(repoName);
       const rev = checkRevision(refArg);
       const path = checkPath(pathArg);
@@ -469,7 +481,7 @@ export function createGitReadonly(deps: {
   }
 
   async function branches(principal: string, repoName: string, patternArg?: string): Promise<BranchesResult> {
-    return audit.audited(principal, "git_branches", { repo: repoName, ref: patternArg }, async () => {
+    return limited(principal, "git_branches", { repo: repoName, ref: patternArg }, async () => {
       const repo = checkRepo(repoName);
       const matcher = patternArg === undefined ? undefined : globToRegExp(checkPattern(patternArg));
       const format = ["%(refname:short)", "%(objectname)", "%(committerdate:iso-strict)"].join("%1f");
@@ -503,4 +515,14 @@ export function createGitReadonly(deps: {
   }
 
   return { recentCommits, commit, diff, fileAt, blame, branches, fetchRepo };
+}
+
+let active: GitReadonly | undefined;
+
+export function setZqGit(module: GitReadonly | undefined): void {
+  active = module;
+}
+
+export function zqGit(): GitReadonly | undefined {
+  return active;
 }
