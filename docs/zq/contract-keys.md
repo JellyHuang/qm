@@ -2,18 +2,21 @@
 
 QM reads stage, lifecycle and duty keys from one JSON file named by `ZQ_CONTRACT_FILE`. OpenProject owns it and fills it in; QM matches on the keys and never on Chinese display names. `test/fixtures/zq-contract-keys.json` is the shape with draft values.
 
-| Key                             | Meaning                                                                                                                                                                                                           |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                       | Version of the table; bump it when a key changes                                                                                                                                                                  |
-| `featureType`                   | `type_key` of the 功能总单                                                                                                                                                                                        |
-| `typeDuties`                    | `type_key` of every child order mapped to the duty that assigns people to it (`art_lead`, `client_lead`, `server_lead`, `planning_lead`)                                                                          |
-| `stages.feature`, `stages.task` | Stage key to Chinese label                                                                                                                                                                                        |
-| `stageOwners`                   | Feature stage key to the people QM addresses: `duty:<duty>` (a project duty holder) or `field:<name>` (a person on the feature): `responsiblePlanner`, `pm`, `reviewer`, `qaOwner`, `acceptor`, `regressionOwner` |
-| `fields`                        | Names of the properties of `zq_get_work_package` that carry the responsible planner, the estimate, the planned start and the planned end                                                                          |
-| `duties`                        | Duty key to the name OpenProject uses for it (`producer`, `pm`, `art_lead`, `client_lead`, `server_lead`, `planning_lead`, `qa_lead`)                                                                             |
-| `tools`                         | Optional tool names, each unavailable until OpenProject publishes it                                                                                                                                              |
+| Key                             | Meaning                                                                                                                                                                                                                                                              |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `version`                       | Version of the table; bump it when a key changes                                                                                                                                                                                                                     |
+| `featureType`                   | `type_key` of the 功能总单                                                                                                                                                                                                                                           |
+| `typeDuties`                    | `type_key` of every child order mapped to the duty that assigns people to it (`art_lead`, `client_lead`, `server_lead`, `planning_lead`), or `{ kind: "field", field, on: "task" }` when the person on the order itself dispatches it (configuration: its `planner`) |
+| `stages.feature`, `stages.task` | Stage key to Chinese label                                                                                                                                                                                                                                           |
+| `stageOwners`                   | Feature stage key to the people QM addresses: `duty:<duty>` (a project duty holder) or `field:<name>` (a person on the feature): `responsiblePlanner`, `pm`, `reviewer`, `qaOwner`, `acceptor`, `regressionOwner`                                                    |
+| `fields`                        | Names of the properties of `zq_get_work_package` that carry the responsible planner, the estimate, the planned start and the planned end                                                                                                                             |
+| `duties`                        | Duty key to the name OpenProject uses for it (`producer`, `pm`, `art_lead`, `client_lead`, `server_lead`, `planning_lead`, `qa_lead`)                                                                                                                                |
+| `bugType`                       | `type_key` of a BUG; BUGs are read through `tools.bugsForFeature` (else from the list) and never trigger the order rules                                                                                                                                             |
+| `typeFlags`, `defaultTypeFlags` | Per type `artResource`; a type the table does not list takes the default (`false`: it blocks the move to acceptance). QM only reads the flag, OpenProject advances the stage                                                                                         |
+| `autoAdvanceStages`             | Feature stages OpenProject leaves by itself; QM never asks for a manual "may we advance" confirmation in them                                                                                                                                                        |
+| `tools`                         | Optional tool names, each unavailable until OpenProject publishes it                                                                                                                                                                                                 |
 
-Lifecycle keys are fixed: `normal`, `delayed`, `suspended`, `cancelled`.
+Lifecycle keys are fixed: `normal`, `suspended`, `cancelled` (`delayed` is still read for the 0.3.1 table; in 0.4 the delay is the separate `delay_marked` flag).
 
 ## What QM reads from `zq_list_work_packages`
 
@@ -23,6 +26,7 @@ Called with `{ limit: 100, offset }` and paged by `next_offset` until it is `nul
 
 - `tools.exitCheck`, called with `{ id }`: `{ ready: boolean, blockers: [{ code, message }] }`.
 - `tools.meetingsForFeature`, called with `{ id }` and paged by `next_offset`: `{ results: [{ id, title, end_time, state }] }`; `state` is `draft | open | in_progress | closed | cancelled`.
+- `tools.bugsForFeature`, called with `{ id, offset }` and paged: `{ results: [normalized bug with blocking, assignee, qa_owner] }`.
 - `tools.dutyHolders`, called with `{ project_id, duty }` and paged: `{ results: [{ id, login, name }] }`; empty means nobody holds the duty, several means several.
 
 ## Empty responsibility fields

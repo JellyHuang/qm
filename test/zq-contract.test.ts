@@ -57,22 +57,22 @@ test("only the four lifecycle keys are understood, and suspended and cancelled p
   );
 });
 
-test("the duties are whatever the table names, so a new duty such as the UI lead needs no code change", () => {
+test("the duties are whatever the table names, so a new duty such as a new lead needs no code change", () => {
   const base = raw();
   const table = {
     ...base,
-    typeDuties: { ...(base["typeDuties"] as object), fgui: "ui_lead" },
-    duties: { ...(base["duties"] as object), ui_lead: "lead_ui" },
+    typeDuties: { ...(base["typeDuties"] as object), vfx: "vfx_lead" },
+    duties: { ...(base["duties"] as object), vfx_lead: "lead_vfx" },
     stageOwners: {
       ...(base["stageOwners"] as object),
-      "feature.staffing": ["field:responsiblePlanner", "duty:ui_lead"],
+      "feature.staffing": ["field:responsiblePlanner", "duty:vfx_lead"],
     },
   };
   const c = parseContract(table);
-  assert.equal(c.typeDuties["fgui"], "ui_lead");
-  assert.equal(c.duties["ui_lead"], "lead_ui");
-  assert.deepEqual(c.stageOwners["feature.staffing"]?.[1], { kind: "duty", duty: "ui_lead" });
-  assert.throws(() => parseContract({ ...table, duties: base["duties"] }), /typeDuties\.fgui is not a duty/);
+  assert.deepEqual(c.typeOwners["vfx"], { kind: "duty", duty: "vfx_lead" });
+  assert.equal(c.duties["vfx_lead"], "lead_vfx");
+  assert.deepEqual(c.stageOwners["feature.staffing"]?.[1], { kind: "duty", duty: "vfx_lead" });
+  assert.throws(() => parseContract({ ...table, duties: base["duties"] }), /typeDuties\.vfx is not a duty/);
   assert.throws(() => parseContract({ ...table, duties: {} }), /at least one duty/);
   assert.throws(() => parseContract({ ...table, duties: { "Lead UI": "x" } }), /is not a duty key/);
 });
@@ -83,5 +83,26 @@ test("the duties set in the configuration must exist in the table, and the check
   assert.throws(
     () => checkConfiguredDuties(c, { ZQ_ESCALATION_DUTIES: ["boss"] }),
     /ZQ_ESCALATION_DUTIES names a duty the contract key table does not have: boss/,
+  );
+});
+
+test("the 0.4 key table is read: bug type, art resource flags, auto-advance stages, a task person field as a type owner", () => {
+  const c = parseContract(raw());
+  assert.equal(c.bugType, "bug");
+  assert.deepEqual(
+    ["ui", "fgui", "character_model", "backend", "frontend", "qa_test", "configuration", "brand_new_type"].map((t) =>
+      c.artResource(t),
+    ),
+    [true, true, true, false, false, false, false, false],
+  );
+  assert.deepEqual(c.autoAdvanceStages, ["feature.development", "feature.resources"]);
+  assert.deepEqual(c.typeOwners["configuration"], { kind: "taskField", field: "responsiblePlanner" });
+  assert.deepEqual(c.typeOwners["ui"], { kind: "duty", duty: "ui_lead" });
+  assert.equal(c.stageRoles.bugClosed, "bug.closed");
+  assert.equal(c.fields.delayedSince, "delayed_since");
+  assert.throws(() => parseContract({ ...raw(), autoAdvanceStages: ["feature.nope"] }), /unknown feature stage/);
+  assert.throws(
+    () => parseContract({ ...raw(), typeDuties: { x: { kind: "field", field: "nobody", on: "task" } } }),
+    /unknown person field nobody/,
   );
 });

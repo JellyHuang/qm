@@ -1,5 +1,5 @@
 import { lifecycleOf, type Duty, type ZqContract } from "./contract.ts";
-import type { ExitCheck, MeetingView, OpUserRef, WorkView } from "./rules.ts";
+import type { AwaitedChild, ExitCheck, MeetingView, OpUserRef, WorkView } from "./rules.ts";
 import type { OpReader, ScanPerson } from "./scanner.ts";
 
 export type OpCall = (tool: string, args: Record<string, unknown>, principalId: string) => Promise<string>;
@@ -93,6 +93,20 @@ function parsePage(text: string): Page {
   };
 }
 
+function awaitedChildren(value: unknown): AwaitedChild[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.flatMap((item) => {
+    if (!isObject(item)) return [];
+    const id = Number(item["id"]);
+    const typeKey = str(item["type_key"]);
+    const stageKey = str(item["stage_key"]);
+    const owner = person(item["owner"]);
+    return Number.isSafeInteger(id) && typeKey && stageKey
+      ? [{ id, typeKey, stageKey, ...(owner ? { owner } : {}) }]
+      : [];
+  });
+}
+
 export function parseWorkView(item: unknown, contract: ZqContract): WorkView | undefined {
   if (!isObject(item)) return undefined;
   const id = Number(item["id"]);
@@ -119,6 +133,11 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
   const estimateHours = hours(item[contract.fields.estimate]);
   const plannedStart = time(item[contract.fields.plannedStart], "start");
   const plannedEnd = time(item[contract.fields.plannedEnd], "end");
+  const delayMarked = item[contract.fields.delayMarked];
+  const delayedSince = time(item[contract.fields.delayedSince]);
+  const blocking = item["blocking"];
+  const awaited = awaitedChildren(item[contract.fields.awaitedChildren]);
+  const awaitingNote = str(item[contract.fields.awaitingNote]);
   return {
     id,
     subject: str(item["subject"]) ?? `#${id}`,
@@ -139,6 +158,11 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
     ...(estimateHours !== undefined ? { estimateHours } : {}),
     ...(plannedStart !== undefined ? { plannedStart } : {}),
     ...(plannedEnd !== undefined ? { plannedEnd } : {}),
+    ...(typeof delayMarked === "boolean" ? { delayMarked } : {}),
+    ...(delayedSince !== undefined ? { delayedSince } : {}),
+    ...(typeof blocking === "boolean" ? { blocking } : {}),
+    ...(awaited ? { awaited } : {}),
+    ...(awaitingNote ? { awaitingNote } : {}),
   };
 }
 
@@ -209,9 +233,20 @@ export function createMcpOpReader(opts: { call: OpCall; contract: ZqContract; se
         }
       });
       const features = found.filter((w) => w.typeKey === contract.featureType);
+      const isBug = (w: WorkView) => w.typeKey === contract.bugType;
       const facts = await mapLimited(features, async (feature) => {
-        const children = found.filter((w) => w.parentId === feature.id);
-        const [meetings, exit] = await Promise.all([
+        const under = found.filter((w) => w.parentId === feature.id);
+        const children = under.filter((w) => !isBug(w));
+        const [bugs, meetings, exit] = await Promise.all([
+          contract.tools.bugsForFeature
+            ? pages(contract.tools.bugsForFeature, { id: feature.id }, scanner.principalId).then(
+                (r) => r.flatMap((b) => parseWorkView(b, contract) ?? []),
+                (e: unknown) => {
+                  if (invisible(e)) return under.filter(isBug);
+                  throw e;
+                },
+              )
+            : under.filter(isBug),
           contract.tools.meetingsForFeature
             ? pages(contract.tools.meetingsForFeature, { id: feature.id }, scanner.principalId).then(
                 (r) => r.flatMap((m) => parseMeeting(m) ?? []),
@@ -231,7 +266,7 @@ export function createMcpOpReader(opts: { call: OpCall; contract: ZqContract; se
                 })
             : undefined,
         ]);
-        return { feature, children, ...(meetings ? { meetings } : {}), ...(exit ? { exit } : {}) };
+        return { feature, children, bugs, ...(meetings ? { meetings } : {}), ...(exit ? { exit } : {}) };
       });
       return { facts, problems };
     },

@@ -73,7 +73,8 @@ function fake(handlers: Record<string, (args: Record<string, unknown>) => unknow
     calls,
     call: async (tool: string, args: Record<string, unknown>) => {
       calls.push(`${tool}:${JSON.stringify(args)}`);
-      const out = handlers[tool]?.(args);
+      const noBugs = () => ({ next_offset: null, results: [] });
+      const out = (handlers[tool] ?? (tool.endsWith("zq_bugs_for_feature") ? noBugs : undefined))?.(args);
       if (out instanceof Error) throw out;
       return JSON.stringify(out ?? {});
     },
@@ -246,4 +247,66 @@ test("a numeric project id is sent as a number, because zq_duty_holders refuses 
   const f = fake({ openproject_zq_duty_holders: () => ({ next_offset: null, results: [] }) });
   await createMcpOpReader({ call: f.call, contract }).dutyHolders(PERSON, "3", "pm");
   assert.ok(f.calls[0]!.includes('"project_id":3,'), f.calls[0]);
+});
+
+test("the delay marker, the awaited orders and the note are read, and a bug is kept apart from the orders", async () => {
+  const view = parseWorkView(
+    wp({
+      delay_marked: true,
+      delayed_since: "2026-11-12T01:00:00Z",
+      awaiting_note: "等待:#2",
+      awaited_children: [
+        { id: 2, type_key: "vfx", stage_key: "execution.active", owner: { id: "12", login: "bob", name: "Bob B" } },
+        { id: 3, type_key: "backend", stage_key: "execution.unassigned", owner: null },
+        { id: "x" },
+      ],
+    }),
+    contract,
+  )!;
+  assert.equal(view.delayMarked, true);
+  assert.equal(view.delayedSince, Date.parse("2026-11-12T01:00:00Z"));
+  assert.equal(view.awaitingNote, "等待:#2");
+  assert.deepEqual(view.awaited, [
+    { id: 2, typeKey: "vfx", stageKey: "execution.active", owner: { id: "12", login: "bob", name: "Bob B" } },
+    { id: 3, typeKey: "backend", stageKey: "execution.unassigned" },
+  ]);
+  const bug = {
+    id: 7,
+    subject: "崩溃",
+    type_key: "bug",
+    stage_key: "bug.fixing",
+    parent_id: 1,
+    feature_id: 1,
+    blocking: true,
+    qa_owner: { id: "23", login: "qa", name: "QA Q" },
+  };
+  const f = fake({
+    openproject_zq_list_work_packages: () => ({
+      next_offset: null,
+      results: [
+        wp({ id: 1 }),
+        wp({ id: 2, type_key: "vfx", parent_id: 1, stage_key: "execution.active", status_key: "execution.active" }),
+      ],
+    }),
+    openproject_zq_check_exit: () => ({ ready: false, blockers: [] }),
+    openproject_zq_meetings_for_feature: () => ({ next_offset: null, results: [] }),
+    openproject_zq_bugs_for_feature: (a) => ({
+      feature_id: a["id"],
+      next_offset: a["offset"] === 0 ? 1 : null,
+      results: a["offset"] === 0 ? [bug] : [{ ...bug, id: 8, blocking: false }],
+    }),
+  });
+  const { facts } = await createMcpOpReader({ call: f.call, contract, serverId: "openproject" }).features(PERSON);
+  assert.deepEqual(
+    facts[0]!.children.map((c) => c.id),
+    [2],
+  );
+  assert.deepEqual(
+    facts[0]!.bugs?.map((b) => [b.id, b.blocking, b.qaOwner?.id]),
+    [
+      [7, true, "23"],
+      [8, false, "23"],
+    ],
+  );
+  assert.ok(f.calls.includes('openproject_zq_bugs_for_feature:{"id":1,"offset":1}'));
 });

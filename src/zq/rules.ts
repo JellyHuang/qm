@@ -26,6 +26,18 @@ export interface WorkView {
   estimateHours?: number;
   plannedStart?: number;
   plannedEnd?: number;
+  delayMarked?: boolean;
+  delayedSince?: number;
+  blocking?: boolean;
+  awaited?: AwaitedChild[];
+  awaitingNote?: string;
+}
+
+export interface AwaitedChild {
+  id: number;
+  typeKey: string;
+  stageKey: string;
+  owner?: OpUserRef;
 }
 
 export interface MeetingView {
@@ -43,6 +55,7 @@ export interface ExitCheck {
 export interface FeatureFacts {
   feature: WorkView;
   children: WorkView[];
+  bugs?: WorkView[];
   meetings?: MeetingView[];
   exit?: ExitCheck;
 }
@@ -53,12 +66,14 @@ export type RuleId =
   | "planner-unassigned"
   | "review-pending"
   | "staffing-trades"
-  | "staffing-assign"
   | "briefing-meeting-missing"
   | "meeting-follow-up"
   | "production-missing-plan"
   | "task-overdue"
   | "task-overdue-escalation"
+  | "task-unassigned"
+  | "production-missing-planned-end"
+  | "blocking-bug-open"
   | "exit-ready"
   | "formal-assets-pending"
   | "responsibility-not-set";
@@ -154,21 +169,27 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
           `功能${where(feature)}在「${stageName}」,还没有专业执行单。请确认本功能需要哪些专业和交付项。`,
         ),
       );
-    const pending = live.filter((c) => c.statusKey === r.taskUnassigned);
-    const byDuty = new Map<Duty, WorkView[]>();
-    for (const c of pending) {
-      const duty = contract.typeDuties[c.typeKey];
-      if (duty) byDuty.set(duty, [...(byDuty.get(duty) ?? []), c]);
-    }
-    for (const [duty, list] of byDuty)
-      out.push(
-        at(
-          "staffing-assign",
-          [{ kind: "duty", duty }],
-          `功能${where(feature)}有 ${list.length} 张执行单还没有指定执行人:${list.map(where).join("、")}。请指派。`,
-        ),
-      );
   }
+
+  const pending = children.filter((c) => active(c) && c.statusKey === r.taskUnassigned);
+  const dispatch = new Map<string, { to: Target; list: WorkView[] }>();
+  for (const c of pending) {
+    const owner = contract.typeOwners[c.typeKey];
+    const person = owner?.kind === "taskField" ? c[owner.field] : undefined;
+    const to: Target | undefined =
+      owner?.kind === "duty" ? { kind: "duty", duty: owner.duty } : person && { kind: "user", user: person };
+    if (!to) continue;
+    const key = to.kind === "duty" ? `duty:${to.duty}` : `user:${to.kind === "user" ? to.user.id : ""}`;
+    dispatch.set(key, { to, list: [...(dispatch.get(key)?.list ?? []), c] });
+  }
+  for (const { to, list } of dispatch.values())
+    out.push(
+      at(
+        "task-unassigned",
+        [to],
+        `功能${where(feature)}在「${stageName}」,有 ${list.length} 张执行单还没有指定执行人:${list.map(where).join("、")}。请指派。`,
+      ),
+    );
 
   if (stage === r.briefing && facts.meetings) {
     const valid = facts.meetings.filter((m) => m.state.trim().toLowerCase() !== "cancelled");
@@ -193,6 +214,14 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
   }
 
   if (stage === r.inProduction) {
+    if (feature.plannedEnd === undefined)
+      out.push(
+        at(
+          "production-missing-planned-end",
+          [{ kind: "field", field: "responsiblePlanner" }],
+          `功能${where(feature)}在「${stageName}」,总单还没有计划结束时间。请补填。`,
+        ),
+      );
     for (const c of children.filter((c) => isOpen(contract, c))) {
       const missing = missingPlan(c);
       if (missing.length && c.assignee)
@@ -228,7 +257,7 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
     }
   }
 
-  if (facts.exit?.ready)
+  if (facts.exit?.ready && !contract.autoAdvanceStages.includes(stage))
     out.push(
       at(
         "exit-ready",
@@ -237,17 +266,46 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
       ),
     );
 
-  if (stage === r.formalAssets) {
-    const unfinished = children.filter((c) => contract.typeDuties[c.typeKey] === "art_lead" && isOpen(contract, c));
+  const closed = contract.stageRoles.bugClosed;
+  for (const bug of (facts.bugs ?? []).filter((b) => active(b) && b.blocking && b.statusKey !== closed)) {
+    const to: Target[] = [
+      ...(bug.assignee ? [{ kind: "user", user: bug.assignee } as Target] : []),
+      ...((bug.qaOwner ?? feature.qaOwner)
+        ? [{ kind: "user", user: (bug.qaOwner ?? feature.qaOwner)! } as Target]
+        : []),
+    ];
     out.push(
       at(
-        "formal-assets-pending",
-        stageOwners(contract, stage),
-        unfinished.length
-          ? `功能${where(feature)}在「${stageName}」,还有 ${unfinished.length} 张美术单未完成:${unfinished.map(where).join("、")}。`
-          : `功能${where(feature)}在「${stageName}」,美术单已全部完成,请确认资源替换和必要回归。`,
+        "blocking-bug-open",
+        to,
+        `阻断 BUG ${where(bug)}(功能${where(feature)})还没有关闭,功能不能完成。请跟进修复和复测。`,
+        bug,
       ),
     );
+  }
+
+  if (stage === r.formalAssets) {
+    const awaited = feature.awaited ?? [];
+    const byOwner = new Map<string, { owner: OpUserRef; ids: number[] }>();
+    for (const c of awaited)
+      if (c.owner) byOwner.set(c.owner.id, { owner: c.owner, ids: [...(byOwner.get(c.owner.id)?.ids ?? []), c.id] });
+    for (const { owner, ids } of byOwner.values())
+      out.push(
+        at(
+          "formal-assets-pending",
+          [{ kind: "user", user: owner }],
+          `功能${where(feature)}在「${stageName}」,你还有 ${ids.length} 张执行单未完成:${ids.map((id) => `#${id}`).join("、")}。`,
+        ),
+      );
+    if (awaited.length)
+      out.push(
+        at(
+          "formal-assets-pending",
+          [{ kind: "field", field: "pm" }],
+          feature.awaitingNote ??
+            `功能${where(feature)}在「${stageName}」,还有 ${awaited.length} 张执行单未完成:${awaited.map((c) => `#${c.id}`).join("、")}。`,
+        ),
+      );
   }
   return out;
 }

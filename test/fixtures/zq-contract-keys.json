@@ -1,19 +1,19 @@
 {
-  "version": "0.3.1",
+  "version": "0.4-draft",
   "featureType": "feature",
   "typeDuties": {
     "planning": "planning_lead",
     "acceptance": "planning_lead",
-    "configuration": "planning_lead",
+    "configuration": { "kind": "field", "field": "planner", "on": "task" },
     "character_concept": "art_lead",
     "scene_concept": "art_lead",
-    "ui": "art_lead",
+    "ui": "ui_lead",
     "character_model": "art_lead",
     "scene_model": "art_lead",
     "level_art": "art_lead",
     "animation": "art_lead",
     "vfx": "art_lead",
-    "fgui": "client_lead",
+    "fgui": "ui_lead",
     "frontend": "client_lead",
     "backend": "server_lead",
     "qa_test": "qa_lead"
@@ -46,16 +46,6 @@
       "bug.closed": "已关闭"
     }
   },
-  "stageRoles": {
-    "plannerUnassigned": "feature.planning_unassigned",
-    "reviewPending": "feature.review",
-    "staffing": "feature.staffing",
-    "briefing": "feature.briefing",
-    "inProduction": "feature.development",
-    "formalAssets": "feature.resources",
-    "taskUnassigned": "execution.unassigned",
-    "taskDone": "execution.done"
-  },
   "stageOwners": {
     "feature.planning_unassigned": ["duty:producer", "duty:pm"],
     "feature.planning": ["field:responsiblePlanner"],
@@ -77,7 +67,18 @@
     "reviewer": "reviewer",
     "qaOwner": "qa_owner",
     "acceptor": "acceptor",
-    "regressionOwner": "regression_owner"
+    "regressionOwner": "regression_owner",
+    "delayMarked": "delay_marked",
+    "delayMarkedAt": "delay_marked_at",
+    "delayMarkedBy": "delay_marked_by",
+    "delayReason": "delay_reason",
+    "computedOverdue": "computed_overdue",
+    "delaySource": "delay_source",
+    "delayedSince": "delayed_since",
+    "delayClearedAt": "delay_cleared_at",
+    "qaPassed": "qa_passed",
+    "awaitedChildren": "awaited_children",
+    "awaitingNote": "awaiting_note"
   },
   "duties": {
     "producer": "producer",
@@ -86,11 +87,48 @@
     "client_lead": "lead_frontend",
     "server_lead": "lead_backend",
     "planning_lead": "lead_planner",
-    "qa_lead": "qa_lead"
+    "qa_lead": "qa_lead",
+    "ui_lead": "lead_ui"
   },
   "tools": {
     "exitCheck": "zq_check_exit",
     "meetingsForFeature": "zq_meetings_for_feature",
-    "dutyHolders": "zq_duty_holders"
-  }
+    "dutyHolders": "zq_duty_holders",
+    "bugsForFeature": "zq_bugs_for_feature",
+    "addSystemRemark": "zq_add_system_remark"
+  },
+  "stageRoles": {
+    "plannerUnassigned": "feature.planning_unassigned",
+    "reviewPending": "feature.review",
+    "staffing": "feature.staffing",
+    "briefing": "feature.briefing",
+    "inProduction": "feature.development",
+    "formalAssets": "feature.resources",
+    "taskUnassigned": "execution.unassigned",
+    "taskDone": "execution.done"
+  },
+  "lifecycleValues": ["normal", "suspended", "cancelled"],
+  "bugType": "bug",
+  "typeFlags": {
+    "feature": { "artResource": false },
+    "planning": { "artResource": false },
+    "acceptance": { "artResource": false },
+    "configuration": { "artResource": false },
+    "character_concept": { "artResource": true },
+    "scene_concept": { "artResource": true },
+    "ui": { "artResource": true },
+    "character_model": { "artResource": true },
+    "scene_model": { "artResource": true },
+    "level_art": { "artResource": true },
+    "animation": { "artResource": true },
+    "vfx": { "artResource": true },
+    "fgui": { "artResource": true },
+    "frontend": { "artResource": false },
+    "backend": { "artResource": false },
+    "qa_test": { "artResource": false },
+    "bug": { "artResource": false }
+  },
+  "defaultTypeFlags": { "artResource": false },
+  "typeCreationStage": { "acceptance": "feature.acceptance", "qa_test": "feature.qa" },
+  "autoAdvanceStages": ["feature.development", "feature.resources"]
 }

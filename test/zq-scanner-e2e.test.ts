@@ -59,7 +59,7 @@ function detail(id: number, over: Record<string, unknown> = {}) {
 const DETAILS = [
   detail(1, { type_key: "feature", status_key: "feature.staffing", planner: ALICE_OP }),
   detail(2, { type_key: "vfx", status_key: "execution.unassigned", parent_id: 1 }),
-  detail(20, { type_key: "feature", status_key: "feature.development", planner: ALICE_OP }),
+  detail(20, { type_key: "feature", status_key: "feature.development", planner: ALICE_OP, due_date: "2026-12-31" }),
   detail(21, { parent_id: 20, assignee: asUser(BOB_OP) }),
   detail(22, {
     parent_id: 20,
@@ -230,9 +230,9 @@ test("a dry-run scan walks the pages, stores what it would send per rule, target
   assert.deepEqual(await ids(h, "mm-alice"), ["staffing-trades"]);
   assert.deepEqual(await ids(h, "mm-bob"), [
     "production-missing-plan",
-    "staffing-assign",
     "task-overdue",
     "task-overdue-escalation",
+    "task-unassigned",
   ]);
   const missing = (await h.reminders.pendingFor("mm-bob")).find((r) => r.rule === "production-missing-plan")!;
   assert.equal(missing.id, `production-missing-plan:wp:21:mm-bob:${DAY_KEY}`);
