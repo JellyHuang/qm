@@ -14,8 +14,8 @@ const BOTH = {
   ...SERVICE,
   ZQ_GIT_POLL: "1",
   ZQ_GIT_AUTHOR_MAPPING: "1",
-  ZQ_GIT_BOT_NAMES: "ZQBot.compiler",
-  ZQ_GIT_EXTERNAL_DOMAINS: "@yizhu",
+  ZQ_GIT_BOT_NAMES: "ExampleBot.compiler",
+  ZQ_GIT_EXTERNAL_DOMAINS: "@pipeline.invalid",
 };
 const ALIASES = "zq_git_author_aliases";
 const QUEUE = "zq_git_unmapped_authors";
@@ -24,8 +24,8 @@ const zhang: FakeAuthor = { name: "Zhang Wei", email: "Zhang.Wei+ci@corp.example
 const li: FakeAuthor = { name: "Li Na", email: "li.na@corp.example" };
 const stranger: FakeAuthor = { name: "Wang", email: "wang.home@example.org" };
 const twin: FakeAuthor = { name: "Chen", email: "chen@corp.example" };
-const bot: FakeAuthor = { name: "ZQBot.compiler", email: "zqbot@corp.example" };
-const vendor: FakeAuthor = { name: "Zhao", email: "zhao@yizhu" };
+const bot: FakeAuthor = { name: "ExampleBot.compiler", email: "examplebot@corp.example" };
+const vendor: FakeAuthor = { name: "Zhao", email: "zhao@pipeline.invalid" };
 const broken: FakeAuthor = { name: "Root", email: "root" };
 
 const MATTERMOST: Record<string, string[]> = {

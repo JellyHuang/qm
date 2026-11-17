@@ -72,14 +72,14 @@ test("the zq-git-mcp service address and secret go together and the author rules
   const on = zqConfigFromEnv({
     ZQ_GIT_MCP_URL: "http://127.0.0.1:8765/mcp",
     ZQ_GIT_MCP_SECRET: "a-shared-secret-0123456789",
-    ZQ_GIT_EXTERNAL_DOMAINS: "@yizhu, partner.example,",
-    ZQ_GIT_BOT_NAMES: "ZQBot.compiler",
+    ZQ_GIT_EXTERNAL_DOMAINS: "@pipeline.invalid, partner.example,",
+    ZQ_GIT_BOT_NAMES: "ExampleBot.compiler",
     ZQ_GIT_DOMAIN_ALIASES: "Old.Example=corp.example, @legacy=corp.example",
   });
   assert.deepEqual(on.gitMcp, { url: "http://127.0.0.1:8765/mcp", secret: "a-shared-secret-0123456789" });
   assert.deepEqual(on.gitAuthors, {
-    externalDomains: ["@yizhu", "partner.example"],
-    botNames: ["ZQBot.compiler"],
+    externalDomains: ["@pipeline.invalid", "partner.example"],
+    botNames: ["ExampleBot.compiler"],
     domainAliases: { "old.example": "corp.example", legacy: "corp.example" },
     mapping: false,
     ignoredReopenDays: 0,

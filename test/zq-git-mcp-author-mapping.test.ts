@@ -32,8 +32,8 @@ const POLL = {
 
 const config = zqConfigFromEnv({
   ...POLL,
-  ZQ_GIT_BOT_NAMES: "ZQBot.compiler",
-  ZQ_GIT_EXTERNAL_DOMAINS: "@yizhu",
+  ZQ_GIT_BOT_NAMES: "ExampleBot.compiler",
+  ZQ_GIT_EXTERNAL_DOMAINS: "@pipeline.invalid",
   ZQ_GIT_AUTHOR_MAPPING: "1",
 }).gitAuthors;
 
@@ -84,8 +84,8 @@ test("people are grouped across repositories and branches, excluded kinds never 
   const result = await mapping.mapper.map([
     batch("client", "main", [
       commit("c1", "Zhang@corp.example"),
-      commit("c2", "ZQBot.compiler@corp.example", "ZQBot.compiler"),
-      commit("c3", "wang@yizhu"),
+      commit("c2", "ExampleBot.compiler@corp.example", "ExampleBot.compiler"),
+      commit("c3", "wang@pipeline.invalid"),
     ]),
     batch("server", "dev", [
       commit("s1", "zhang+x@corp.example", "Z", "dev"),
@@ -121,8 +121,8 @@ test("bots, external and unmapped authors produce no sink call", async () => {
   const { mapping } = build(sink);
   const result = await mapping.mapper.map([
     batch("client", "main", [
-      commit("c1", "ZQBot.compiler@corp.example", "ZQBot.compiler"),
-      commit("c2", "wang@yizhu"),
+      commit("c1", "ExampleBot.compiler@corp.example", "ExampleBot.compiler"),
+      commit("c2", "wang@pipeline.invalid"),
       commit("c3", "nobody@corp.example", "Nobody"),
       commit("c4", "shared@corp.example", "Shared"),
     ]),
@@ -276,7 +276,7 @@ const DAY = 86_400_000;
 
 test("with the switch off nothing instantiates a map and no mapper exists", () => {
   const asked: string[] = [];
-  const off = zqConfigFromEnv({ ZQ_GIT_BOT_NAMES: "ZQBot.compiler" }).gitAuthors;
+  const off = zqConfigFromEnv({ ZQ_GIT_BOT_NAMES: "ExampleBot.compiler" }).gitAuthors;
   assert.equal(off.mapping, false);
   const mapping = createAuthorMapping({
     config: off,
