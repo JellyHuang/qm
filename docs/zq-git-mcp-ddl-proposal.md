@@ -172,3 +172,61 @@ Still open:
 8. A failed audit write never fails a read; rows wait in a bounded local buffer and are replayed, with an alarm. Audit rows older than 180 days are pruned by the table owner or by QM core, in batches.
 9. Rollback: drop the two new tables, then drop the database account, five statements in total, at any time. Existing tables and data are unaffected, and old rows stay valid.
 10. Still open: how the connection string is delivered, how the role is bound to the tenant in a multi-tenant deployment, and pruning of tombstones.
+
+## 8. Author mapping tables (not yet approved)
+
+Status: NOT APPROVED. Nothing here is applied and no database was contacted. The code lives on branch `oa/zq-author-map` (docs/zq/author-mapping.md). It is switched off by `ZQ_GIT_AUTHOR_MAPPING` (default off, set in no environment): with the switch off the code builds no durable map, so neither table is registered or created. Turning the switch on makes the durable-map layer create both tables, so the switch must stay off until this section is approved.
+
+These are core-side tables used only by QM core. The zq-git-mcp service role (section 4) gets no grant on them. QM core reads and writes them with its normal application role (the one in `DATABASE_URL`, privileges from `qm db grant`), which also runs the migrations.
+
+### Table definitions as the durable-map layer creates them
+
+Both tables are generic JSON document tables, created by `createPostgresMap` and `durableMapTenancy` (src/persistence/durable-map.ts, src/tenants/migrations.ts), migration ids `durable-map/<table>/0001`, `durable-map/<table>/0010-tenants/...`, `durable-map/<table>/0020-claim-ids` and `0021-claim-tenants`. For `T` in `zq_git_author_aliases`, `zq_git_unmapped_authors`:
+
+CREATE TABLE IF NOT EXISTS T (id TEXT PRIMARY KEY, json JSONB NOT NULL);
+ALTER TABLE T ADD COLUMN tenant_id UUID NOT NULL DEFAULT <first tenant, only if T already has rows>;
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS T_tenant_pkey ON T(tenant_id, id);
+ALTER TABLE T DROP CONSTRAINT T_pkey, ADD CONSTRAINT T_pkey PRIMARY KEY USING INDEX T_tenant_pkey;
+ALTER TABLE T ALTER COLUMN tenant_id SET DEFAULT qm_bound_tenant();
+ALTER TABLE T ADD CONSTRAINT T_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id);
+ALTER TABLE T ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON T USING (tenant_id = qm_bound_tenant()) WITH CHECK (tenant_id = qm_bound_tenant());
+Plus the functions `claim_T()` and `claim_T_tenants()`. Net result per table: columns `id text`, `json jsonb NOT NULL`, `tenant_id uuid NOT NULL DEFAULT qm_bound_tenant()`, primary key `(tenant_id, id)`, no other index. `durable_map_versions` already exists and gets a row per tenant and table.
+
+### JSON shapes (examples are INVENTED)
+
+`zq_git_author_aliases`, id `<normalised email>|<personId>`, one row per (address, person); two people on one address make the author ambiguous.
+
+- Shape: `{ "email": text, "personId": text, "mattermostUser": text, "addedBy": text, "addedAt": epoch ms }`
+- Example (INVENTED): id `zhang.home@example.org|p-zhang`, json `{ "email": "zhang.home@example.org", "personId": "p-zhang", "mattermostUser": "mm-zhang", "addedBy": "pm", "addedAt": 1763000000000 }`
+
+`zq_git_unmapped_authors`, id the normalised commit email (`(none)` if empty). No commit message, subject or diff is stored.
+
+- Shape: `{ "email", "name", "reason": "no_match" | "invalid_email" | "ambiguous", "candidates": [personId], "status": "open" | "resolved" | "ignored", "firstSeenAt", "lastSeenAt", "count", "exampleRepo", "exampleSha", "recentShas": [sha] (last 200), "closedBy"?, "closedAt"?, "personId"? }`
+- Example (INVENTED): id `nobody@corp.example`, json `{ "email": "nobody@corp.example", "name": "Nobody", "reason": "no_match", "candidates": [], "status": "open", "firstSeenAt": 1763000000000, "lastSeenAt": 1763000900000, "count": 3, "exampleRepo": "client", "exampleSha": "c1", "recentShas": ["c1", "c2", "s1"] }`
+- Example (INVENTED), same row after the PM ignored it: `"status": "ignored", "closedBy": "pm", "closedAt": 1763001000000`
+
+### Retention
+
+Open entries are never pruned. Resolved and ignored entries are deleted when the later of `closedAt` and `lastSeenAt` is older than 180 days (`ZQ_GIT_UNMAPPED_RETENTION_DAYS`, default 180), by the core function `queue.prune()` (unscheduled, not called from startup, like `pruneGitAudit`). Aliases are kept until the PM removes them. Ignored authors stay silent forever by default; `ZQ_GIT_IGNORED_REOPEN_DAYS` (default 0, off) reopens them.
+
+### Roles and grants
+
+No new role and no change to section 4. QM core's application role needs what it already has on every durable-map table (SELECT, INSERT, UPDATE, DELETE through `qm db grant`); DELETE is used by pruning and alias removal. The zq-git-mcp service role has no access to these tables.
+
+### Rollout
+
+1. Merge the code with the switch off (creates nothing). 2. PM approves this section. 3. Set `ZQ_GIT_AUTHOR_MAPPING=1` in one environment (staging first); the next start creates both tables. 4. Check as the application role: rows are visible only for the bound tenant, and a connection with no bound tenant fails with "No tenant is bound to this query". 5. Seed aliases.
+
+### Rollback
+
+Set `ZQ_GIT_AUTHOR_MAPPING` back to off, then:
+DROP TABLE IF EXISTS zq_git_unmapped_authors;
+DROP TABLE IF EXISTS zq_git_author_aliases;
+DROP FUNCTION IF EXISTS claim_zq_git_unmapped_authors(), claim_zq_git_unmapped_authors_tenants(), claim_zq_git_author_aliases(), claim_zq_git_author_aliases_tenants();
+DELETE FROM durable_map_versions WHERE tbl IN ('zq_git_unmapped_authors', 'zq_git_author_aliases');
+Migration ledger rows stay; remove the ids if re-adding. With the switch left on, the next start recreates the tables.
+
+### Existing tables
+
+Unchanged: `zq_git_audit`, `zq_git_branch_tips`, `zq_git_blob_meta`, `durable_map_versions` and every other table, column, index, constraint and JSON key. Configuration added: `ZQ_GIT_AUTHOR_MAPPING`, `ZQ_GIT_IGNORED_REOPEN_DAYS`, `ZQ_GIT_UNMAPPED_RETENTION_DAYS`, `ZQ_GIT_DOMAIN_ALIASES`; no existing setting changes.
