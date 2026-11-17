@@ -26,3 +26,18 @@ Setting one without the other fails at startup. The tester must have a confirmed
 ## Acceptance script
 
 `test/zq-roleplay-acceptance.test.ts` drives one feature through create, assign, briefing group, development, hand-in, QA with a blocking bug, done, a sub-order proposal and the weekly PM report, and asserts that only the tester receives anything and every message names the role played. The same steps are what to do by hand in the test OpenProject project.
+
+## Message list from a real OpenProject, without Mattermost
+
+`scripts/zq-roleplay-report.ts` runs QM's real reader, rules, digest and role-play output against an OpenProject MCP endpoint and writes every message that would be sent into one readable file. Nothing is posted anywhere, and state lives in memory (optionally in a JSON file).
+
+```
+node scripts/zq-roleplay-report.ts --mcp https://<op>/mcp --projects 14 --jelly-op-user 169 \
+  --out messages.md --state state.json --token-file token.enc --key ~/.qm-secrets/zq-test-exchange.key
+```
+
+- The token is a personal OAuth token of the test user. Give it as `ZQ_TEST_TOKEN`, or as a file encrypted to the public key (RSA-OAEP, SHA-256) with `--key` pointing to the private key. It is never written to disk or logged.
+- `--contract` takes a key table; without it the repository fixture is used with `optimizationType` set to `optimization` and the completion property set to `delivery_result`.
+- Run it again with the same `--state` after changing tickets in OpenProject: only the new reminders and the change-digest lines appear. Drop the state file to start from nothing.
+- Daily and weekly reports need the OpenProject time-entry tool; if the endpoint lacks it, that failure is logged and the reports are missing from the list.
+- Self-signed endpoints need `NODE_EXTRA_CA_CERTS` pointing to the CA file.
