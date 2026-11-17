@@ -15,6 +15,7 @@ import { checkConfiguredDuties, type ZqContract } from "./contract.ts";
 import { channelRemarkArgs, createZqGroups, type ZqGroup } from "./groups.ts";
 import { createMcpOpReader, type OpCall } from "./op-reader.ts";
 import { createZqReminderStore, type ZqReminder } from "./reminders.ts";
+import { createRoleplay, type RoleplayPersona } from "./roleplay.ts";
 import { createZqReports, type ZqReportDraft } from "./reports.ts";
 import { createReportSource } from "./report-source.ts";
 import type { ScanPerson, ZqFeatureRef } from "./scanner.ts";
@@ -56,6 +57,7 @@ export interface ZqRuntime {
   commitAuthors?: AuthorResolver;
   decide(op: "report" | "link" | "children", id: string, approve: boolean, clickerMmUserId: string): Promise<string>;
   connectorConnected(provider: string, principalId: string): Promise<void>;
+  roleplayReset?: () => Promise<{ personas: number; reminders: number; groups: number }>;
 }
 
 const noReader = {
@@ -74,14 +76,15 @@ export function createZqRuntime(deps: {
   readKey?: () => Promise<string>;
   now?: () => number;
 }): ZqRuntime {
-  const { config, chat } = deps;
+  const { config } = deps;
   const identity = createZqIdentityMap({
     map: deps.map<ZqIdentityLink>("zq_identity_map"),
     enabled: config.identityMap,
   });
   const reminders = createZqReminderStore({ map: deps.map<ZqReminder>("zq_reminders") });
+  const reportDrafts = deps.map<ZqReportDraft>("zq_report_drafts");
   const reports = createZqReports({
-    map: deps.map<ZqReportDraft>("zq_report_drafts"),
+    map: reportDrafts,
     write: undefined,
     writeBack: async () => {},
   });
@@ -96,7 +99,8 @@ export function createZqRuntime(deps: {
           : [];
       }),
     );
-    return resolved.flat();
+    const all = resolved.flat();
+    return roleplay ? roleplay.people(all) : all;
   }
 
   const contract = deps.contract ?? (config.contractFile ? loadZqContract(config.contractFile) : undefined);
@@ -105,6 +109,16 @@ export function createZqRuntime(deps: {
       ZQ_ESCALATION_DUTIES: config.escalation.duties,
       ZQ_UNSET_RESPONSIBILITY_DUTIES: config.unsetResponsibilityDuties,
     });
+  const roleplay = config.roleplay
+    ? createRoleplay({
+        ...config.roleplay,
+        ...(contract ? { contract } : {}),
+        personas: deps.map<RoleplayPersona>("zq_roleplay_personas"),
+        reminders: deps.map<ZqReminder>("zq_reminders"),
+        groups: deps.map<ZqGroup>("zq_groups"),
+      })
+    : undefined;
+  const chat = roleplay ? roleplay.chat(deps.chat) : deps.chat;
   const remarkWriter =
     (tool: string, principalId: string) =>
     async (input: { featureId: number; channelId: string; participantOpUserIds: string[] }) => {
@@ -135,7 +149,10 @@ export function createZqRuntime(deps: {
         }
       : undefined;
 
-  const reader = contract ? createMcpOpReader({ call: deps.call, contract, serverId: OPENPROJECT_SERVER }) : undefined;
+  const mcpReader = contract
+    ? createMcpOpReader({ call: deps.call, contract, serverId: OPENPROJECT_SERVER })
+    : undefined;
+  const reader = mcpReader && roleplay ? roleplay.reader(mcpReader) : mcpReader;
   const reportSource =
     reader && contract
       ? createReportSource({
@@ -150,7 +167,9 @@ export function createZqRuntime(deps: {
   const service = createZqService({
     config,
     ...(contract && reader ? { contract, reader } : { reader: noReader }),
-    mmUserIdOfOpUser: async (opUserId) => (await identity.byOpenProject(opUserId))?.mmUserId,
+    mmUserIdOfOpUser: roleplay
+      ? roleplay.mmUserIdOfOpUser
+      : async (opUserId) => (await identity.byOpenProject(opUserId))?.mmUserId,
     ...(groups ? { groups } : {}),
     ...(changes ? { changes } : {}),
     people,
@@ -222,6 +241,7 @@ export function createZqRuntime(deps: {
     identityAdmin: identity,
     ...(children ? { children } : {}),
     ...(git ? { git } : {}),
+    ...(roleplay ? { roleplayReset: roleplay.reset } : {}),
     ...(commitAuthors ? { commitAuthors } : {}),
     start() {
       if (config.scanner.enabled || config.reports.enabled) sweeper.start();
@@ -233,7 +253,10 @@ export function createZqRuntime(deps: {
         return children.decide(id, approve, clickerMmUserId);
       }
       if (op === "report") {
-        const draft = await reports.decide(id, approve, clickerMmUserId, clickerMmUserId);
+        const asAddressee = roleplay
+          ? await roleplay.reportClicker(clickerMmUserId, (await reportDrafts.get(id))?.addressees)
+          : clickerMmUserId;
+        const draft = await reports.decide(id, approve, asAddressee, asAddressee);
         if (draft.status !== "confirmed") return "已放弃这份草稿。";
         return draft.kind === "project"
           ? "已确认。这份项目周报不会写回 OpenProject。"

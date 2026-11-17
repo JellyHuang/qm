@@ -14,6 +14,7 @@ export interface ZqConfig {
   contractFile?: string;
   opBaseUrl?: string;
   featureChannels: boolean;
+  roleplay?: { mmUserId: string; projectIds: readonly string[] };
   changeDigest: boolean;
   childOrders: boolean;
   remarkPrincipal?: string;
@@ -129,7 +130,15 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   const outside = rerunJobs.filter((job) => !jenkinsJobs.includes(job));
   if (outside.length > 0)
     throw new Error(`ZQ_JENKINS_RERUN_JOBS names jobs outside ZQ_JENKINS_JOBS: ${outside.join(", ")}`);
+  const roleplayUser = env.ZQ_ROLEPLAY_MM_USER?.trim();
+  const roleplayProjects = (env.ZQ_ROLEPLAY_PROJECTS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (Boolean(roleplayUser) !== roleplayProjects.length > 0)
+    throw new Error("ZQ_ROLEPLAY_MM_USER and ZQ_ROLEPLAY_PROJECTS must be set together");
   return {
+    ...(roleplayUser ? { roleplay: { mmUserId: roleplayUser, projectIds: roleplayProjects } } : {}),
     identityMap: on(env.ZQ_IDENTITY_MAP),
     scanner: { enabled: scannerEnabled, cron, timezone },
     deliverReminders: on(env.ZQ_REMINDER_DELIVERY),
