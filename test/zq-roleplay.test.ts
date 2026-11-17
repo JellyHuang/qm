@@ -200,3 +200,35 @@ test("a message names the role it is for, not every role the same person holds",
   assert.match(meeting.text, /^当前你扮演:策划 策划小A\n/);
   assert.doesNotMatch(meeting.text.split("\n")[0]!, /项目经理|QA/);
 });
+
+test("every responsible planner is reminded, and the group takes the participants too", async () => {
+  const h = harness();
+  const reminders = createZqReminderStore({ map: h.reminderMap });
+  const groups = createZqGroups({ map: h.groupMap });
+  const second = { id: "15", login: "c", name: "策划小C" };
+  const guest = { id: "16", login: "d", name: "美术小D" };
+  const lead = { ...feature, planners: [PLANNER, second], participants: [guest] };
+  const reader = h.roleplay.reader({
+    features: async () => ({
+      facts: [{ feature: lead, children: [work(42, { parent_id: 40, assignee: DEV })], meetings: [] }],
+      problems: [],
+    }),
+    dutyHolders: async () => undefined,
+  });
+  await scanOnce({
+    reader,
+    contract,
+    people: h.roleplay.people([person]),
+    mmUserIdOfOpUser: h.roleplay.mmUserIdOfOpUser,
+    reminders,
+    groups: { store: groups, create: async (_f, members) => (h.channels.push({ members, subject: "" }), "chan-9") },
+    mode: "live",
+    now: NOON,
+    timezone: "Asia/Shanghai",
+    dailyCeiling: 100,
+    escalation: { duties: [], afterDays: 2 },
+  });
+  const meeting = (await reminders.pendingFor("rp:11")).concat(await reminders.pendingFor("rp:15"));
+  assert.deepEqual(meeting.map((r) => r.recipientMmUserId).sort(), ["rp:11", "rp:15"]);
+  assert.deepEqual([...h.channels[0]!.members].sort(), ["rp:11", "rp:12", "rp:15", "rp:16"]);
+});

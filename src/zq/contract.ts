@@ -60,6 +60,7 @@ export interface ZqContract {
     awaitingNote: string;
     completionSubmitted: string;
     completionSubmittedAt: string;
+    participants: string;
   } & Record<PersonField, string>;
   duties: Readonly<Record<string, string>>;
   tools: {
@@ -220,6 +221,7 @@ export function parseContract(value: unknown): ZqContract {
       awaitingNote: fields["awaitingNote"] ?? "awaiting_note",
       completionSubmitted: fields["completionSubmitted"] ?? "completion_submitted",
       completionSubmittedAt: fields["completionSubmittedAt"] ?? "delivery_submitted_at",
+      participants: fields["participants"] ?? "participants",
       estimate: text(fields["estimate"], "fields.estimate"),
       plannedStart: text(fields["plannedStart"], "fields.plannedStart"),
       plannedEnd: text(fields["plannedEnd"], "fields.plannedEnd"),

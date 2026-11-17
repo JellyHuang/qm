@@ -6,6 +6,7 @@ import { reminderId, type ReminderMode, type ZqReminderStore } from "./reminders
 import {
   DEFAULT_RULE_OPTIONS,
   evaluateRules,
+  peopleOn,
   type FeatureFacts,
   type OpUserRef,
   type RuleOptions,
@@ -156,7 +157,7 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
 
     async function usersOf(target: Target, fact: FeatureFacts): Promise<OpUserRef[]> {
       if (target.kind === "user") return [target.user];
-      if (target.kind === "field") return fact.feature[target.field] ? [fact.feature[target.field]!] : [];
+      if (target.kind === "field") return peopleOn(fact.feature, target.field);
       const found = await holdersOf(fact.feature.projectId, target.duty);
       if (!found?.length) report.noHolder++;
       return found ?? [];
@@ -284,7 +285,11 @@ async function ensureGroup(
   const { feature, children } = fact;
   const live = children.filter((c) => !paused(c.lifecycle));
   if (feature.statusKey !== contract.stageRoles.briefing || !live.length || live.some((c) => !c.assignee)) return false;
-  const people = [feature.responsiblePlanner, ...live.map((c) => c.assignee)].flatMap((u) => u ?? []);
+  const people = [
+    ...peopleOn(feature, "responsiblePlanner"),
+    ...(feature.participants ?? []),
+    ...live.flatMap((c) => c.assignee ?? []),
+  ];
   const members = (await Promise.all(people.map((u) => mmUserIdOfOpUser(u.id)))).flatMap((m) => m ?? []);
   if (!members.length) return false;
   const ref: ZqFeatureRef = {

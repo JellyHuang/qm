@@ -18,6 +18,8 @@ export interface WorkView {
   projectName?: string;
   assignee?: OpUserRef;
   responsiblePlanner?: OpUserRef;
+  planners?: OpUserRef[];
+  participants?: OpUserRef[];
   pm?: OpUserRef;
   reviewer?: OpUserRef;
   qaOwner?: OpUserRef;
@@ -116,6 +118,11 @@ const label = (contract: ZqContract, key: string) => contract.stages.feature[key
 const where = (w: WorkView) => `「${w.subject}」(#${w.id})`;
 const active = (w: WorkView) => !paused(w.lifecycle);
 
+export function peopleOn(w: WorkView, field: PersonField): OpUserRef[] {
+  if (field === "responsiblePlanner" && w.planners?.length) return w.planners;
+  return w[field] ? [w[field]!] : [];
+}
+
 const isOpen = (contract: ZqContract, w: WorkView) => w.statusKey !== contract.stageRoles.taskDone && active(w);
 
 function stageOwners(contract: ZqContract, stage: string): Target[] {
@@ -133,7 +140,7 @@ function missingPlan(w: WorkView): string[] {
 const FIELD_LABEL: Record<PersonField, string> = {
   responsiblePlanner: "负责策划",
   pm: "PM",
-  reviewer: "审核人",
+  reviewer: "制作人",
   qaOwner: "QA 确认人",
   acceptor: "验收人",
   regressionOwner: "回归确认人",
@@ -431,7 +438,7 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
         o,
         facts.children.filter((c) => c.parentId === o.id),
         o.responsiblePlanner
-          ? [{ kind: "user", user: o.responsiblePlanner }]
+          ? peopleOn(o, "responsiblePlanner").map((user): Target => ({ kind: "user", user }))
           : [{ kind: "field", field: "responsiblePlanner" }],
         contract,
         opts,

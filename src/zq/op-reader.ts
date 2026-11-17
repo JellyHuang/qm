@@ -58,6 +58,10 @@ function individual(value: unknown): OpUserRef | undefined {
   return type && !/^user$/i.test(type) ? undefined : person(value);
 }
 
+function people(value: unknown): OpUserRef[] {
+  return (Array.isArray(value) ? value : [value]).flatMap((v) => person(v) ?? []);
+}
+
 const BRACKET_ERROR = /\[([A-Za-z][A-Za-z0-9_]*)\]\s*(.*)$/s;
 
 function asOpError(e: unknown): OpError | undefined {
@@ -126,7 +130,9 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
   const projectName = str(item["project_name"]) ?? str(project?.["name"]) ?? str(project?.["identifier"]);
   const assignee = individual(item["assignee"]);
   const personAt = (field: keyof ZqContract["fields"]) => person(item[contract.fields[field]]);
-  const planner = personAt("responsiblePlanner");
+  const planners = people(item[contract.fields.responsiblePlanner]);
+  const planner = planners[0];
+  const participants = people(item[contract.fields.participants]);
   const pm = personAt("pm");
   const reviewer = personAt("reviewer");
   const qaOwner = personAt("qaOwner");
@@ -155,6 +161,8 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
     ...(projectName ? { projectName } : {}),
     ...(assignee ? { assignee } : {}),
     ...(planner ? { responsiblePlanner: planner } : {}),
+    ...(planners.length > 1 ? { planners } : {}),
+    ...(participants.length ? { participants } : {}),
     ...(pm ? { pm } : {}),
     ...(reviewer ? { reviewer } : {}),
     ...(qaOwner ? { qaOwner } : {}),

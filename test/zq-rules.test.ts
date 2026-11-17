@@ -245,7 +245,7 @@ test("waiting for formal assets reminds each owner about their own orders and gi
   assert.deepEqual(rules({ feature: feature("feature.resources", { pm: PM, awaited: [] }), children: [] }), []);
 });
 
-test("the review is for the reviewer on the order, the QA stage for the QA owner and the acceptance for the acceptor", () => {
+test("the review is for the reviewer on the order, the QA stage for the QA owner and the acceptance for the planner", () => {
   const reviewer = { id: "22", name: "Rev R" };
   const review = rules({ feature: feature("feature.review", { reviewer }), children: [] });
   assert.deepEqual(ids(review), ["review-pending"]);
@@ -257,11 +257,11 @@ test("the review is for the reviewer on the order, the QA stage for the QA owner
   });
   assert.deepEqual(qa[0]!.to, [{ kind: "field", field: "qaOwner" }]);
   const acceptance = rules({
-    feature: feature("feature.acceptance", { acceptor: ALICE }),
+    feature: feature("feature.acceptance"),
     children: [],
     exit: { ready: true, blockers: [] },
   });
-  assert.deepEqual(acceptance[0]!.to, [{ kind: "field", field: "acceptor" }]);
+  assert.deepEqual(acceptance[0]!.to, [{ kind: "field", field: "responsiblePlanner" }]);
 });
 
 test("an empty responsibility field never falls back to a duty group: it is reported to the configured duties", () => {
@@ -269,7 +269,7 @@ test("an empty responsibility field never falls back to a duty group: it is repo
   assert.deepEqual(ids(unset), ["responsibility-not-set"]);
   assert.deepEqual(unset[0]!.to, [{ kind: "duty", duty: "pm" }]);
   assert.equal(unset[0]!.subjectId, "wp:1:reviewer");
-  assert.match(unset[0]!.text, /需要审核人,但还没有设置/);
+  assert.match(unset[0]!.text, /需要制作人,但还没有设置/);
   const unconfigured = rules({ feature: feature("feature.review"), children: [] });
   assert.deepEqual(ids(unconfigured), ["responsibility-not-set"]);
   assert.deepEqual(unconfigured[0]!.to, [], "counted, but nobody is guessed");

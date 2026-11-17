@@ -58,7 +58,7 @@
     "feature.staffing": ["field:responsiblePlanner", "duty:pm"],
     "feature.briefing": ["field:responsiblePlanner", "duty:pm"],
     "feature.development": ["field:responsiblePlanner", "duty:pm"],
-    "feature.acceptance": ["field:acceptor"],
+    "feature.acceptance": ["field:responsiblePlanner"],
     "feature.qa": ["field:qaOwner"],
     "feature.resources": ["duty:art_lead", "duty:pm", "duty:qa_lead"],
     "feature.done": ["field:responsiblePlanner", "duty:pm", "duty:producer"]

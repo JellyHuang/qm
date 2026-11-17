@@ -3,7 +3,7 @@ import type { ZqChangeCursor, ZqChangeLine, ZqSnapshot } from "./changes.ts";
 import type { PersonField, ZqContract } from "./contract.ts";
 import type { ZqGroup } from "./groups.ts";
 import type { ZqReminder } from "./reminders.ts";
-import type { FeatureFacts, OpUserRef, RuleId } from "./rules.ts";
+import { peopleOn, type FeatureFacts, type OpUserRef, type RuleId } from "./rules.ts";
 import type { OpReader, ScanPerson } from "./scanner.ts";
 
 export interface RoleplayPersona {
@@ -62,7 +62,7 @@ const PREFIX = "rp:";
 const FIELD_ROLES: Record<PersonField, string> = {
   responsiblePlanner: "策划",
   pm: "项目经理",
-  reviewer: "评审",
+  reviewer: "制作人",
   qaOwner: "QA",
   acceptor: "验收人",
   regressionOwner: "回归负责人",
@@ -89,13 +89,13 @@ export function createRoleplay(opts: {
   function rolesOf(fact: FeatureFacts): Array<[OpUserRef, string]> {
     const out: Array<[OpUserRef, string]> = [];
     for (const [field, role] of Object.entries(FIELD_ROLES) as Array<[PersonField, string]>) {
-      const user = fact.feature[field];
-      if (user) out.push([user, role]);
+      for (const user of peopleOn(fact.feature, field)) out.push([user, role]);
     }
+    for (const user of fact.feature.participants ?? []) out.push([user, "参与人员"]);
     if (fact.feature.typeKey === opts.contract?.optimizationType && fact.feature.assignee)
       out.push([fact.feature.assignee, "优化单执行人"]);
     for (const child of fact.children) {
-      if (child.responsiblePlanner) out.push([child.responsiblePlanner, FIELD_ROLES.responsiblePlanner]);
+      for (const user of peopleOn(child, "responsiblePlanner")) out.push([user, FIELD_ROLES.responsiblePlanner]);
       if (!child.assignee) continue;
       const owner = opts.contract?.typeOwners[child.typeKey];
       const role = child.typeKey === opts.contract?.optimizationType ? "优化单执行人" : undefined;

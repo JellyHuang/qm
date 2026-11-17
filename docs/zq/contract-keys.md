@@ -31,6 +31,10 @@ Called with `{ limit: 100, offset }` and paged by `next_offset` until it is `nul
 - `tools.changesSince`, called with `{ project_id, cursor, limit }`: `{ results: [event], next_cursor, has_more }`; each event has `event_id`, `ticket_id`, `parent_feature_id`, `kinds`, `old`/`new`, `actor`, `occurred_at`, `reason`, `batch_id`.
 - `tools.dutyHolders`, called with `{ project_id, duty }` and paged: `{ results: [{ id, login, name }] }`; empty means nobody holds the duty, several means several.
 
+## People fields
+
+`fields.responsiblePlanner` may hold several users; every one of them gets what is addressed to the planner, and the first is the main one in digests and roles. `fields.participants` (default `participants`, a list of users) adds people to the feature group beside the planners and the executors of its live orders. `reviewer` is the producer who reviews the plan. The acceptance stage is addressed to the planner through `stageOwners`; QM no longer needs a separate acceptor or regression owner, and those two keys stay readable only for key tables that still name them.
+
 ## Empty responsibility fields
 
 A person field named by `stageOwners` that is empty on the feature is never replaced by a duty group. QM sends no reminder for it and instead emits `responsibility-not-set` to the duties in `ZQ_UNSET_RESPONSIBILITY_DUTIES` (none by default, so it is only counted in the scan report).

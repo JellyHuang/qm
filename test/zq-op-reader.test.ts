@@ -482,3 +482,21 @@ test("the time an optimization order was submitted is read from its submission t
   assert.equal(read("2026-11-17T09:00:00Z").completionSubmittedAt, Date.parse("2026-11-17T09:00:00Z"));
   assert.equal(read(null).completionSubmittedAt, undefined);
 });
+
+test("several responsible planners and the participants are read as lists, the first planner stays the main one", () => {
+  const second = { id: "15", login: "carol", name: "Carol C" };
+  const view = parseWorkView(
+    wp({ planner: [planner, second], participants: [second, { id: "16", login: "dan", name: "Dan D" }] }),
+    contract,
+  )!;
+  assert.deepEqual(
+    view.planners?.map((u) => u.id),
+    ["11", "15"],
+  );
+  assert.equal(view.responsiblePlanner?.id, "11");
+  assert.deepEqual(
+    view.participants?.map((u) => u.id),
+    ["15", "16"],
+  );
+  assert.equal(parseWorkView(wp(), contract)!.planners, undefined);
+});

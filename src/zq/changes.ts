@@ -1,6 +1,6 @@
 import type { DurableMap } from "../persistence/durable-map.ts";
 import type { ZqContract } from "./contract.ts";
-import type { FeatureFacts, WorkView } from "./rules.ts";
+import { peopleOn, type FeatureFacts, type WorkView } from "./rules.ts";
 import type { ZqGroups } from "./groups.ts";
 
 export interface ZqSnapshot {
@@ -300,7 +300,9 @@ export function createZqChanges(opts: {
     async record(fact, contract, ctx) {
       const { feature, children } = fact;
       const featureId = feature.id;
-      const planner = feature.responsiblePlanner?.name ?? "";
+      const planner = peopleOn(feature, "responsiblePlanner")
+        .map((u) => u.name)
+        .join("、");
       const plannerId = feature.responsiblePlanner?.id;
       const pending: Pending[] = [];
       const next: ZqSnapshot[] = [];
