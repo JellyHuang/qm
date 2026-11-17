@@ -387,3 +387,18 @@ test("without an optimization type in the contract the order is just another tic
   });
   assert.deepEqual(rules({ feature: optimization(), children: [] }, plain), []);
 });
+
+test("a submitted completion confirmation asks the planner to accept it once and silences the executor's overdue reminder", () => {
+  const submitted = optimization({
+    assignee: BOB,
+    statusKey: "execution.active",
+    completionSubmitted: true,
+    dueAt: NOW - 2 * DAY,
+  });
+  const actions = rules({ feature: submitted, children: [] });
+  assert.deepEqual(ids(actions), ["optimization-completion-submitted"]);
+  assert.equal(actions[0]!.once, true);
+  assert.deepEqual(actions[0]!.to, [{ kind: "field", field: "responsiblePlanner" }]);
+  assert.match(actions[0]!.text, /已提交完成确认.*已完成/);
+  assert.deepEqual(rules({ feature: { ...submitted, statusKey: "execution.done" }, children: [] }), []);
+});

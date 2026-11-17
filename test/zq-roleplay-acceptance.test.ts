@@ -223,6 +223,18 @@ test("role-play acceptance script: create, assign, develop, hand in, QA, finish,
   );
   h.world.extra = [
     {
+      feature: optimization(84, { assignee: DEV, statusKey: "execution.active", completionSubmitted: true }),
+      children: [],
+      meetings: [],
+    },
+  ];
+  const submitted = await h.step(10);
+  assert.ok(
+    submitted.sent.some((m) => m.text.startsWith(label("策划", "策划小A")) && m.text.includes("已提交完成确认")),
+    "the planner is asked to accept a submitted optimization order",
+  );
+  h.world.extra = [
+    {
       feature: optimization(81, { statusKey: "execution.active" }),
       children: [
         view(82, { parentId: 81, assignee: DEV, statusKey: "execution.done" }),

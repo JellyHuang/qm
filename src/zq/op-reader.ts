@@ -141,6 +141,7 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
   const blocking = item["blocking"];
   const awaited = awaitedChildren(item[contract.fields.awaitedChildren]);
   const awaitingNote = str(item[contract.fields.awaitingNote]);
+  const completionSubmitted = item[contract.fields.completionSubmitted];
   return {
     id,
     subject: str(item["subject"]) ?? `#${id}`,
@@ -167,6 +168,7 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
     ...(typeof blocking === "boolean" ? { blocking } : {}),
     ...(awaited ? { awaited } : {}),
     ...(awaitingNote ? { awaitingNote } : {}),
+    ...(completionSubmitted === true ? { completionSubmitted } : {}),
   };
 }
 

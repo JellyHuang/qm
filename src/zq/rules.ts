@@ -32,6 +32,7 @@ export interface WorkView {
   blocking?: boolean;
   awaited?: AwaitedChild[];
   awaitingNote?: string;
+  completionSubmitted?: boolean;
 }
 
 export interface AwaitedChild {
@@ -75,6 +76,7 @@ export type RuleId =
   | "task-unassigned"
   | "optimization-unassigned"
   | "optimization-children-done"
+  | "optimization-completion-submitted"
   | "production-missing-planned-end"
   | "blocking-bug-open"
   | "delay-notice"
@@ -184,7 +186,8 @@ function evaluateOptimization(facts: FeatureFacts, contract: ZqContract, opts: R
       ),
     );
   for (const c of live.length ? live : [feature]) {
-    if (!isOpen(contract, c) || !c.assignee || c.dueAt === undefined || opts.now <= c.dueAt) continue;
+    if (!isOpen(contract, c) || c.completionSubmitted || !c.assignee || c.dueAt === undefined || opts.now <= c.dueAt)
+      continue;
     const days = Math.floor((opts.now - c.dueAt) / DAY);
     out.push(
       at(
@@ -195,6 +198,15 @@ function evaluateOptimization(facts: FeatureFacts, contract: ZqContract, opts: R
       ),
     );
   }
+  if (!live.length && feature.completionSubmitted)
+    out.push({
+      ...at(
+        "optimization-completion-submitted",
+        planner,
+        `优化单${where(feature)}的执行人${feature.assignee ? ` ${feature.assignee.name} ` : ""}已提交完成确认。请验收,通过后把它转为「${label(contract, done)}」。`,
+      ),
+      once: true,
+    });
   if (live.length && live.every((c) => c.statusKey === done))
     out.push({
       ...at(
