@@ -1,6 +1,6 @@
 # DDL proposal: GitLab read-only MCP service (for human review)
 
-Status: APPROVED by the PM on 2026-11-16 for the decisions marked APPROVED below (tenant scoped tables, the role grants, no redaction, audit retention, serve on audit failure). Sections 8 (author mapping tables) and 9 (Jenkins tables) were APPROVED by the PM on 2026-11-17; that approval does not enable anything, see those sections. Nothing here is applied: no database was contacted, "current" shapes are derived from repo code, and the migrations and the role SQL are still to be written and reviewed.
+Status: APPROVED by the PM on 2026-11-16 for the decisions marked APPROVED below (tenant scoped tables, the role grants, no redaction, audit retention, serve on audit failure). Section 9 (Jenkins tables) was APPROVED by the PM on 2026-11-17; that approval does not enable anything, see that section. Section 8 (author mapping tables) was approved on 2026-11-17 in its original shape, and a structure change is now PENDING approval (see section 8 and docs/zq-author-binding-design.md section 12): until that change is approved, the original section 8 shape is NOT an authority to create or enable anything. Nothing here is applied: no database was contacted, "current" shapes are derived from repo code, and the migrations and the role SQL are still to be written and reviewed.
 
 ## Who creates which table (read first, by design)
 
@@ -181,9 +181,9 @@ Still open:
 9. Rollback: drop the two new tables, then drop the database account, five statements in total, at any time. Existing tables and data are unaffected, and old rows stay valid.
 10. Still open: how the connection string is delivered, how the role is bound to the tenant in a multi-tenant deployment, and pruning of tombstones.
 
-## 8. Author mapping tables (APPROVED by the PM, 2026-11-17)
+## 8. Author mapping tables (original shape approved 2026-11-17; structure change PENDING approval)
 
-Status: APPROVED by the PM, 2026-11-17. Approval of this DDL does NOT enable anything. Nothing here is applied and no database was contacted. The tables stay disabled by default: they are auto-created by the durable-map layer only when `ZQ_GIT_AUTHOR_MAPPING=1` is set, and no environment enables that switch by default. The code lives on branch `oa/zq-author-map` (docs/zq/author-mapping.md). With the switch off the code builds no durable map, so neither table is registered or created; turning the switch on in an environment is a separate, deliberate step.
+Status: PENDING APPROVAL (structure change). The shapes below were approved on 2026-11-17, and the design in docs/zq-author-binding-design.md (section 12) proposes a different structure for both tables (keyed by normalised author name, with an ignore list and a departed flag). The proposed structure is not approved. Until the PM approves it, neither the original nor the proposed shape may be used as the basis for creating a table, for a DBA step or for enabling `ZQ_GIT_AUTHOR_MAPPING` in any environment. The code on branches `oa/zq-author-map` and `oa/zq-wire-3-authors` still implements the original shape and must not be enabled before the change is decided. Original status text follows: APPROVED by the PM, 2026-11-17. Approval of this DDL does NOT enable anything. Nothing here is applied and no database was contacted. The tables stay disabled by default: they are auto-created by the durable-map layer only when `ZQ_GIT_AUTHOR_MAPPING=1` is set, and no environment enables that switch by default. The code lives on branch `oa/zq-author-map` (docs/zq/author-mapping.md). With the switch off the code builds no durable map, so neither table is registered or created; turning the switch on in an environment is a separate, deliberate step.
 
 Approved decisions affecting this section (PM, 2026-11-17): all recommendations adopted.
 
