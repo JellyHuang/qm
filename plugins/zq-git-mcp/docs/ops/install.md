@@ -29,7 +29,7 @@ The code does not keep the key in the data directory. `src/ssh.ts` creates `mkdt
 
 ## Why the key and config are readable only by the service user
 
-Anyone holding the read key can clone every repository it sees (it currently authenticates as a personal GitLab user and also sees a repository outside the seven), and `git archive --remote` works with it. The service allowlist is the only guard. So the key lives only in the service's own 0600 file, is never given to QM core, agents, sandboxes or logs, and ordinary sessions must not be able to read `/etc/zq-git-mcp` or `/home/zq-git-mcp`. The same file holds the shared secret that lets QM call the service and the database password. The key is an environment variable (`GITLAB_QM_READONLY_SSH_KEY_B64`, base64 of the private key file), so it is also visible in `/proc/<pid>/environ` to the same user and root only.
+Anyone holding the read key can clone every repository it sees (it currently authenticates as a personal GitLab user and also sees a repository outside the seven), so anything it can read could be read with any git client. The key is read-only, and the service never runs archive, bundle or clone like commands for a caller. The service allowlist is the only guard. So the key lives only in the service's own 0600 file, is never given to QM core, agents, sandboxes or logs, and ordinary sessions must not be able to read `/etc/zq-git-mcp` or `/home/zq-git-mcp`. The same file holds the shared secret that lets QM call the service and the database password. The key is an environment variable (`GITLAB_QM_READONLY_SSH_KEY_B64`, base64 of the private key file), so it is also visible in `/proc/<pid>/environ` to the same user and root only.
 
 ## Commands (for a human to run after approval; not executed)
 

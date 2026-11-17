@@ -1,6 +1,6 @@
 # zq-git-mcp handoff
 
-A read-only MCP service for the seven ZQ GitLab repositories (`client`, `clientcode`, `CommonMessage`, `gameconfig`, `jenkinstasks`, `server`, `zq-ui`). Nothing is deployed. Branch `oa/zq-git-mcp`; the in-process GitLab module of the core was removed in the isolated commit `7f8eab470` (the rollback point). Related documents: `ops/` (install, checks, runbook, rollback, checklist), `audit-and-storage.md`, `check-updates.md`, `diff-xlsx.md`, `real-server-it.md`, `docs/zq/gitlab-mcp-client.md` (QM side), and the DDL proposal `docs/zq-git-mcp-ddl-proposal.md` on `oa/spike-git`.
+A read-only MCP service for the seven ZQ GitLab repositories (`client`, `clientcode`, `CommonMessage`, `gameconfig`, `jenkinstasks`, `server`, `zq-ui`). QM never pushes, opens merge requests or writes anything to GitLab: the key is a read-only key, the service has no write code, and changes reach people only as patch packages that the person applies and commits. Nothing is deployed. Branch `oa/zq-git-mcp`; the in-process GitLab module of the core was removed in the isolated commit `7f8eab470` (the rollback point). Related documents: `ops/` (install, checks, runbook, rollback, checklist), `audit-and-storage.md`, `check-updates.md`, `diff-xlsx.md`, `real-server-it.md`, `docs/zq/gitlab-mcp-client.md` (QM side), and the DDL proposal `docs/zq-git-mcp-ddl-proposal.md` on `oa/spike-git`.
 
 ## 1. Tools
 
@@ -81,21 +81,27 @@ Precedence for every plugin key: environment, then the JSON file named by `ZQ_GI
 
 ## 4. Verified facts
 
+Units: MiB is 1,048,576 bytes and every size here is in MiB unless it says otherwise. The fields of the integration test that end in `MB` (`rssPeakMB`, `packPeakMB`, `mbPerSec`, `downloadedMB`) are MiB. `rssPeakMB` is the peak of the process RSS, sampled every 100 ms during that test case, minus the process RSS at the start of the case, never below 0. It is growth, not absolute memory: RSS held by earlier cases is already counted in the starting value, so 0 means the case did not go above what the process already held (the RSS of a process is not returned to the system promptly).
+
+Sources: "reviewer" means a number the reviewer reported from a real-server run, "spike" a number from the real-server spike reports given to the worker, "local" a number the worker measured on its own machine on 2026-11-16 with generated fixtures. A number without a source is not stated here.
+
 Real server (lab.skyunion.net, read-only key):
 
-- Single and batch blob fetch by oid works. The server does not support object-info, so a blob size is only known after the download. A cold single blob took about 2.6 s; 20 blobs in one fetch about 1 s over a ControlMaster against about 2.65 s per new connection; 4 parallel fetches over one master were stable, and 6 single, 4 batches of 20 and 10 mixed fetches over one master finished in 2 to 3 s.
-- Noop negotiation fixed the `did not send all necessary objects` failures of the `server` repository.
-- A 229 MB `.psd` showed a client peak RSS of 237 MB before `core.bigFileThreshold` was set, 18.96 MB of mp4 took 53.8 s (0.35 MB/s) and 229 MB took 82 s: timeouts are generous and progress based, never rate based.
-- Second integration run (git 2.47.1 through `ZQ_GIT_MCP_GIT_BIN`, commit `c838d68f9`): passed in about 4 minutes. `string.xlsx` 4.97 MB diffed in 6.3 s with a process RSS peak of 215.6 MB; `behavior/1.xlsx` 0.9 s; `leyline_lv.xlsx` 0.9 s; a 240 MB PSD was read by range in 88.2 s at 2.6 MB/s with 160 MB downloaded and a git child peak of 154 MB; five files were skipped because none of their last six commit pairs gave a diff.
-- `behavior/1.xlsx` after the namespace prefix fix: one sheet, header row 1, key column A unique, 7 changed cells, 2 rows added. `abtest.xlsx`: header row 1, column A has 9 data rows with 4 distinct values, so the default key is ambiguous; the diagnostic suggests column C.
-- LFS on the real repositories: `client` has 23.6% of its files under an lfs attribute (all sampled pointers about 130 bytes), `server` about 1% (mixed pointers and real files), the others none. Gitlinks: `client` 5, `server` 6, `clientcode` 1. LFS is decided by content only.
+- Single and batch blob fetch by oid works (spike, before 2026-11-16). The server does not support object-info, so a blob size is only known after the download. A cold single blob took about 2.6 s; 20 blobs in one fetch about 1 s over a ControlMaster against about 2.65 s per new connection; 4 parallel fetches over one master were stable, and 6 single, 4 batches of 20 and 10 mixed fetches over one master finished in 2 to 3 s (spike, before 2026-11-16).
+- Noop negotiation fixed the `did not send all necessary objects` failures of the `server` repository (reviewer probe, before 2026-11-16).
+- Memory of the fetch, two separate sources. Spike v2 on the real server measured 237 MB peak RSS (unit as reported) at the default configuration for a 229 MiB file. A local 200 MB blob measured 190 MB at the default configuration and 8 MB with `core.bigFileThreshold=1m` (membench probe, as reported to the worker; units as reported).
+- Timing of slow links (spike, before 2026-11-16): an 18.96 MB mp4 took 53.8 s (0.35 MB/s) and a 229 MB file took 82 s (units as reported), so the timeouts are generous and progress based, never rate based.
+- Real-server integration run, round 2 (reviewer, git 2.47.1 through `ZQ_GIT_MCP_GIT_BIN`, commit `c838d68f9`): full mode passed; `string.xlsx` (4.97 MB as reported, about 4.74 MiB if that is decimal MB) diffed in 6.3 s with an `rssPeakMB` of 215.6; `behavior/1.xlsx` in 0.9 s; `leyline_lv.xlsx` in 0.9 s; the PSD (240,340,614 bytes = 229.2 MiB) was read by range in 88.2 s, about 2.6 MiB/s, with about 160 downloaded (unit as reported) and a git child peak of about 154 (unit as reported); five files were skipped because none of their last six commit pairs gave a diff.
+- Real-server integration run, round 3 (reviewer, 2026-11-17): override, diag and full mode all passed; in full mode `string.xlsx` took 41 s with an `rssPeakMB` of 214 and the PSD 93.6 s. A full mode run takes about 4 to 6.5 minutes (reviewer, two runs, rounds 2 and 3).
+- `behavior/1.xlsx` after the namespace prefix fix (reviewer, round 2): one sheet, header row 1, key column A unique, 7 changed cells, 2 rows added, 43 to 45 rows. `abtest.xlsx` (reviewer, round 2): header row 1, column A has 9 data rows with 4 distinct values, so the default key is ambiguous; the diagnostic suggested column C. In round 3 the override run with key C resolved the ambiguity (`ambiguousKeys` 4 to 0, reviewer, 2026-11-17).
+- LFS on the real repositories (reviewer statistics, before 2026-11-16): `client` has 23.6% of its files under an lfs attribute (all sampled pointers about 130 bytes), `server` about 1% (mixed pointers and real files), the others none. Gitlinks: `client` 5, `server` 6, `clientcode` 1. LFS is decided by content only.
 
-Local fixtures (offline, in the plugin tests):
+Local fixtures (offline, in the plugin tests; local, 2026-11-16):
 
 - A 128 MiB blob: `index-pack` peak 5 MiB with `core.bigFileThreshold=1m` against 133 MiB without.
-- A 256 MiB text file and a 160 MiB binary are read and hashed with bounded process memory; both through the transient path and through the cache.
-- diff_xlsx on 400k rows (11 MiB, 6 MiB of shared strings): 18.6 s, process RSS growth 239 MiB; the growth stays flat from 50k to 800k rows (122, 138 and 119 MiB at 2.2, 9.1 and 36 s).
-- Tests: the plugin suite has 235 tests (one skipped real-server hook); core has the contract, client, poller, author and retention tests.
+- A 256 MiB text file and a 160 MiB binary are read and hashed with bounded process memory, through the transient path and through the cache.
+- diff_xlsx on 400k rows (an 11 MiB workbook with 6 MiB of shared strings): 18.6 s, process RSS growth 239 MiB; the growth stays flat from 50k to 800k rows (122, 138 and 119 MiB at 2.2, 9.1 and 36 s).
+- Tests: the plugin suite has 235 tests (234 pass, 1 skipped real-server hook; local run, 2026-11-16). Core has the contract, client, poller, author and retention tests (29 pass in the last core run, local, 2026-11-16).
 
 ## 5. Known limitations
 
@@ -105,6 +111,7 @@ Local fixtures (offline, in the plugin tests):
 - Regular expression content search runs with a time limit (`regex_timeout`) and a pattern length limit.
 - Tags are not polled; only branch heads.
 - A search query and `diff_xlsx` overrides are stored in the audit as given.
+- Known behaviour, `abtest.xlsx` (reviewer, round 3, 2026-11-17): the override with key column C resolves the key ambiguity, and the run then reports 0 changed cells, 0 rows added and 0 rows removed although the two blobs differ. That is not a defect: the two commits differ only in data that is not a cell value or a row (for example styles or document metadata), which `diff_xlsx` does not compare.
 - A response cut by `truncateChars` is cut by whole items or characters; a client must page or narrow.
 - The memory stores lose audit rows and branch tips on restart; `check_updates` then treats the next call as a first observation.
 - The service is a single instance; the per-repository lock is in process (the database compare-and-set is the multi instance guard).
@@ -141,10 +148,11 @@ Service: stop it, point `current` at the previous release, start it (config unch
 4. `read_file` on a small text file twice (cold 2 to 3 s, then a cache hit in `cache_hit` of the audit row), a `.png` (binary, sha256) and an LFS file (`lfs_pointer`).
 5. `get_diff` with and without `paths`, `blame` on a file with a rename, `search` of all three kinds, a content search without `pathGlob` (refused).
 6. `diff_xlsx` on `string.xlsx` and `behavior/1.xlsx` (expect `xlsx_diff`), on `abtest.xlsx` (ambiguous with `suggestedKeyColumns`, then the override run), and the structure diagnostics.
-7. `check_updates`: first call per repository records tips; push a test commit to a scratch branch; the next call reports it; pass the acks; the following call reports nothing; delete the branch and see the tombstone flow. Stop the service mid way and check that an unacknowledged poll repeats.
+7. `check_updates`, read-only toward GitLab: the first call per repository records the tips and reports nothing; a second call reports `unchanged`. To see commits without pushing anything, set one stored tip back in the staging database (`UPDATE zq_git_branch_tips SET tip_sha = <an older commit of that branch> WHERE repo = ... AND branch = ...`, our own table); the next poll reports the commits after it, the call that passes the `ack` entries advances the tip, and the poll after that reports nothing. An unacknowledged poll repeats the same commits (stop the poller between the two calls). For the tombstone flow insert a row for a branch name that does not exist on the remote, with a real commit as `tip_sha`; the next poll reports it as `deleted`, the acknowledged call marks it, and the following poll is quiet. Nothing in this step writes to GitLab.
 8. Database: with the Postgres stores on, check the audit rows and tips in the tables, RLS (own tenant only, no SELECT on the audit table, no DELETE). Stop the database, make calls (served, spooled, alarm), restart it (replayed in order once).
 9. Kill a running `diff_xlsx` and a fetch (cancel the request): no process and no scratch directory remains. Fill the scratch cap and the free floor on a test volume.
-10. Run the real server integration test in all three wrapper modes (full, diag, override).
+10. Run the real server integration test in all three wrapper modes (full, diag, override); it only reads.
+11. Staging validation is read-only toward GitLab end to end: no push, no branch, no merge request, no tag. If the patch package flow has to be validated, generate a `.patch` locally (for example with `git format-patch` in a throwaway clone, or from the `get_diff` text with a mail header) and apply it with `git am` in a local throwaway clone that has no remote, then delete the clone.
 
 ## 10. Evaluation: should the QM client retry `diff_xlsx` with the suggested key by itself?
 
