@@ -1,4 +1,5 @@
 import type { DurableMap } from "../../persistence/durable-map.ts";
+import { pruneGitAudit } from "../git-mcp/audit-retention.ts";
 import type { JenkinsCauseKind } from "./client.ts";
 import type { JenkinsState, NoticeKind, SkipReason } from "./decision.ts";
 
@@ -67,7 +68,10 @@ export interface JenkinsStore {
   claimNotice(id: string): Promise<JenkinsNotice | null>;
   settleNotice(id: string, outcome: "sent" | "retry" | "failed"): Promise<void>;
   notices(): Promise<JenkinsNotice[]>;
+  pruneAudit(): Promise<number>;
 }
+
+export const JENKINS_AUDIT_RETENTION_DAYS = 90;
 
 const MAX_NOTICE_ATTEMPTS = 5;
 
@@ -178,5 +182,6 @@ export function createJenkinsStore(deps: {
         });
     },
     notices: () => deps.noticeMap.all(),
+    pruneAudit: () => pruneGitAudit(deps.audits, now(), JENKINS_AUDIT_RETENTION_DAYS),
   };
 }

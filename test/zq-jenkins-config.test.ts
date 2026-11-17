@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { tenantTest } from "./support/tenant-test.ts";
 import type { LeaderLease } from "../src/persistence/leader-lease.ts";
+import {
+  createJenkinsStore,
+  type JenkinsAuditRow,
+  type JenkinsBuildRecord,
+  type JenkinsNotice,
+} from "../src/zq/jenkins/store.ts";
 import { zqConfigFromEnv } from "../src/zq/config.ts";
 import { createZqRuntime, type ZqChat } from "../src/zq/runtime.ts";
 import { FAKE_SECRET, FAKE_USER, startFakeJenkins } from "./support/fake-jenkins.ts";
@@ -86,11 +92,15 @@ const chat = (posts: Array<[string, string]>): ZqChat => ({
 function runtimeFor(env: NodeJS.ProcessEnv) {
   const sweepers: Array<{ label: string | undefined; started: number; work: () => unknown }> = [];
   const posts: Array<[string, string]> = [];
+  const requested: string[] = [];
   const runtime = createZqRuntime({
     config: zqConfigFromEnv(env),
     call: async () => "{}",
     chat: chat(posts),
-    map: () => tenantMap(),
+    map: (table) => {
+      requested.push(table);
+      return tenantMap();
+    },
     leaderLease: noLease,
     createSweeper: (work, _ms, opts) => {
       const entry = { label: opts?.label, started: 0, work };
@@ -103,12 +113,16 @@ function runtimeFor(env: NodeJS.ProcessEnv) {
       };
     },
   });
-  return { runtime, sweepers, posts };
+  return { runtime, sweepers, posts, requested };
 }
 
 tenantTest("with default configuration nothing polls, nothing is requested and nothing is sent", async () => {
   const fake = await startFakeJenkins({ now: () => 0 });
-  const { runtime, sweepers, posts } = runtimeFor({ ZQ_JENKINS_URL: fake.url, ...credential });
+  const { runtime, sweepers, posts, requested } = runtimeFor({ ZQ_JENKINS_URL: fake.url, ...credential });
+  assert.deepEqual(
+    requested.filter((table) => table.startsWith("zq_jenkins")),
+    [],
+  );
   runtime.start();
   await runtime.stop();
   assert.deepEqual(
@@ -147,3 +161,19 @@ tenantTest(
     await fake.close();
   },
 );
+
+tenantTest("the audit table is pruned of rows older than 90 days and nothing else, only when asked", async () => {
+  const calls: Array<[string, number]> = [];
+  const store = createJenkinsStore({
+    builds: tenantMap<JenkinsBuildRecord>(),
+    noticeMap: tenantMap<JenkinsNotice>(),
+    audits: {
+      ...tenantMap<JenkinsAuditRow>(),
+      deleteBefore: async (field: string, cutoff: number) => void calls.push([field, cutoff]),
+    },
+    now: () => 1_000_000_000_000,
+  });
+  assert.deepEqual(calls, []);
+  assert.equal(await store.pruneAudit(), 1_000_000_000_000 - 90 * 86_400_000);
+  assert.deepEqual(calls, [["at", 1_000_000_000_000 - 90 * 86_400_000]]);
+});
