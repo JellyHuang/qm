@@ -140,7 +140,7 @@ test("a usable email in an external domain is dropped unless the name is bound",
 });
 
 const botTable: Array<[string, string, string, "bot" | "unmapped"]> = [
-  ["ZQBot.compiler", "ZQBot.compiler", "x@corp.example", "bot"],
+  ["ExampleBot.compiler", "ExampleBot.compiler", "x@corp.example", "bot"],
   ["jenkins-bot", "jenkins-bot", "x@corp.example", "bot"],
   ["bot-deploy", "bot-deploy", "x@corp.example", "bot"],
   ["build.bot@corp.example", "Someone", "build.bot@corp.example", "bot"],
@@ -153,7 +153,7 @@ const botTable: Array<[string, string, string, "bot" | "unmapped"]> = [
   ["bracket form", "renovate[bot]", "x@corp.example", "bot"],
   ["digit boundary", "build2bot", "x@corp.example", "bot"],
   ["fused lower", "dependabotx", "x@corp.example", "unmapped"],
-  ["fused upper", "ZQBOT", "x@corp.example", "unmapped"],
+  ["fused upper", "EXAMPLEBOT", "x@corp.example", "unmapped"],
   ["exact list entry", "Dependabot", "x@corp.example", "bot"],
   ["domain is ignored", "Ann", "ann@bot.example.com", "unmapped"],
 ];
@@ -166,7 +166,7 @@ for (const [label, name, email, expected] of botTable)
 
 test("an empty token list turns the token rule off but keeps the exact list", async () => {
   const { resolver } = fixture({ rules: { ...rules, botTokens: [] } });
-  assert.equal((await resolver.resolve({ name: "ZQBot.compiler", email: "x@corp.example" })).kind, "unmapped");
+  assert.equal((await resolver.resolve({ name: "ExampleBot.compiler", email: "x@corp.example" })).kind, "unmapped");
   assert.equal((await resolver.resolve({ name: "dependabot", email: "x@corp.example" })).kind, "bot");
 });
 
@@ -174,12 +174,12 @@ test("a bound bot-looking name beats the rule, and an unbound bot sharing a depa
   const people = createMemoryPeopleDirectory([{ emails: ["dana@corp.example"], person: carol }]);
   const { resolver, bind } = fixture({ directory: people });
   await bind("Dana Example", carol, { departedAt: 5 });
-  assert.deepEqual(await resolver.resolve({ name: "ZQBot.compiler", email: "dana@corp.example" }), {
+  assert.deepEqual(await resolver.resolve({ name: "ExampleBot.compiler", email: "dana@corp.example" }), {
     kind: "bot",
-    name: "ZQBot.compiler",
+    name: "ExampleBot.compiler",
   });
-  await bind("ZQBot.compiler", bob);
-  assert.deepEqual(await resolver.resolve({ name: "ZQBot.compiler", email: "dana@corp.example" }), byName(bob));
+  await bind("ExampleBot.compiler", bob);
+  assert.deepEqual(await resolver.resolve({ name: "ExampleBot.compiler", email: "dana@corp.example" }), byName(bob));
 });
 
 test("a departed person's row resolves as a departed person", async () => {
@@ -194,7 +194,7 @@ test("a departed person's row resolves as a departed person", async () => {
 test("an ignored name is dropped whatever the email, and beats the bot and external rules", async () => {
   const { resolver, ignore } = fixture();
   await ignore("pipeline-sync", "automation");
-  await ignore("ZQBot.compiler", "automation");
+  await ignore("ExampleBot.compiler", "automation");
   await ignore("Visiting Student", "external");
   for (const email of ["@partnerco", "", "plain", "x@corp.example", "p@partnerco"])
     assert.deepEqual(await resolver.resolve({ name: "Pipeline-Sync", email }), {
@@ -202,10 +202,10 @@ test("an ignored name is dropped whatever the email, and beats the bot and exter
       reason: "automation",
       nameKey: "pipeline-sync",
     });
-  assert.deepEqual(await resolver.resolve({ name: "ZQBot.compiler", email: "x@corp.example" }), {
+  assert.deepEqual(await resolver.resolve({ name: "ExampleBot.compiler", email: "x@corp.example" }), {
     kind: "ignored",
     reason: "automation",
-    nameKey: "zqbot.compiler",
+    nameKey: "examplebot.compiler",
   });
   assert.equal((await resolver.resolve({ name: "visiting student", email: "v@partnerco" })).kind, "ignored");
 });

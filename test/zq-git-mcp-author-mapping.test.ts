@@ -89,7 +89,7 @@ test("people are grouped across repositories and branches by name, excluded kind
   const result = await mapping.mapper.map([
     batch("client", "main", [
       commit("c1", "alice@a.example", "Alice Example"),
-      commit("c2", "zqbot@corp.example", "ZQBot.compiler"),
+      commit("c2", "examplebot@corp.example", "ExampleBot.compiler"),
       commit("c3", "wang@partnerco", "Wang"),
     ]),
     batch("server", "dev", [
@@ -126,7 +126,7 @@ test("bots, external and unmapped authors produce no sink call", async () => {
   const { mapping } = build(sink);
   const result = await mapping.mapper.map([
     batch("client", "main", [
-      commit("c1", "zqbot@corp.example", "ZQBot.compiler"),
+      commit("c1", "examplebot@corp.example", "ExampleBot.compiler"),
       commit("c2", "wang@partnerco"),
       commit("c3", "nobody@corp.example", "Nobody"),
       commit("c4", "@partnerco", "Eve"),
@@ -309,7 +309,7 @@ test("a bot sharing nothing but a departed person's email stays dropped and reac
   const sink = createRecordingSink();
   const { mapping } = build(sink);
   await bind(mapping, "Dana Example", bob, 5);
-  await mapping.mapper.map([batch("client", "main", [commit("c1", "dana@corp.example", "ZQBot.compiler")])]);
+  await mapping.mapper.map([batch("client", "main", [commit("c1", "dana@corp.example", "ExampleBot.compiler")])]);
   assert.deepEqual([sink.sent, sink.sentToPm], [[], []]);
   assert.deepEqual(await mapping.queue.list(), []);
 });

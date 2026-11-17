@@ -2,7 +2,7 @@ import type { AuthorAliases, IgnoreReason } from "./author-aliases.ts";
 import { emailDomain, isBotAuthor, nameKey, normaliseEmail, usableEmail, type BotRules } from "./names.ts";
 import type { PeopleDirectory, Person } from "./people.ts";
 
-export type MatchedBy = "name" | "mattermost_email";
+type MatchedBy = "name" | "mattermost_email";
 
 export type AuthorClass =
   | ({ kind: "person"; matchedBy: MatchedBy; departed?: true } & Person)
@@ -12,7 +12,7 @@ export type AuthorClass =
   | { kind: "bot"; name: string }
   | { kind: "external"; domain: string };
 
-export interface CommitAuthor {
+interface CommitAuthor {
   email: string;
   name?: string | undefined;
 }

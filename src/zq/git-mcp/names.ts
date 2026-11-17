@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 export const NAME_MAX = 100;
-export const EMAIL_CONDITION_MAX = 254;
+const EMAIL_CONDITION_MAX = 254;
 
 const INVISIBLE = /\p{Cf}/gu;
 const WORD = /\p{Lu}+(?![\p{Ll}\p{M}])|\p{Lu}?[\p{Ll}\p{M}]+|\p{Lo}+|\p{N}+/gu;

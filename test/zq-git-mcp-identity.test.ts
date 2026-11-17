@@ -193,11 +193,11 @@ test("a generic name needs an email condition for people and for admins, and the
 
 test("a self-bind of a bot-looking name is refused for people and allowed for an admin with an audit row", async () => {
   const h = harness();
-  assert.match(await h.call({ operation: "bind", names: ["ZQBot.compiler"] }), /automation account/);
-  assert.equal((await h.see("ZQBot.compiler")).commits[0]!.author.kind, "bot");
-  assert.match(await h.admin({ operation: "bind_for", person: "p-carol", names: ["ZQBot.compiler"] }), /bound/);
+  assert.match(await h.call({ operation: "bind", names: ["ExampleBot.compiler"] }), /automation account/);
+  assert.equal((await h.see("ExampleBot.compiler")).commits[0]!.author.kind, "bot");
+  assert.match(await h.admin({ operation: "bind_for", person: "p-carol", names: ["ExampleBot.compiler"] }), /bound/);
   assert.deepEqual(
-    (await h.see("ZQBot.compiler", "x@y.example", "z2")).byPerson.map((g) => g.person.personId),
+    (await h.see("ExampleBot.compiler", "x@y.example", "z2")).byPerson.map((g) => g.person.personId),
     ["p-carol"],
   );
   const adminEvent = h.events.find((e) => e.action === "zq_git.identity.bind_for")!;

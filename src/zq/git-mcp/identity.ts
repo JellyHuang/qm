@@ -29,7 +29,7 @@ type Operation = (typeof IDENTITY_OPERATIONS)[number];
 
 export const MAX_NAMES_PER_CALL = 5;
 
-export interface IdentityEntry {
+interface IdentityEntry {
   name: string;
   email?: string | undefined;
   reason: string;

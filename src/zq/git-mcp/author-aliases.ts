@@ -13,12 +13,12 @@ interface AliasBase {
   addedAt: number;
 }
 
-export interface PersonAlias extends AliasBase, Person {
+interface PersonAlias extends AliasBase, Person {
   kind: "person";
   departedAt?: number;
 }
 
-export interface IgnoredAlias extends AliasBase {
+interface IgnoredAlias extends AliasBase {
   kind: "ignored";
   reason: IgnoreReason;
 }
