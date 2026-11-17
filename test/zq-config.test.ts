@@ -77,3 +77,43 @@ test("the zq-git-mcp service address and secret go together and the author rules
     (e) => e instanceof Error && /http\(s\)/.test(e.message) && !e.message.includes("never-echoed-secret"),
   );
 });
+
+test("patch package settings default to a QM identity and a documented ticket pattern and enable nothing", () => {
+  const c = zqConfigFromEnv({});
+  assert.equal(c.patchPackage.ticketPattern, "^[A-Z][A-Z0-9]{1,9}-[0-9]{1,9}$");
+  assert.equal(c.patchPackage.authorName, "QM Bot");
+  assert.equal(c.patchPackage.authorEmail, "qm-bot@invalid");
+  assert.equal(c.patchPackage.subjectMax, 72);
+  assert.equal(c.patchPackage.bodyMax, 5000);
+  assert.match(c.patchPackage.outputDir, /qm-patch-packages$/);
+  assert.deepEqual(
+    [c.identityMap, c.scanner.enabled, c.deliverReminders, c.reports.enabled, c.featureChannels, c.jenkins.rerun],
+    [false, false, false, false, false, false],
+  );
+});
+
+test("patch package settings come from the environment and bad values refuse startup", () => {
+  const c = zqConfigFromEnv({
+    ZQ_PATCH_TICKET_PATTERN: "^WP-[0-9]+$",
+    ZQ_PATCH_AUTHOR_NAME: "QM Patches",
+    ZQ_PATCH_AUTHOR_EMAIL: "qm@example.test",
+    ZQ_PATCH_OUTPUT_DIR: "/var/qm/patches",
+    ZQ_PATCH_SUBJECT_MAX: "100",
+    ZQ_PATCH_BODY_MAX: "2000",
+  });
+  assert.deepEqual(c.patchPackage, {
+    ticketPattern: "^WP-[0-9]+$",
+    authorName: "QM Patches",
+    authorEmail: "qm@example.test",
+    outputDir: "/var/qm/patches",
+    subjectMax: 100,
+    bodyMax: 2000,
+  });
+  assert.throws(() => zqConfigFromEnv({ ZQ_PATCH_TICKET_PATTERN: "(" }), /ZQ_PATCH_TICKET_PATTERN/);
+  assert.throws(
+    () => zqConfigFromEnv({ ZQ_PATCH_AUTHOR_NAME: "Alice", ZQ_PATCH_AUTHOR_EMAIL: "alice@example.test" }),
+    /ZQ_PATCH_AUTHOR_NAME/,
+  );
+  assert.throws(() => zqConfigFromEnv({ ZQ_PATCH_OUTPUT_DIR: "relative/dir" }), /ZQ_PATCH_OUTPUT_DIR/);
+  assert.throws(() => zqConfigFromEnv({ ZQ_PATCH_SUBJECT_MAX: "5" }), /ZQ_PATCH_SUBJECT_MAX/);
+});

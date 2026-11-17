@@ -1,6 +1,17 @@
 import { readFileSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { Cron } from "croner";
 import { JENKINS_JOBS } from "./jenkins/client.ts";
+import {
+  DEFAULT_AUTHOR_EMAIL,
+  DEFAULT_AUTHOR_NAME,
+  DEFAULT_BODY_MAX,
+  DEFAULT_SUBJECT_MAX,
+  DEFAULT_TICKET_PATTERN,
+  defaultOutputDir,
+  validateIdentity,
+  type PatchPackageSettings,
+} from "./patch-package/settings.ts";
 import { parseContract, type Duty, type ZqContract } from "./contract.ts";
 
 export interface ZqConfig {
@@ -19,6 +30,7 @@ export interface ZqConfig {
   reports: { enabled: boolean; dailyCron?: string; weeklyCron?: string };
   gitMcp?: { url: string; secret: string };
   gitAuthors: { externalDomains: readonly string[]; botNames: readonly string[] };
+  patchPackage: PatchPackageSettings;
   jenkins: { url?: string; rerun: boolean; jobs: readonly string[]; rerunJobs: readonly string[]; hourlyCap: number };
 }
 
@@ -70,6 +82,32 @@ function jobNames(name: string, raw: string | undefined, fallback: readonly stri
     .filter(Boolean);
   for (const job of list) if (!/^[\w.-]+$/.test(job)) throw new Error(`${name} must list plain job names: ${job}`);
   return list;
+}
+
+function patchPackageSettings(env: NodeJS.ProcessEnv): PatchPackageSettings {
+  const ticketPattern = env.ZQ_PATCH_TICKET_PATTERN?.trim() || DEFAULT_TICKET_PATTERN;
+  try {
+    new RegExp(ticketPattern);
+  } catch (e) {
+    throw new Error("ZQ_PATCH_TICKET_PATTERN is not a valid regular expression", { cause: e });
+  }
+  const authorName = env.ZQ_PATCH_AUTHOR_NAME?.trim() || DEFAULT_AUTHOR_NAME;
+  const authorEmail = env.ZQ_PATCH_AUTHOR_EMAIL?.trim() || DEFAULT_AUTHOR_EMAIL;
+  try {
+    validateIdentity(authorName, authorEmail);
+  } catch (e) {
+    throw new Error(`ZQ_PATCH_AUTHOR_NAME and ZQ_PATCH_AUTHOR_EMAIL: ${(e as Error).message}`, { cause: e });
+  }
+  const outputDir = env.ZQ_PATCH_OUTPUT_DIR?.trim() || defaultOutputDir();
+  if (!isAbsolute(outputDir)) throw new Error("ZQ_PATCH_OUTPUT_DIR must be an absolute path");
+  return {
+    ticketPattern,
+    authorName,
+    authorEmail,
+    outputDir,
+    subjectMax: integer("ZQ_PATCH_SUBJECT_MAX", env.ZQ_PATCH_SUBJECT_MAX, DEFAULT_SUBJECT_MAX, 20, 200),
+    bodyMax: integer("ZQ_PATCH_BODY_MAX", env.ZQ_PATCH_BODY_MAX, DEFAULT_BODY_MAX, 100, 50_000),
+  };
 }
 
 export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
@@ -137,6 +175,7 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
       externalDomains: names(env.ZQ_GIT_EXTERNAL_DOMAINS),
       botNames: names(env.ZQ_GIT_BOT_NAMES),
     },
+    patchPackage: patchPackageSettings(env),
     jenkins: {
       ...(jenkinsUrl ? { url: jenkinsUrl } : {}),
       rerun: jenkinsRerun,
