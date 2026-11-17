@@ -26,14 +26,16 @@ On the branch the service has no database code: `src/audit.ts`, `src/tip-store.t
 
 ## Switches
 
-- Stores: memory (default, today the only option) vs Postgres (selected by the presence of the database setting; exact switch TBD in the milestone 5 code).
+- Stores: `ZQ_GIT_MCP_AUDIT`, `ZQ_GIT_MCP_TIPS` and `ZQ_GIT_MCP_BLOB_META` each take `memory` (default) or `postgres`. Any `postgres` needs `ZQ_GIT_MCP_DATABASE_URL`; `ZQ_GIT_MCP_TENANT_ID` (optional uuid) is set as `qm.tenant_id` on each connection. With a `postgres` store the service refuses to start unless `zq_git_audit`, `zq_git_branch_tips` and `zq_git_blob_meta` all exist; it never creates tables.
+- Audit fields (the `json` of `zq_git_audit`): `at`, `principal`, `tool`, `repo`, `ref`, `path`, `args`, `bytes`, `truncated`, `result` (`ok`, `error`, `denied:<reason>`), `ms`, `cache_hit`; the row `id` is a uuid and the insert is `ON CONFLICT DO NOTHING`.
+- Deleted branches are tombstones (`tip_sha` of 40 zeros, updated in place); the service role needs no DELETE (`../check-updates.md`).
 - `ZQ_GIT_MCP_AUDIT_ON_FAILURE=serve|fail`, default `serve`. The PM has not finally confirmed this default.
-  - `serve`: the call proceeds; the audit record is appended to a local JSONL spool (mode 0600, in the data directory, bounded by a size and an age bound whose setting names are TBD) and a retry loop replays it into Postgres. The service logs an error line, raises a backlog counter and a degraded flag in the health output, and calls an optional injectable alert hook.
+  - `serve`: the call proceeds; the audit record is appended to a local JSONL spool (mode 0600, in the data directory, bounded by `ZQ_GIT_MCP_AUDIT_SPOOL_MAX_BYTES` (default 64 MiB) and `ZQ_GIT_MCP_AUDIT_SPOOL_MAX_AGE_MS` (default 7 days), directory `ZQ_GIT_MCP_AUDIT_SPOOL_DIR`, default `<data>/audit-spool`) and a retry loop replays it into Postgres. The service logs an error line, raises a backlog counter and a degraded flag in the health output, and calls an optional injectable alert hook.
   - `fail`: the call is refused when its audit row cannot be written.
 
 ## Database down
 
-In `serve` mode nothing is lost while the spool stays within its bounds: calls continue, records queue locally, and they replay in order after the database returns. Check the backlog through the health output (field names TBD) and the journal error lines; on disk, the spool file size under `/home/zq-git-mcp/data`. If the spool reaches its bound, the behaviour is defined by the milestone 5 code (TBD here); treat that as an incident. Do not delete the spool by hand while the service runs. `zq_git_branch_tips` and `zq_git_blob_meta` hold no secrets; if only they are unreachable the same alarm logic applies as defined in the code.
+In `serve` mode nothing is lost while the spool stays within its bounds: calls continue, records queue locally, and they replay in order after the database returns. Check the backlog through `auditBacklog`, `auditDegraded` and `auditLastError` in the `list_repos` result and the journal error lines; on disk, the segment files under `/home/zq-git-mcp/data/audit-spool`. If the spool reaches its size bound, new rows are dropped, `auditDropped` counts them and an `audit_dropped` line with `reason` `spool_full` is logged for each; treat that as an incident. Do not delete the spool by hand while the service runs. `zq_git_branch_tips` and `zq_git_blob_meta` hold no secrets; if only they are unreachable the same alarm logic applies as defined in the code.
 
 ## Rollback
 

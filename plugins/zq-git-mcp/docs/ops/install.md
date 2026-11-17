@@ -8,18 +8,18 @@ A dedicated system account `zq-git-mcp`, no login shell, home `/home/zq-git-mcp`
 
 ## Directories
 
-| Path                                                         | Owner                 | Mode    | Content                                                                                  |
-| ------------------------------------------------------------ | --------------------- | ------- | ---------------------------------------------------------------------------------------- |
-| `/opt/zq-git-mcp/releases/<id>/plugins/{zq-git-mcp,chassis}` | root                  | 0755    | code; `zq-git-mcp` imports `../../chassis/src/*` by relative path, so both ship together |
-| `/opt/zq-git-mcp/current`                                    | root                  | symlink | the active release                                                                       |
-| `/etc/zq-git-mcp/`                                           | root:zq-git-mcp       | 0750    | config directory                                                                         |
-| `/etc/zq-git-mcp/zq-git-mcp.env`                             | zq-git-mcp:zq-git-mcp | 0600    | all settings including the key and shared secret                                         |
-| `/home/zq-git-mcp/data`                                      | zq-git-mcp            | 0700    | `ZQ_GIT_MCP_DATA_DIR`                                                                    |
-| `data/clones`                                                | zq-git-mcp            | 0700    | seven blobless bare clones (about 97 MB measured in the design)                          |
-| `data/cache`                                                 | zq-git-mcp            | 0700    | LRU blob cache, cap 2 GiB (the "blobs" directory)                                        |
-| `data/scratch`                                               | zq-git-mcp            | 0700    | per-job scratch, cap 20 GiB, free floor 5 GiB                                            |
-| `data/ssh`                                                   | zq-git-mcp            | 0700    | parent of the runtime SSH directory (below)                                              |
-| audit spool file (name and location TBD, milestone 5 code)   | zq-git-mcp            | 0600    | bounded JSONL write-ahead buffer inside the data dir                                     |
+| Path                                                         | Owner                 | Mode    | Content                                                                                             |
+| ------------------------------------------------------------ | --------------------- | ------- | --------------------------------------------------------------------------------------------------- |
+| `/opt/zq-git-mcp/releases/<id>/plugins/{zq-git-mcp,chassis}` | root                  | 0755    | code; `zq-git-mcp` imports `../../chassis/src/*` by relative path, so both ship together            |
+| `/opt/zq-git-mcp/current`                                    | root                  | symlink | the active release                                                                                  |
+| `/etc/zq-git-mcp/`                                           | root:zq-git-mcp       | 0750    | config directory                                                                                    |
+| `/etc/zq-git-mcp/zq-git-mcp.env`                             | zq-git-mcp:zq-git-mcp | 0600    | all settings including the key and shared secret                                                    |
+| `/home/zq-git-mcp/data`                                      | zq-git-mcp            | 0700    | `ZQ_GIT_MCP_DATA_DIR`                                                                               |
+| `data/clones`                                                | zq-git-mcp            | 0700    | seven blobless bare clones (about 97 MB measured in the design)                                     |
+| `data/cache`                                                 | zq-git-mcp            | 0700    | LRU blob cache, cap 2 GiB (the "blobs" directory)                                                   |
+| `data/scratch`                                               | zq-git-mcp            | 0700    | per-job scratch, cap 20 GiB, free floor 5 GiB                                                       |
+| `data/ssh`                                                   | zq-git-mcp            | 0700    | parent of the runtime SSH directory (below)                                                         |
+| `data/audit-spool` (`ZQ_GIT_MCP_AUDIT_SPOOL_DIR`)            | zq-git-mcp            | 0700    | `segment-<n>.jsonl` files (0600), bounded write-ahead buffer, only used with a postgres audit store |
 
 `clones`, `scratch` and `cache` are fixed names under `dataDir` in `src/config.ts`; `ZQ_GIT_MCP_SCRATCH_DIR` and `ZQ_GIT_MCP_CACHE_DIR` can move the last two (absolute paths). Data under `/home` keeps growth away from the root filesystem; check the space (`checks.md`).
 
@@ -42,3 +42,7 @@ install -o zq-git-mcp -g zq-git-mcp -m 0600 /dev/null /etc/zq-git-mcp/zq-git-mcp
 ```
 
 Build the release with `npm ci --omit=dev` inside `plugins/zq-git-mcp` (lockfile present). It starts with `node src/index.ts` (`npm start`); Node 24 runs the TypeScript directly.
+
+## plugins/chassis ships with the service
+
+The service imports `../../chassis/src/...` by relative path (error helpers, node:http helpers). Install the whole `plugins/zq-git-mcp` directory together with `plugins/chassis` and keep the two side by side (`<root>/plugins/zq-git-mcp`, `<root>/plugins/chassis`); the service does not start without it. `chassis` has no dependencies and imports nothing from QM core.

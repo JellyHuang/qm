@@ -10,6 +10,8 @@
 - [ ] Loopback binding confirmed with `ss -ltnp` (only `127.0.0.1:8765`); 401 without the bearer secret
 - [ ] The shared secret (`ZQ_GIT_MCP_SECRET`, >= 16 characters) is provisioned on the QM side and nowhere else
 - [ ] The tool contract (`list_repos`, `list_commits`, `get_commit`, `get_diff`, `read_file`, `blame`, `search`, `diff_xlsx`, `check_updates`) is registered on the QM side; `list_heads` of the design does not exist, `check_updates` replaces it
+- [ ] `plugins/chassis` is installed next to `plugins/zq-git-mcp` (the service imports it by relative path)
+- [ ] The store switches (`ZQ_GIT_MCP_AUDIT`, `ZQ_GIT_MCP_TIPS`, `ZQ_GIT_MCP_BLOB_META`) are set deliberately; the default is `memory` and a restart then loses audit rows and branch tips
 - [ ] The database DDL is approved by a human and the role is created (`database.md`); tenancy variant decided
 - [ ] The audit failure policy `ZQ_GIT_MCP_AUDIT_ON_FAILURE` (default `serve`) is confirmed by the PM
 - [ ] Alarm wiring tested in staging by stopping the database: error log line, backlog and degraded flag, alert fired, backlog drained after restart
