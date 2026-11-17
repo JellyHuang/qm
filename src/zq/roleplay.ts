@@ -48,6 +48,7 @@ const WHY: Record<RuleId, string> = {
   "delay-notice": "功能被标记延期",
   "exit-ready": "功能已满足当前阶段的出口条件",
   "formal-assets-pending": "待正式资源阶段还有执行单未完成",
+  "assignee-unconfirmed": "总单有多位负责策划,还没有确认受理人",
   "responsibility-not-set": "阶段需要的负责人字段还没有设置",
 };
 

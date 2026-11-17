@@ -35,6 +35,8 @@ Called with `{ limit: 100, offset }` and paged by `next_offset` until it is `nul
 
 `fields.responsiblePlanner` may hold several users; every one of them gets what is addressed to the planner, and the first is the main one in digests and roles. `fields.participants` (default `participants`, a list of users) adds people to the feature group beside the planners and the executors of its live orders. `reviewer` is the producer who reviews the plan. The acceptance stage is addressed to the planner through `stageOwners`; QM no longer needs a separate acceptor or regression owner, and those two keys stay readable only for key tables that still name them.
 
+A feature with more than one responsible planner and no assignee asks its producer (`reviewer`) once which planner takes it as the assignee; a different set of planners asks again. QM never picks the assignee itself. QM does not read any separate "owner" property: the assignee is the one who handles the order.
+
 ## Empty responsibility fields
 
 A person field named by `stageOwners` that is empty on the feature is never replaced by a duty group. QM sends no reminder for it and instead emits `responsibility-not-set` to the duties in `ZQ_UNSET_RESPONSIBILITY_DUTIES` (none by default, so it is only counted in the scan report).

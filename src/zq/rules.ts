@@ -85,6 +85,7 @@ export type RuleId =
   | "delay-notice"
   | "exit-ready"
   | "formal-assets-pending"
+  | "assignee-unconfirmed"
   | "responsibility-not-set";
 
 export interface RuleAction {
@@ -263,6 +264,18 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
   const r = contract.stageRoles;
   const stageName = label(contract, stage);
   const out: RuleAction[] = [];
+
+  const planners = peopleOn(feature, "responsiblePlanner");
+  if (planners.length > 1 && !feature.assignee)
+    out.push({
+      ...at(
+        "assignee-unconfirmed",
+        [{ kind: "field", field: "reviewer" }],
+        `功能${where(feature)}有 ${planners.length} 位负责策划(${planners.map((u) => u.name).join("、")}),但还没有受理人。请确认哪一位作为总单受理人。`,
+      ),
+      subjectId: `wp:${feature.id}:assignee:${planners.map((u) => u.id).join(",")}`,
+      once: true,
+    });
 
   if (stage === r.plannerUnassigned)
     out.push(

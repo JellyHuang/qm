@@ -461,3 +461,23 @@ test("each new submission time of an optimization order is reminded once, and a 
   assert.equal(untimed.subjectId, "wp:60");
   assert.ok([first, resubmitted, untimed].every((a) => a.once === true));
 });
+
+test("a feature with several responsible planners and no assignee asks the producer once which planner takes it", () => {
+  const second = { id: "15", name: "Carol C" };
+  const many = feature("feature.planning", { planners: [ALICE, second], reviewer: { id: "22", name: "Rev R" } });
+  const asked = rules({ feature: many, children: [] }).filter((a) => a.rule === "assignee-unconfirmed");
+  assert.equal(asked.length, 1);
+  assert.deepEqual(asked[0]!.to, [{ kind: "field", field: "reviewer" }]);
+  assert.match(asked[0]!.text, /2 位负责策划.*Alice A、Carol C.*受理人/);
+  assert.equal(asked[0]!.once, true);
+  const again = rules({ feature: many, children: [] }).filter((a) => a.rule === "assignee-unconfirmed")[0]!;
+  assert.equal(again.subjectId, asked[0]!.subjectId);
+  const changed = rules({ feature: { ...many, planners: [ALICE, BOB] }, children: [] }).filter(
+    (a) => a.rule === "assignee-unconfirmed",
+  )[0]!;
+  assert.notEqual(changed.subjectId, asked[0]!.subjectId);
+  const settled = rules({ feature: { ...many, assignee: ALICE }, children: [] });
+  assert.equal(settled.filter((a) => a.rule === "assignee-unconfirmed").length, 0);
+  const single = rules({ feature: feature("feature.planning"), children: [] });
+  assert.equal(single.filter((a) => a.rule === "assignee-unconfirmed").length, 0);
+});
