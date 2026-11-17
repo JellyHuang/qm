@@ -377,11 +377,11 @@ p5() {
 
 p6() {
   local o hyp= gl=0 lfs=0 lfsattr=0 proto=0 neg=0 meth=0 unr=1 allfail=1 ctrlok=0 errs="" k
-  info SUMMARY "RULE order: not-reproduced, gitlink, lfs, negotiation-haves, protocol-version, fetch-method, unreachable-from-advertised-refs, server-limit, server-missing-object, unknown"
+  info SUMMARY "RULE order: not-reproduced, gitlink, negotiation-haves, lfs, protocol-version, fetch-method, unreachable-from-advertised-refs, server-limit, server-missing-object, unknown"
   info SUMMARY "RULE not-reproduced: every v2method fetch of the repo's picked oids succeeded"
   info SUMMARY "RULE gitlink: a failing oid has tree mode 160000 or type commit"
-  info SUMMARY "RULE lfs: a failing oid downloaded as a git-lfs pointer, or check-attr filter=lfs for its path while every method fails"
   info SUMMARY "RULE negotiation-haves: v2method fails and proto0/proto2 fail but the same fetch with fetch.negotiationAlgorithm=noop succeeds (server answers an empty pack because the client's have commit already reaches the wanted blob, typical with reachability bitmaps)"
+  info SUMMARY "RULE lfs: no fetch.negotiationAlgorithm=noop fetch succeeded and a failing oid is itself a real git-lfs pointer blob (first line version https://git-lfs...) that failed for another reason; filter=lfs lines in .gitattributes alone are not evidence"
   info SUMMARY "RULE protocol-version: v2method fails but proto2 or proto0 succeeds"
   info SUMMARY "RULE fetch-method: v2method fails but direct fetch into the bare clone copy or lazy cat-file succeeds"
   info SUMMARY "RULE unreachable-from-advertised-refs: for every failing oid git log --all finds no commit or one not reachable from HEAD"
@@ -403,18 +403,17 @@ p6() {
     if [ "${ANC[$o]:-none}" = 0 ]; then unr=0; fi
   done
   for o in "${WORKING[@]}"; do [ "${REPOOF[$o]}" = "$CTRL" ] && ctrlok=1; done
-  [ $lfsattr -eq 1 ] && [ $allfail -eq 1 ] && lfs=1
   if [ "$REPRODUCED" -eq 0 ]; then hyp=not-reproduced
   elif [ $gl -eq 1 ]; then hyp=gitlink
-  elif [ $lfs -eq 1 ]; then hyp=lfs
   elif [ $neg -eq 1 ] && [ $proto -eq 0 ]; then hyp=negotiation-haves
+  elif [ $lfs -eq 1 ] && [ $neg -eq 0 ]; then hyp=lfs
   elif [ $proto -eq 1 ]; then hyp=protocol-version
   elif [ $meth -eq 1 ]; then hyp=fetch-method
   elif [ $unr -eq 1 ] && [ "${#FAILING[@]}" -gt 0 ]; then hyp=unreachable-from-advertised-refs
   elif [ $allfail -eq 1 ] && [ $ctrlok -eq 1 ]; then
     if printf '%s' "$errs" | grep -Eqi 'time(d )?out|limit|too (large|big)|exceed|early EOF|hung up|signal|broken pipe|size'; then hyp=server-limit; else hyp=server-missing-object; fi
   else hyp=unknown; fi
-  info SUMMARY "evidence: failing=${#FAILING[@]} reproduced=$REPRODUCED gitlink=$gl lfs=$lfs proto_differs=$proto noop_works=$neg method_differs=$meth all_unreachable=$unr all_methods_fail=$allfail control_ok=$ctrlok"
+  info SUMMARY "evidence: failing=${#FAILING[@]} reproduced=$REPRODUCED gitlink=$gl lfs_pointer=$lfs lfs_attr=$lfsattr proto_differs=$proto noop_works=$neg method_differs=$meth all_unreachable=$unr all_methods_fail=$allfail control_ok=$ctrlok"
   echo "HYPOTHESIS $hyp"
 }
 
