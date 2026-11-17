@@ -2,7 +2,7 @@ import { chmod, copyFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LFS_COMPARISON_NOTE, refuseUnusableResult, renderXlsxDiff, stemOf, type XlsxWorkbookInput } from "./xlsx.ts";
-import { APPLY_CMD, APPLY_PS1, renderReadme } from "./readme.ts";
+import { APPLY_CMD, APPLY_PS1, renderReadmes } from "./readme.ts";
 import { renderApplyScript, withoutManifestLine, type ScriptData } from "./apply-script.ts";
 import { createPackageDir, describeFile, gitBlobId, removeQuietly, sha256Hex, type PackageFile } from "./files.ts";
 import { PatchPackageError } from "./settings.ts";
@@ -122,7 +122,7 @@ export async function buildPatchPackage(input: PatchPackageInput, options: Assem
       };
     });
 
-    const readme = renderReadme({
+    const readmes = renderReadmes({
       id,
       repo: input.repo,
       ticket: assembled.ticket,
@@ -130,18 +130,19 @@ export async function buildPatchPackage(input: PatchPackageInput, options: Assem
       authorName: settings.authorName,
       authorEmail: settings.authorEmail,
       changes,
-      warnings: assembled.warnings,
       hasPatch: assembled.patch !== null,
       payloads: assembled.payloads.map((p, i) => ({ file: payloadNames[i] as string, path: p.path })),
     });
-    await writeFile(join(dir, "README.txt"), readme);
+    await writeFile(join(dir, "README_CN.txt"), readmes.cn);
+    await writeFile(join(dir, "README_EN.txt"), readmes.en);
 
     const named = [
       ...patchNames.map((name) => ({ name, role: "patch", part: "A" })),
       ...payloadNames.map((name) => ({ name, role: "payload", part: "B" })),
       { name: "COMMIT_MESSAGE.txt", role: "message" },
       ...comparisonFiles.map((name) => ({ name, role: "comparison" })),
-      { name: "README.txt", role: "readme" },
+      { name: "README_CN.txt", role: "readme", language: "zh" },
+      { name: "README_EN.txt", role: "readme", language: "en" },
       { name: "apply.ps1", role: "script", untested: true },
       { name: "apply.cmd", role: "script", untested: true },
     ];
@@ -168,6 +169,9 @@ export async function buildPatchPackage(input: PatchPackageInput, options: Assem
         payload: payloadNames[i] as string,
         path: payload.path,
       })),
+      paths: [
+        ...new Set(assembled.changes.flatMap((entry) => (entry.oldPath ? [entry.oldPath, entry.path] : [entry.path]))),
+      ],
     };
     const bareScript = renderApplyScript(scriptData);
     const scriptBytes = Buffer.from(bareScript);
@@ -196,7 +200,10 @@ export async function buildPatchPackage(input: PatchPackageInput, options: Assem
         role: "package marker; not the author of the commit unless --keep-bot-author is used",
       },
       applyDefaults: {
-        mode: "one commit on the current branch",
+        mode: "one commit on the current branch of the repository whose root holds the package folder",
+        repo: "the folder that contains the package folder, which must be the root of the working tree; --repo DIR applies to the repository that contains DIR instead and the package folder may then be anywhere",
+        packageFolder:
+          "stays untracked in the repository and is never committed; .gitignore and .git/info/exclude are never edited; the script refuses when files of it are tracked or when the change touches a path inside it; it can be deleted after a successful run, the script never deletes anything",
         author: "the person who applies the package (local git user.name and user.email)",
         committer: "the person who applies the package",
         flags: {
@@ -237,6 +244,7 @@ export async function buildPatchPackage(input: PatchPackageInput, options: Assem
             name: file.name,
             role: file.role,
             ...("part" in file ? { part: file.part } : {}),
+            ...("language" in file ? { language: file.language } : {}),
             ...("untested" in file ? { untested: true } : {}),
             bytes: done.bytes,
             sha256: done.sha256,
@@ -261,11 +269,11 @@ export async function buildPatchPackage(input: PatchPackageInput, options: Assem
           "apply.sh checks this manifest and itself against each other and the other files against their blob ids. That detects damage and incomplete downloads. It does not stop someone who changes the files and the script together.",
       },
       instructions: {
-        sh: "sh apply.sh --repo <dir-of-your-clone> [--dry-run] [--new-branch] [--keep-bot-author]",
-        cmd: "apply.cmd --repo <absolute clone dir> [--dry-run] [--new-branch] [--keep-bot-author] (UNTESTED)",
+        sh: "sh <package folder>/apply.sh [--dry-run] [--new-branch] [--keep-bot-author] [--repo <dir-of-your-clone>], run with the package folder inside the root of your repository",
+        cmd: "<package folder>\\apply.cmd [--dry-run] [--new-branch] [--keep-bot-author] (UNTESTED); a double-click works and waits for a key at the end",
         powershell:
-          "powershell -NoProfile -ExecutionPolicy Bypass -File .\\apply.ps1 -Repo <absolute clone dir> [-DryRun] [-NewBranch] [-KeepBotAuthor] (UNTESTED)",
-        manual: "see README.txt, section 'Without the script'",
+          "powershell -NoProfile -ExecutionPolicy Bypass -File .\\<package folder>\\apply.ps1 [-DryRun] [-NewBranch] [-KeepBotAuthor] [-Repo <absolute clone dir>] (UNTESTED)",
+        manual: "see the last section of README_EN.txt (English) or README_CN.txt (Chinese)",
       },
       verified: {
         partA: assembled.patch
