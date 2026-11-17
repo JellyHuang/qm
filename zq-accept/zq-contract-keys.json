@@ -81,7 +81,6 @@
     "delaySource": "delay_source",
     "delayedSince": "delayed_since",
     "delayClearedAt": "delay_cleared_at",
-    "qaPassed": "qa_passed",
     "awaitedChildren": "awaited_children",
     "awaitingNote": "awaiting_note"
   },
