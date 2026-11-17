@@ -1,4 +1,5 @@
 import type { DurableMap } from "../persistence/durable-map.ts";
+import type { ZqChangeCursor, ZqChangeLine, ZqSnapshot } from "./changes.ts";
 import type { PersonField, ZqContract } from "./contract.ts";
 import type { ZqGroup } from "./groups.ts";
 import type { ZqReminder } from "./reminders.ts";
@@ -18,10 +19,21 @@ export interface RoleplayChat {
   postToChannel?: (channelId: string, text: string) => Promise<void>;
 }
 
+const DUTY_ROLES: Record<string, string> = {
+  producer: "制作人",
+  pm: "项目经理",
+  art_lead: "美术负责人",
+  client_lead: "客户端负责人",
+  server_lead: "服务端负责人",
+  planning_lead: "策划负责人",
+  qa_lead: "QA 负责人",
+  ui_lead: "UI 负责人",
+};
+
 const PREFIX = "rp:";
 const FIELD_ROLES: Record<PersonField, string> = {
   responsiblePlanner: "策划",
-  pm: "制作人",
+  pm: "项目经理",
   reviewer: "评审",
   qaOwner: "QA",
   acceptor: "验收人",
@@ -38,6 +50,10 @@ export function createRoleplay(opts: {
   personas: DurableMap<RoleplayPersona>;
   reminders: DurableMap<ZqReminder>;
   groups: DurableMap<ZqGroup>;
+  features: DurableMap<{ featureId: number }>;
+  snapshots: DurableMap<ZqSnapshot>;
+  lines: DurableMap<ZqChangeLine>;
+  cursors: DurableMap<ZqChangeCursor>;
 }) {
   const { mmUserId, personas } = opts;
   const projects = new Set(opts.projectIds);
@@ -51,22 +67,20 @@ export function createRoleplay(opts: {
     for (const child of fact.children) {
       if (!child.assignee) continue;
       const owner = opts.contract?.typeOwners[child.typeKey];
-      const duty = owner?.kind === "duty" ? opts.contract?.duties[owner.duty] : undefined;
-      out.push([child.assignee, duty ?? "执行人"]);
+      out.push([child.assignee, (owner?.kind === "duty" && DUTY_ROLES[owner.duty]) || "执行人"]);
     }
     for (const bug of fact.bugs ?? []) if (bug.assignee) out.push([bug.assignee, "BUG 处理人"]);
     return out;
   }
 
-  async function remember(facts: readonly FeatureFacts[]): Promise<void> {
-    const found = new Map<string, RoleplayPersona>();
-    for (const fact of facts)
-      for (const [user, role] of rolesOf(fact)) {
-        const persona = found.get(user.id) ?? { opUserId: user.id, name: user.name, roles: [] };
-        if (!persona.roles.includes(role)) persona.roles.push(role);
-        found.set(user.id, persona);
-      }
-    for (const persona of found.values()) await personas.put(persona.opUserId, persona);
+  async function remember(facts: readonly FeatureFacts[], extra: Array<[OpUserRef, string]> = []): Promise<void> {
+    for (const [user, role] of [...facts.flatMap(rolesOf), ...extra]) {
+      const known = await personas.get(user.id);
+      const roles = known?.roles ?? [];
+      if (!roles.includes(role))
+        await personas.put(user.id, { opUserId: user.id, name: user.name, roles: [...roles, role] });
+    }
+    for (const fact of facts) await opts.features.put(String(fact.feature.id), { featureId: fact.feature.id });
   }
 
   async function labelOf(to: string): Promise<string> {
@@ -86,6 +100,11 @@ export function createRoleplay(opts: {
   return {
     mmUserIdOfOpUser: async (opUserId: string): Promise<string> => roleplayRecipient(opUserId),
 
+    async lineLabel(line: ZqChangeLine): Promise<string> {
+      const about = line.aboutOpUserId ? roleplayRecipient(line.aboutOpUserId) : line.fallbackMmUserId;
+      return labelOf(about ?? mmUserId);
+    },
+
     people: (all: readonly ScanPerson[]): ScanPerson[] => all.filter((p) => p.mmUserId === mmUserId),
 
     reader(base: OpReader): OpReader {
@@ -98,6 +117,14 @@ export function createRoleplay(opts: {
           );
           await remember(facts);
           return { ...read, facts };
+        },
+        async dutyHolders(person, projectId, duty) {
+          const holders = await base.dutyHolders(person, projectId, duty);
+          await remember(
+            [],
+            (holders ?? []).map((u) => [u, DUTY_ROLES[duty] ?? duty]),
+          );
+          return holders;
         },
       };
     },
@@ -131,12 +158,6 @@ export function createRoleplay(opts: {
               },
             }
           : {}),
-        ...(base.postToChannel
-          ? {
-              postToChannel: (channelId: string, text: string) =>
-                base.postToChannel!(channelId, `当前你扮演:消息中提到的角色(名单见群首消息)\n${text}`),
-            }
-          : {}),
       };
     },
 
@@ -144,8 +165,8 @@ export function createRoleplay(opts: {
       return clicker === mmUserId ? (addressees?.find(isRoleplayRecipient) ?? clicker) : clicker;
     },
 
-    async reset(): Promise<{ personas: number; reminders: number; groups: number }> {
-      const out = { personas: 0, reminders: 0, groups: 0 };
+    async reset() {
+      const out = { personas: 0, reminders: 0, groups: 0, changeLines: 0, snapshots: 0 };
       for (const [id] of await personas.entries()) {
         await personas.delete(id);
         out.personas++;
@@ -155,11 +176,25 @@ export function createRoleplay(opts: {
         await opts.reminders.delete(id);
         out.reminders++;
       }
+      const featureIds = new Set((await opts.features.all()).map((f) => f.featureId));
       for (const [id, g] of await opts.groups.entries()) {
-        if (g.memberMmUserIds.length === 0 || !g.memberMmUserIds.every(isRoleplayRecipient)) continue;
+        if (!featureIds.has(g.featureId)) continue;
         await opts.groups.delete(id);
         out.groups++;
       }
+      for (const [id, l] of await opts.lines.entries()) {
+        if (!featureIds.has(l.featureId)) continue;
+        await opts.lines.delete(id);
+        out.changeLines++;
+      }
+      for (const [id, snap] of await opts.snapshots.entries()) {
+        if (!featureIds.has(snap.featureId)) continue;
+        await opts.snapshots.delete(id);
+        out.snapshots++;
+      }
+      for (const [id] of await opts.cursors.entries())
+        if (projects.has(id.split(":")[0]!)) await opts.cursors.delete(id);
+      for (const [id] of await opts.features.entries()) await opts.features.delete(id);
       return out;
     },
   };

@@ -56,6 +56,10 @@ function harness() {
     personas: testMap<RoleplayPersona>(),
     reminders: reminderMap,
     groups: groupMap,
+    features: testMap(),
+    snapshots: testMap(),
+    lines: testMap(),
+    cursors: testMap(),
   });
   const chat = roleplay.chat({
     sendDm: async (to: string, text: string) => void sent.push({ to, text }),

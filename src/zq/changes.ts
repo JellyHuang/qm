@@ -24,6 +24,7 @@ export interface ZqChangeLine {
   createdAt: number;
   status: "pending" | "sent";
   fallbackMmUserId?: string;
+  aboutOpUserId?: string;
 }
 
 export interface FeedEvent {
@@ -59,11 +60,13 @@ interface RecordContext {
   day: (at: number) => string;
   link: (id: number) => string;
   fallbackMmUserId?: string;
+  plannerId?: string;
 }
 
 interface FlushTransport {
   channel: (channelId: string, text: string) => Promise<void>;
   dm: (mmUserId: string, text: string) => Promise<void>;
+  lineLabel?: (line: ZqChangeLine) => Promise<string>;
 }
 
 export interface FlushResult {
@@ -101,6 +104,7 @@ interface Pending {
   key: string;
   kind: string;
   text: string;
+  aboutOpUserId?: string;
 }
 
 export function createZqChanges(opts: {
@@ -111,6 +115,7 @@ export function createZqChanges(opts: {
 }): ZqChanges {
   const now = opts.now ?? (() => Date.now());
   const key = (id: number) => `wp:${id}`;
+  const aboutOf = (id: string | undefined) => (id ? { aboutOpUserId: id } : {});
 
   function changesOf(
     prev: ZqSnapshot,
@@ -120,7 +125,13 @@ export function createZqChanges(opts: {
     ctx: RecordContext,
     planner: string,
   ): Pending[] {
-    const at = (kind: string, text: string): Pending => ({ key: `${prev.id}:${prev.seq}:${kind}`, kind, text });
+    const about = aboutOf(isFeature ? ctx.plannerId : w.assignee?.id);
+    const at = (kind: string, text: string): Pending => ({
+      key: `${prev.id}:${prev.seq}:${kind}`,
+      kind,
+      text,
+      ...about,
+    });
     const ref = `${isFeature ? "功能 " : `执行单「${w.subject}」`}[#${w.id}](${ctx.link(w.id)})`;
     const label = (stage: string) => contract.stages.feature[stage] ?? contract.stages.task[stage] ?? stage;
     const out: Pending[] = [];
@@ -215,7 +226,14 @@ export function createZqChanges(opts: {
         if (typeof v === "object" && v !== null) return text((v as Record<string, unknown>)["name"]);
         return v === null || v === undefined || v === "" ? "" : (names.get(String(v)) ?? `用户#${String(v)}`);
       };
-      const lines: Array<{ id: string; featureId: number; featureTitle: string; text: string; at: number }> = [];
+      const lines: Array<{
+        id: string;
+        featureId: number;
+        featureTitle: string;
+        text: string;
+        at: number;
+        aboutOpUserId?: string;
+      }> = [];
       const batches = new Map<string, FeedEvent[]>();
       for (const e of [...events].sort((a, b) => a.at - b.at)) {
         const fact = byFeature.get(e.featureId);
@@ -238,6 +256,7 @@ export function createZqChanges(opts: {
           featureId: e.featureId,
           featureTitle: fact.feature.subject,
           at: e.at,
+          ...aboutOf(isFeature ? fact.feature.responsiblePlanner?.id : child!.assignee?.id),
           text: `${isFeature ? "功能 " : `执行单「${subject}」`}[#${e.ticketId}](${ctx.link(e.ticketId)}) ${parts.join(";")}${by}`,
         });
       }
@@ -249,6 +268,7 @@ export function createZqChanges(opts: {
           featureId: fact.feature.id,
           featureTitle: fact.feature.subject,
           at: group[0]!.at,
+          ...aboutOf(fact.feature.responsiblePlanner?.id),
           text: `随总单${state},影响 ${group.length} 张执行单:${group.map((e) => `#${e.ticketId}`).join("、")}`,
         });
       }
@@ -262,6 +282,7 @@ export function createZqChanges(opts: {
           text: l.text,
           createdAt: l.at,
           status: "pending",
+          ...aboutOf(l.aboutOpUserId),
           ...(pm ? { fallbackMmUserId: pm } : {}),
         };
         if (await opts.lines.insertIfAbsent(line.id, line)) created++;
@@ -273,6 +294,7 @@ export function createZqChanges(opts: {
       const { feature, children } = fact;
       const featureId = feature.id;
       const planner = feature.responsiblePlanner?.name ?? "";
+      const plannerId = feature.responsiblePlanner?.id;
       const pending: Pending[] = [];
       const next: ZqSnapshot[] = [];
       const cascade: string[] = [];
@@ -290,10 +312,11 @@ export function createZqChanges(opts: {
               key: `${w.id}:created`,
               kind: "created",
               text: `新增执行单「${w.subject}」[#${w.id}](${ctx.link(w.id)})${w.assignee ? `,执行人 ${w.assignee.name}` : ""}`,
+              ...aboutOf(w.assignee?.id),
             });
           continue;
         }
-        const found = changesOf(prev, w, isFeature, contract, ctx, planner);
+        const found = changesOf(prev, w, isFeature, contract, { ...ctx, plannerId }, planner);
         if (!found.length) continue;
         next.push(snapshotOf(w, featureId, prev.seq + 1));
         for (const change of found) {
@@ -309,6 +332,7 @@ export function createZqChanges(opts: {
           key: cascadeKey,
           kind: "cascade",
           text: `随总单${cascadeLifecycle},影响 ${cascade.length} 张执行单:${cascade.join("、")}`,
+          ...aboutOf(plannerId),
         });
       let created = 0;
       for (const p of pending) {
@@ -319,6 +343,7 @@ export function createZqChanges(opts: {
           text: p.text,
           createdAt: now(),
           status: "pending",
+          ...aboutOf(p.aboutOpUserId),
           ...(ctx.fallbackMmUserId ? { fallbackMmUserId: ctx.fallbackMmUserId } : {}),
         };
         if (await opts.lines.insertIfAbsent(line.id, line)) created++;
@@ -353,7 +378,10 @@ export function createZqChanges(opts: {
           size += line.text.length + 3;
         }
         for (const batch of batches) {
-          const text = `功能「${title}」(#${featureId}) 有 ${batch.length} 项变化:\n${batch.map((l) => `- ${l.text}`).join("\n")}`;
+          const bullets = await Promise.all(
+            batch.map(async (l) => `- ${transport.lineLabel ? `${await transport.lineLabel(l)} ` : ""}${l.text}`),
+          );
+          const text = `功能「${title}」(#${featureId}) 有 ${batch.length} 项变化:\n${bullets.join("\n")}`;
           try {
             if (channelId) await transport.channel(channelId, text);
             else await transport.dm(dmTo!, text);

@@ -2,7 +2,7 @@ import type { DurableMap } from "../persistence/durable-map.ts";
 import { sleep } from "../util/async.ts";
 import { reportFailureAs } from "../util/errors.ts";
 import type { ZqConfig } from "./config.ts";
-import type { FlushResult, ZqChanges } from "./changes.ts";
+import type { FlushResult, ZqChangeLine, ZqChanges } from "./changes.ts";
 import { deliverDue } from "./delivery.ts";
 import type { ReminderMode, ZqReminderStore } from "./reminders.ts";
 import {
@@ -48,7 +48,11 @@ export interface ZqServiceDeps {
   contract?: ZqContract;
   mmUserIdOfOpUser: (opUserId: string) => Promise<string | undefined>;
   groups?: { store: ZqGroups; create: (feature: ZqFeatureRef, memberMmUserIds: string[]) => Promise<string> };
-  changes?: { store: ZqChanges; channel: (channelId: string, text: string) => Promise<void> };
+  changes?: {
+    store: ZqChanges;
+    channel: (channelId: string, text: string) => Promise<void>;
+    lineLabel?: (line: ZqChangeLine) => Promise<string>;
+  };
   people: () => Promise<ScanPerson[]>;
   reminders: ZqReminderStore;
   state: DurableMap<ZqRunState>;
@@ -286,6 +290,7 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
           out.changes = await deps.changes.store.flush(deps.groups?.store, {
             channel: deps.changes.channel,
             dm: deps.send,
+            ...(deps.changes.lineLabel ? { lineLabel: deps.changes.lineLabel } : {}),
           });
       }
       const reported = await reportsTick(at);

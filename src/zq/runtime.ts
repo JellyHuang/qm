@@ -57,7 +57,7 @@ export interface ZqRuntime {
   commitAuthors?: AuthorResolver;
   decide(op: "report" | "link" | "children", id: string, approve: boolean, clickerMmUserId: string): Promise<string>;
   connectorConnected(provider: string, principalId: string): Promise<void>;
-  roleplayReset?: () => Promise<{ personas: number; reminders: number; groups: number }>;
+  roleplayReset?: () => Promise<Record<string, number>>;
 }
 
 const noReader = {
@@ -116,6 +116,10 @@ export function createZqRuntime(deps: {
         personas: deps.map<RoleplayPersona>("zq_roleplay_personas"),
         reminders: deps.map<ZqReminder>("zq_reminders"),
         groups: deps.map<ZqGroup>("zq_groups"),
+        features: deps.map<{ featureId: number }>("zq_roleplay_features"),
+        snapshots: deps.map<ZqSnapshot>("zq_snapshots"),
+        lines: deps.map<ZqChangeLine>("zq_change_lines"),
+        cursors: deps.map<ZqChangeCursor>("zq_change_cursors"),
       })
     : undefined;
   const chat = roleplay ? roleplay.chat(deps.chat) : deps.chat;
@@ -146,6 +150,7 @@ export function createZqRuntime(deps: {
             cursors: deps.map<ZqChangeCursor>("zq_change_cursors"),
           }),
           channel: chat.postToChannel.bind(chat),
+          ...(roleplay ? { lineLabel: roleplay.lineLabel } : {}),
         }
       : undefined;
 
