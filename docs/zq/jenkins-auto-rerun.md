@@ -1,0 +1,137 @@
+# Jenkins automatic failure rerun (design)
+
+Status: proposal and sandbox implementation. Nothing is deployed, nothing is enabled by default, and no real Jenkins is contacted by any test. This document applies the PM's rules and replaces the failure-classification rule of `docs/zq/jenkins-rerun.md` (a failed build is rerun once whatever the failure looked like; classification only records a hash). The rest of that document (read-only findings, plan B `buildWithParameters`, permissions, parameter fidelity, the eight jobs) still holds.
+
+## PM rules
+
+- Cover the eight confirmed jobs: `CheckServerConfig`, `LLM-Wiki`, `PackageSent`, `Server-Build`, `Server-Clang-Tidy`, `Server-CodeReview`, `Server-Config`, `Server-Run`. The list is the configuration value `ZQ_JENKINS_JOBS`; the code holds it only as the default of that setting.
+- A failed build is rerun at most once.
+- If the rerun also fails, QM notifies the backend group and mentions the responsible person. The group and the person lookup are configuration. Nothing is sent for real by default.
+
+## State machine per failed build
+
+One record per original build, key `<job>:<number>`, in the durable table `zq_jenkins_builds`.
+
+| State             | Meaning                                                                                               | Next                                                                                  |
+| ----------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `observed`        | First sighting of a finished build with a counted result inside the time window. The row is the claim | `eligible`, `skipped`                                                                 |
+| `eligible`        | Every rule passed. In dry-run the row stays here and one `dry_run_would_rerun` audit row says so      | `rerun_requested` (live only), `skipped` (re-evaluated, e.g. `superseded`, `too_old`) |
+| `rerun_requested` | Claimed by exactly one instance (compare and swap). The POST is made only after the claim             | `rerun_running`, `skipped` (`request_rejected`, `circuit_open`, `claim_uncertain`)    |
+| `rerun_running`   | The queue item resolved to a new build number, stored as `rerunNumber`                                | `rerun_succeeded`, `rerun_failed`                                                     |
+| `rerun_succeeded` | The rerun finished `SUCCESS`. Terminal, no notification                                               |                                                                                       |
+| `rerun_failed`    | The rerun finished with any other result, or vanished. A `rerun_failed` notice is queued              | `notified`                                                                            |
+| `notified`        | The notice was delivered. Terminal                                                                    |                                                                                       |
+| `skipped`         | Terminal, with `reason`. Some reasons also queue a `needs_attention` or `circuit_open` notice         |                                                                                       |
+
+Skip reasons: `job_not_enabled`, `is_rerun`, `bot_triggered`, `manual_trigger`, `cause_not_allowed`, `chain_rerun`, `superseded`, `parameters_unreadable`, `parameters_incomplete`, `circuit_open`, `too_old`, `request_rejected`, `claim_uncertain`.
+
+A build that is queued, running, or paused on an input step (`building` or no result) is never recorded and never acted on until it has a terminal result. A result that is not in the failure set (`SUCCESS`, and by default `UNSTABLE`, `ABORTED`, `NOT_BUILT`) is never recorded. A failed build older than the time window at first sight is not recorded either; it is only counted in the tick summary.
+
+## Rules, in the order the decision engine applies them
+
+`src/zq/jenkins/decision.ts` is a pure function of the build, the job's newer builds, the table and the configuration.
+
+1. No terminal result: wait. Result not in `ZQ_JENKINS_FAILURE_RESULTS` (default `FAILURE`): ignore.
+2. Older than `ZQ_JENKINS_MAX_AGE_MINUTES` (default 30) since it finished: `too_old`. This is what stops a restart, or the first start, from rerunning history. It is re-checked on every `eligible` row, so switching from dry-run to live later does not rerun stale failures.
+3. The build number is the `rerunNumber` of any record of this job: `is_rerun`. A build whose cause is a user cause by the bot account itself: `bot_triggered` (covers a rerun whose POST succeeded but whose row was lost).
+4. Job not in `ZQ_JENKINS_RERUN_JOBS` (default: every monitored job): `job_not_enabled`.
+5. Causes. Each cause is classed `timer`, `scm`, `upstream`, `user`, `remote` or `other`. Every cause class of the build must be in `ZQ_JENKINS_RERUN_CAUSES` (default `timer,scm,upstream`). A failing human-triggered build (`user`) is therefore `manual_trigger`, and an unknown cause is `cause_not_allowed`. If the PM adds `user`, a human rebuild whose parameters equal those of a build QM reran in the last 24 hours is `chain_rerun`, so a human retry of a failure QM already retried is not retried a second time.
+6. Superseded: any newer build of the same job (other than QM's own reruns) is still running or finished `SUCCESS`: `superseded`. A newer failure does not supersede.
+7. Parameters (see below): masked, unreadable or incomplete: `parameters_unreadable` or `parameters_incomplete`, and a `needs_attention` notice.
+8. Circuit breaker: the job already has `ZQ_JENKINS_RERUN_HOURLY_CAP` (default 3) claims in the last hour: `circuit_open`, and one `circuit_open` notice per job per clock hour. After a claim, each instance re-counts claims ordered by claim time and key and releases its own claim if it ranks beyond the cap, so two instances cannot together exceed it.
+9. Otherwise `eligible`, and when `ZQ_JENKINS_RERUN=1` the rerun is claimed and sent.
+
+## Exactly how duplicates are prevented
+
+- Idempotency key: `<job>:<number>` of the original build. The first poller to see a failure inserts the row with `insertIfAbsent`. Every later transition is a compare and swap on the row's current state (`DurableMap.update`, which Postgres runs under a row lock): the caller learns whether it won and only the winner acts.
+- The claim (`eligible` to `rerun_requested`) happens before the POST. A second poller, a restart, or an overlapping tick finds the row and does nothing for that build.
+- The row is durable (Postgres). Nothing is deduplicated in memory. Restarting re-reads the table; two instances polling at once both see the same rows and only one wins each transition. In production the poller also runs under the leader lease `zq:jenkins`, so normally only one instance polls.
+- The rerun is recognised as ours by three independent facts: its number is stored on the original's row; its cause is a user cause by the bot account; and it is never a candidate because it is a rerun (`is_rerun` before anything else).
+- A crash between claim and POST: the row stays `rerun_requested` without a queue id. After 5 minutes QM looks at the job's newer builds for one started by the bot, not on any row, with identical parameters. A match is linked (`rerun_running`). A matching queue item means wait. Otherwise the row becomes `skipped: claim_uncertain` with a notice, and QM never POSTs again. A network error on the POST is treated the same way, because the request may have reached Jenkins. A definite HTTP rejection (crumb, 401, 403, 404) means no build was created: `skipped: request_rejected` with a notice.
+- A crash between a state change and the notice: notices are rows with a deterministic key, inserted before the transition, and inserting twice is a no-op.
+- Notices are delivered at most once: a notice is claimed `pending` to `sending` before the sink is called. A crash while `sending` loses that notice and leaves it visibly `sending`; a send error puts it back to `pending` for up to 5 attempts.
+
+## Parameters
+
+The rerun carries the original parameters verbatim, empty strings and duplicate names included, URL-encoded by `URLSearchParams`; a job without parameters is started with `build`. Before the POST QM re-reads the original build. It refuses when any parameter is masked or has no readable value (password, file, non-scalar), or when the names in the build differ from the names the job defines. Parameter values are never written to the audit table, the notices, the logs or errors: only names, counts and a SHA-256 fingerprint of the sorted pairs. After the rerun starts, QM compares the new build's parameters with the original's and stores the names that differ.
+
+## Polling, windows, results
+
+- Polling only; no webhook. `ZQ_JENKINS_POLL_SECONDS` (default 120). One sweeper tick reads the last 20 builds of each monitored job, advances in-flight rows, and delivers notices.
+- The tick records, per tick, counts of ignored, waiting, observed, skipped and requested builds.
+- Failure classification is a placeholder: for each observed failure QM reads the console, keeps only the SHA-256 of its last 4 KiB (`consoleTailHash`) and drops the text. The text is never stored or sent.
+
+## Audit
+
+`zq_jenkins_audit`, one row per decision, written once (deterministic key, `insertIfAbsent`): `{ id, at, job, number?, event, from?, to?, reason?, actor, detail? }`. Events: `observed`, every transition, `dry_run_would_rerun`, `notice_queued`, `notice_sent`, `poll_error` (at most one per job, kind and hour). `actor` is `poller`. `detail` carries names and counts only. Nothing deletes audit rows; retention is an open decision.
+
+## Notification
+
+- Kinds: `rerun_failed` (the rerun also failed), `needs_attention` (parameters unreadable or incomplete, request rejected, claim uncertain), `circuit_open`.
+- Content: job, build number and URL, result, rerun number, URL and result when present, and the mention of the responsible person. No parameter values, no log content, no credentials. Texts are Chinese like the other zq texts.
+- Target: the channel id `ZQ_JENKINS_NOTIFY_CHANNEL`. Responsible person: `ZQ_JENKINS_OWNERS` (`job=username` pairs), else `ZQ_JENKINS_DEFAULT_OWNER`, else no mention. The lookup is an injected function, so the OpenProject binding lookup of the older design can replace it without touching the engine.
+- Delivery goes through an injected sink. By default and in tests it is a recording sink (rows are marked `dry-run`). The real sink (`postToChannel`) is used only when `ZQ_JENKINS_NOTIFY=1`.
+
+## Safety model and rollback
+
+Three independent switches, all off:
+
+1. `ZQ_JENKINS_POLL=1` starts the poller. Without `ZQ_JENKINS_RERUN`, it only observes, records and audits (dry-run).
+2. `ZQ_JENKINS_RERUN=1` allows the real rerun POST. It needs `ZQ_JENKINS_POLL=1`.
+3. `ZQ_JENKINS_NOTIFY=1` allows real channel posts. It needs `ZQ_JENKINS_POLL=1` and `ZQ_JENKINS_NOTIFY_CHANNEL`.
+
+With default configuration nothing polls, nothing is requested and nothing is sent (tested). Rollback: unset `ZQ_JENKINS_RERUN` (reruns stop at the next restart), or unset `ZQ_JENKINS_POLL` (everything stops). Rows stay as the record. No schema is created or migrated: tables are created on first use like the other zq tables.
+
+## Credentials
+
+The credential `jenkins-qm-bot` reaches QM through its own environment, never Git:
+
+- `JENKINS_QM_BOT_USER` (the account name, for example `AI-Agent`)
+- `JENKINS_QM_BOT_TOKEN` (an API token, preferred) or `JENKINS_QM_BOT_PASSWORD`; the token wins when both are set.
+
+They are sent only as an HTTP Basic header. The client wraps every failure so that the secret, and its base64 form, cannot appear in an error message; neither appears in a row or a notice.
+
+## Tables
+
+Created on first use (`id TEXT`, `json JSONB`); `zq_jenkins_reruns` of the older design was never written by released code and is not created.
+
+- `zq_jenkins_builds`, key `<job>:<number>`: `{ job, number, state, reason?, url, result, finishedAt, observedAt, updatedAt, causes: string[], fingerprint, parameterCount, consoleTailHash?, claimedAt?, queueId?, rerunNumber?, rerunUrl?, rerunResult?, parameterDifferences?: string[] }`. Example (invented): `Server-Build:812 → { "state": "rerun_failed", "result": "FAILURE", "causes": ["timer"], "claimedAt": 1763000100000, "rerunNumber": 813, "rerunResult": "FAILURE" }`.
+- `zq_jenkins_audit`, key `<job>:<number>:<event>` (or `poll:<job>:<kind>:<hour>`): described above.
+- `zq_jenkins_notices`, key `<job>:<number>:<kind>` (breaker: `breaker:<job>:<hour>`): `{ id, kind, job, number?, channelId, text, mode: "dry-run" | "live", status: "pending" | "sending" | "sent" | "failed", attempts, createdAt, sentAt? }`.
+
+## Configuration
+
+| Setting                                         | Default              | Meaning                                                                                                  |
+| ----------------------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------- |
+| `ZQ_JENKINS_URL`                                | unset                | Jenkins base URL, required by the switches below                                                         |
+| `JENKINS_QM_BOT_USER`, `_TOKEN`, `_PASSWORD`    | unset                | Credential, see above; the poll switch needs the user and one secret                                     |
+| `ZQ_JENKINS_POLL`                               | off                  | Run the poller (observe only)                                                                            |
+| `ZQ_JENKINS_RERUN`                              | off                  | Send real reruns (existing name)                                                                         |
+| `ZQ_JENKINS_NOTIFY`, `_NOTIFY_CHANNEL`          | off, unset           | Real notices and their channel id                                                                        |
+| `ZQ_JENKINS_JOBS`                               | the eight jobs       | Monitored jobs (existing)                                                                                |
+| `ZQ_JENKINS_RERUN_JOBS`                         | every monitored job  | Jobs that may be rerun; changed from "none" so the PM's eight-job scope holds by default (existing name) |
+| `ZQ_JENKINS_RERUN_HOURLY_CAP`                   | `3`                  | Claims per job per hour (existing)                                                                       |
+| `ZQ_JENKINS_POLL_SECONDS`                       | `120`                | 30 to 3600                                                                                               |
+| `ZQ_JENKINS_MAX_AGE_MINUTES`                    | `30`                 | 1 to 1440                                                                                                |
+| `ZQ_JENKINS_FAILURE_RESULTS`                    | `FAILURE`            | Subset of `FAILURE,UNSTABLE,ABORTED,NOT_BUILT`                                                           |
+| `ZQ_JENKINS_RERUN_CAUSES`                       | `timer,scm,upstream` | Cause classes whose failures may be rerun; add `user`, `remote`, `other` to widen                        |
+| `ZQ_JENKINS_OWNERS`, `ZQ_JENKINS_DEFAULT_OWNER` | unset                | Responsible-person lookup (`Server-Build=alice,Server-Run=bob`, and a fallback)                          |
+
+Precedence: environment only; a setting that is unset takes the default shown; an invalid value refuses startup.
+
+## Probe
+
+`scripts/zq-jenkins-readonly-probe.sh` checks a real Jenkins with only GET requests: authentication, the eight jobs, and the last five builds of each (result, time, cause class, whether the parameters read completely). It prints counts only. It reads `ZQ_JENKINS_URL`, `JENKINS_QM_BOT_USER` and `JENKINS_QM_BOT_TOKEN` or `JENKINS_QM_BOT_PASSWORD`.
+
+## Open decisions for the PM
+
+1. Default rerun scope: all eight jobs, including `Server-Run` (`DROP_DATABASE` parameter) and `PackageSent` (publishes). Recommendation: start live with the six that have no destructive side effect, keep those two out through `ZQ_JENKINS_RERUN_JOBS` until a verified sandbox run.
+2. Should a failed human-triggered build be rerun? Recommendation: no (the default); add `user` only after the first weeks of dry-run data.
+3. Should `UNSTABLE` count as failure? Recommendation: no.
+4. Hourly cap per job. Recommendation: 3, as now; the breaker also notifies, so a bad hour is visible.
+5. Time window of 30 minutes. Recommendation: keep; it is also the longest outage after which a failure is silently not retried.
+6. Responsible person: static job-to-person map, or the last committer through the Git, OpenProject and Mattermost bindings as the older design says. Recommendation: static map now, committer lookup later behind the same function.
+7. Notice wording and language, and whether a successful rerun should post a one-line notice. Recommendation: Chinese, failures only (the PM's rule), no success notice.
+8. Audit retention. Recommendation: keep 90 days, pruned by the existing audit retention pattern, once the volume is known.
+9. Outage alert: Jenkins unreachable or the credential rejected is only logged and audited once per hour, not posted. Recommendation: post one notice per outage once the channel exists.
+10. A bot cause is recognised by account name. Recommendation: confirm the exact `userId` Jenkins shows for the AI-Agent account (it may differ from the login name); the read-only probe prints cause classes so this can be checked.

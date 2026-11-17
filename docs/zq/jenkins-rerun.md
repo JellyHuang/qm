@@ -1,5 +1,7 @@
 # Jenkins automatic rerun (design, not implemented)
 
+The PM's later rules, the state machine and the implementation are in `docs/zq/jenkins-auto-rerun.md`; where the two differ (every failure is rerun once, classification only records a hash), that one wins.
+
 Status: proposal, awaiting Jelly's explicit OK. Plan B (`buildWithParameters`) is the chosen direction; nobody has objected, but nothing is built and no write request is sent until Jelly says OK and approves a controlled verification on a harmless job. No Jenkins call, write or read, exists in QM code.
 
 ## Findings from the read-only check
