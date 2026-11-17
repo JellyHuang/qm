@@ -11,7 +11,10 @@
 - [ ] The shared secret (`ZQ_GIT_MCP_SECRET`, >= 16 characters) is provisioned on the QM side and nowhere else
 - [ ] The tool contract (`list_repos`, `list_commits`, `get_commit`, `get_diff`, `read_file`, `blame`, `search`, `diff_xlsx`, `check_updates`) is registered on the QM side; `list_heads` of the design does not exist, `check_updates` replaces it
 - [ ] `plugins/chassis` is installed next to `plugins/zq-git-mcp` (the service imports it by relative path)
-- [ ] The store switches (`ZQ_GIT_MCP_AUDIT`, `ZQ_GIT_MCP_TIPS`, `ZQ_GIT_MCP_BLOB_META`) are set deliberately; the default is `memory` and a restart then loses audit rows and branch tips
+- [ ] The store switches (`ZQ_GIT_MCP_AUDIT`, `ZQ_GIT_MCP_TIPS`, `ZQ_GIT_MCP_BLOB_META`) are set deliberately; the default is `memory` and a restart then loses audit rows and branch tips, so production must set `postgres` (see the next items)
+- [ ] The DBA created `zq_git_branch_tips` and `zq_git_blob_meta` by hand from the approved DDL (no QM core migration creates them) and confirmed `zq_git_audit` exists (the removed in-process module was its only creator), all BEFORE the first start with a postgres store
+- [ ] The role `zq_git_mcp` exists with the tenant binding before the service starts; a start with a missing table was tried once in staging and printed `the database lacks the tables ...; the service never creates tables`
+- [ ] Production sets `ZQ_GIT_MCP_AUDIT=postgres`, `ZQ_GIT_MCP_TIPS=postgres`, `ZQ_GIT_MCP_BLOB_META=postgres` and `ZQ_GIT_MCP_DATABASE_URL` (and `ZQ_GIT_MCP_TENANT_ID` if the role is not bound) only after the previous two items are done; `config.example.env` keeps the code default `memory`
 - [ ] The database DDL is approved by a human and the role is created (`database.md`); the tenanted variant is approved
 - [ ] The audit failure policy stays `ZQ_GIT_MCP_AUDIT_ON_FAILURE=serve` (a read tool never fails because of the audit); `fail` only as an explicit opt-in
 - [ ] The role grants are exactly `INSERT` on `zq_git_audit` and `SELECT, INSERT, UPDATE` on `zq_git_branch_tips` and `zq_git_blob_meta`; no `DELETE` anywhere

@@ -2,27 +2,89 @@
 
 > **DRAFT.** Nothing described here has been deployed or executed. No database was contacted. Deploying needs the PM's explicit written approval. The DDL itself is a proposal awaiting human review.
 
-## Gap between the code and the design
+## The tables are created by hand, not by QM core
 
-On the branch the service has no database code: `src/audit.ts`, `src/tip-store.ts` and `src/ledger.ts` provide memory implementations only (the audit sink keeps the last 10,000 rows in RAM), `src/config.ts` has no database setting, and `createService` takes `audit` and `tips` as injectable deps. Until the Postgres implementations land, run with memory stores (the default) and treat audit as disposable; the steps below apply once they exist. The proposed names are `ZQ_GIT_MCP_DATABASE_URL` (from the DDL proposal) and `ZQ_GIT_MCP_AUDIT_ON_FAILURE`.
+Read this first. It is deliberate and approved.
+
+- `zq_git_branch_tips` and `zq_git_blob_meta` are NOT created by any QM core migration. No migration, no durable-map call and no start of QM core creates them, now or later.
+- The service never creates tables either. It has no CREATE privilege and no table creation code.
+- A DBA creates both tables by hand, as the database owner, from the approved DDL (below, and sections 2 and 3 of `docs/zq-git-mcp-ddl-proposal.md` on `origin/oa/spike-git`; if the two ever differ, the proposal wins).
+- If a table is missing, the service refuses to start, prints the message below and exits with code 1. It does not fall back to memory.
+- `zq_git_audit` is different, but not as simple as "core creates it". It is a generic durable-map table (JSON documents, tenant scoped). The only code that ever built it was the old in-process git module of QM core (`deps.map("zq_git_audit")` in `src/zq/runtime.ts`), which commit `7f8eab470` removed. On a database where that old module ran, the table already exists. On a database where it never ran, nothing creates it any more, so the DBA must check (`SELECT to_regclass('zq_git_audit');` returns a name or NULL) and, if it is NULL, create it in the durable-map form of section 1a of the proposal before the service starts. The service treats it like the other two: all three must exist.
+
+Message printed when a table is missing (one line on stderr, then exit 1; the table names are those that are absent):
+
+```
+zq-git-mcp failed to start: the database lacks the tables zq_git_branch_tips, zq_git_blob_meta; the service never creates tables
+```
+
+The check runs only when `ZQ_GIT_MCP_DATABASE_URL` is set and at least one of `ZQ_GIT_MCP_AUDIT`, `ZQ_GIT_MCP_TIPS`, `ZQ_GIT_MCP_BLOB_META` is `postgres`. With all three at `memory` (the default) the service never opens a database connection and the tables are not needed. The check only proves that the names exist; a wrong grant or a missing tenant binding shows up later (see the role check below), not at start.
+
+## Order of operations
+
+The DBA steps come BEFORE the service starts with any store set to `postgres`. Never start first and fix later.
+
+1. QM core has already run against this database at least once. The new tables reference `tenants(id)` and use the function `qm_bound_tenant()`, both created by core migrations.
+2. A human approves the DDL (done for the tables on 2026-11-16; this is the go-live approval).
+3. The DBA, as database owner, creates `zq_git_branch_tips` and `zq_git_blob_meta` from the DDL below. The DBA checks `zq_git_audit` exists and creates it if it does not.
+4. The DBA creates the role `zq_git_mcp` with the exact grants and binds the tenant: `ALTER ROLE zq_git_mcp SET qm.tenant_id = '<tenant uuid>';` (section "Tenancy, role and retention").
+5. The DBA runs the row level security check as the role (same section). Stop here if any check fails.
+6. The operator writes `ZQ_GIT_MCP_DATABASE_URL` into `/etc/zq-git-mcp/zq-git-mcp.env` and sets `ZQ_GIT_MCP_AUDIT=postgres`, `ZQ_GIT_MCP_TIPS=postgres`, `ZQ_GIT_MCP_BLOB_META=postgres` (see "When production must set postgres").
+7. Only now start the service. Expected: `zq-git-mcp listening on 127.0.0.1:8765, git <version> at <path>`. Stop condition: the refusal message above; do not grant CREATE to the role and do not start the service with memory stores to get past it in production. Go back to step 3.
+8. Make one call and check one audit row appeared in `zq_git_audit` for the bound tenant.
+
+Rollback of a failed attempt: set the three stores back to `memory` (or remove the lines), restart. The tables and the role can stay; to remove them see `upgrade-and-rollback.md`.
+
+DDL for step 3 (tenant scoped, approved; run as the database owner; `zq_git_audit` is not part of it):
+
+```sql
+CREATE TABLE IF NOT EXISTS zq_git_branch_tips (
+  tenant_id uuid NOT NULL DEFAULT qm_bound_tenant() REFERENCES tenants(id),
+  repo text NOT NULL,
+  branch text NOT NULL,
+  tip_sha text NOT NULL,
+  seen_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, repo, branch)
+);
+ALTER TABLE zq_git_branch_tips ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON zq_git_branch_tips
+  USING (tenant_id = qm_bound_tenant()) WITH CHECK (tenant_id = qm_bound_tenant());
+
+CREATE TABLE IF NOT EXISTS zq_git_blob_meta (
+  tenant_id uuid NOT NULL DEFAULT qm_bound_tenant() REFERENCES tenants(id),
+  repo text NOT NULL,
+  oid text NOT NULL,
+  size_bytes bigint NOT NULL,
+  sha256 text,
+  seen_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, repo, oid)
+);
+ALTER TABLE zq_git_blob_meta ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON zq_git_blob_meta
+  USING (tenant_id = qm_bound_tenant()) WITH CHECK (tenant_id = qm_bound_tenant());
+```
+
+## When production must set postgres
+
+The code default for `ZQ_GIT_MCP_AUDIT`, `ZQ_GIT_MCP_TIPS` and `ZQ_GIT_MCP_BLOB_META` is `memory`, and `config.example.env` keeps the defaults. With `memory` a restart loses every audit row and every stored branch tip, and `check_updates` treats the next call as a first observation. That is acceptable only for development and the first smoke tests.
+
+Production must set all of these together, and only after the DBA step above is done and the role check passed:
+
+```
+ZQ_GIT_MCP_AUDIT=postgres
+ZQ_GIT_MCP_TIPS=postgres
+ZQ_GIT_MCP_BLOB_META=postgres
+ZQ_GIT_MCP_DATABASE_URL=postgres://zq_git_mcp:<password>@<db-host>:5432/<qm_db>
+ZQ_GIT_MCP_TENANT_ID=<tenant uuid>
+```
+
+`ZQ_GIT_MCP_DATABASE_URL` is required as soon as one store is `postgres` (the service refuses to start without it: `databaseUrl: required when audit, tips or blobMeta is postgres`). In production the tenant is bound on the role with `ALTER ROLE` and `ZQ_GIT_MCP_TENANT_ID` may be left out; if it is set it must be a real uuid (a placeholder fails with `tenantId: Invalid UUID`). None of these lines is in `config.example.env`, because the example keeps the code defaults.
 
 ## What the proposal says (`docs/zq-git-mcp-ddl-proposal.md` on `origin/oa/spike-git`)
 
-- `zq_git_audit`: existing JSON map table, unchanged at DDL level. Two optional JSON keys are added (`args`, `cache_hit`). The code's row uses the names `caller`, `durationMs`, `cacheHit` and result `refused:<reason>`; the proposal maps them to `principal`, `ms`, `cache_hit` and `denied:<reason>`. That mapping must be settled before go-live.
-- New `zq_git_branch_tips(repo, branch, tip_sha, seen_at)`, PK `(repo, branch)`, migration id `zq/zq_git_branch_tips/0001`.
-- New `zq_git_blob_meta(repo, oid, size_bytes, sha256, seen_at)`, PK `(repo, oid)`, migration id `zq/zq_git_blob_meta/0001`.
+- `zq_git_audit`: existing JSON map table, unchanged at DDL level. The service writes the names `at`, `principal`, `tool`, `repo`, `ref`, `path`, `args`, `bytes`, `truncated`, `result` (`ok`, `error`, `denied:<reason>`), `ms`, `cache_hit`.
+- New `zq_git_branch_tips`, primary key `(tenant_id, repo, branch)`, and new `zq_git_blob_meta`, primary key `(tenant_id, repo, oid)`; both created by hand (above), with no migration id.
 - Role `zq_git_mcp`: INSERT on audit; SELECT, INSERT, UPDATE on the two new tables; no DELETE, TRUNCATE or default privileges. Never use `qm db grant` for it (too broad).
-- Open: tenant scoping with row-level security (recommended), `ALTER ROLE ... SET qm.tenant_id`, retention, the connection string delivery.
-
-## Operator steps, in order (a human, after approval)
-
-1. A human reviews and approves the DDL proposal; decide the tenancy variant.
-2. Merge the code with the migrations. They run through the app's migrate path; the service never creates tables and has no CREATE privilege.
-3. Confirm the three tables exist (the first QM start creates `zq_git_audit` lazily).
-4. As database owner, run the role SQL from section 4 of the proposal with a password the operator generates (not in Git): CREATE ROLE, REVOKE, GRANT CONNECT, GRANT USAGE, the table grants, and `ALTER ROLE zq_git_mcp SET qm.tenant_id = '<tenant uuid>'` for a single-tenant deployment.
-5. Put `ZQ_GIT_MCP_DATABASE_URL=postgres://zq_git_mcp:<password>@<db-host>:5432/<qm_db>` in `/etc/zq-git-mcp/zq-git-mcp.env` only.
-6. Start the service. Proposed behaviour: it checks the three tables exist and refuses to start otherwise.
-7. Make one call and check one audit row appeared.
 
 ## Switches
 

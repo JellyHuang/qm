@@ -6,6 +6,10 @@
 
 `src/git-version.ts` runs `git --version` at start and parses `git version X.Y`. Below 2.44 (needed for `GIT_NO_LAZY_FETCH`), or unparsable output, the start fails: the process prints `zq-git-mcp failed to start: git X.Y is too old: 2.44 or newer is required for GIT_NO_LAZY_FETCH` and exits 1. Human check before install: `git --version` as the service user. Note `git` is found through the service's `PATH`; make sure the first one is the new one.
 
+## Database tables (only with a postgres store)
+
+Applies when `ZQ_GIT_MCP_DATABASE_URL` is set and `ZQ_GIT_MCP_AUDIT`, `_TIPS` or `_BLOB_META` is `postgres`. `zq_git_branch_tips` and `zq_git_blob_meta` are created by a DBA by hand; no QM core migration creates them and the service never does. `zq_git_audit` must also exist (only the removed in-process module of QM core ever created it). Human check before the first start, as the database owner: `SELECT t, to_regclass(t) IS NOT NULL AS present FROM unnest(ARRAY['zq_git_audit','zq_git_branch_tips','zq_git_blob_meta']) AS t;` must show `present` true for all three. The service runs the same query at start and, if a table is missing, prints `zq-git-mcp failed to start: the database lacks the tables <names>; the service never creates tables` and exits 1. Order and DDL: `database.md`.
+
 ## Host key fingerprint
 
 `ZQ_GIT_MCP_SSH_HOST_FINGERPRINT` is required for an ssh remote and must match `SHA256:<43 base64 chars>`. At start the service runs `ssh-keyscan -T 15 <host>`, keeps only host keys whose SHA256 equals the pinned value, and writes them to a private `known_hosts` with `StrictHostKeyChecking=yes`. No match: the start fails with "no host key offered by <host> matches the pinned fingerprint".

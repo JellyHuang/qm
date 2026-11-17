@@ -6,7 +6,7 @@
 
 1. Build the new release in `/opt/zq-git-mcp/releases/<new-id>/` (`plugins/zq-git-mcp` and `plugins/chassis`; `npm ci --omit=dev`). Run `npm test` and `npm run typecheck` there before switching.
 2. Read the release notes for new or renamed settings; diff `config.example.env` against `/etc/zq-git-mcp/zq-git-mcp.env`. The config schema is strict: an unknown key in the JSON config file refuses to start.
-3. Apply approved database migrations first if the release has them (`database.md`).
+3. If the release needs new database tables or grants, a DBA applies them by hand first (`database.md`); QM core migrations never create the tables of this service.
 4. Point `/opt/zq-git-mcp/current` at the new release and `systemctl restart zq-git-mcp`.
 5. Read the journal, run the smoke tests (`checklist.md`).
 
@@ -29,7 +29,7 @@ DROP TABLE IF EXISTS zq_git_branch_tips;
 REVOKE ALL ON zq_git_audit FROM zq_git_mcp; DROP OWNED BY zq_git_mcp; DROP ROLE zq_git_mcp;
 ```
 
-`zq_git_audit` and its rows stay (the extra JSON keys are harmless). Migration ledger rows remain; remove the ids `zq/zq_git_branch_tips/0001` and `zq/zq_git_blob_meta/0001` if the tables are to be re-added. Empty or replay the audit spool first if it is non-empty, or accept losing it.
+`zq_git_audit` and its rows stay (the extra JSON keys are harmless). No migration ledger rows exist for these tables (they are created by hand). Empty or replay the audit spool first if it is non-empty, or accept losing it.
 
 ## Rollback of core wiring
 
