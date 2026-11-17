@@ -154,12 +154,13 @@ const roleplay = createRoleplay({
 });
 const chat = roleplay.chat({
   sendDm: async (to: string, text: string) => void outbox.push({ kind: "私信", to, text }),
-  sendButtons: async (to: string, text: string) => void outbox.push({ kind: "按钮卡", to, text }),
+  sendButtons: async (to: string, text: string, _buttons?: never, _why?: string) =>
+    void outbox.push({ kind: "按钮卡", to, text }),
   createGroup: async (feature: { id: number; subject: string }) => {
     outbox.push({
       kind: "建群",
       to: JELLY,
-      text: `群名:【角色扮演】${feature.subject}(功能 #${feature.id}),成员:jelly + QM`,
+      text: `群名:${feature.subject}(功能 #${feature.id}),成员:jelly + QM`,
     });
     return `chan-${feature.id}`;
   },
@@ -167,7 +168,19 @@ const chat = roleplay.chat({
     void outbox.push({ kind: `群消息(${channel})`, to: JELLY, text }),
 });
 
-const reader = roleplay.reader(createMcpOpReader({ call, contract }));
+const problems: string[] = [];
+const mcpReader = createMcpOpReader({ call, contract, projects: projects.split(",") });
+const reader = roleplay.reader({
+  ...mcpReader,
+  features: async (p) => {
+    try {
+      return await mcpReader.features(p);
+    } catch (e) {
+      problems.push(`读取 OpenProject 失败:${e instanceof Error ? e.message : String(e)}`);
+      throw e;
+    }
+  },
+});
 const env = {
   ZQ_SCANNER: "1",
   ZQ_REMINDER_DELIVERY: "1",
@@ -207,14 +220,13 @@ const serviceWith = (scanner: boolean) =>
     reports: {
       store: reports,
       source: { build: createReportSource({ reader, call, contract, timezone: "Asia/Shanghai" }) },
-      sendCard: (to, _id, text) => chat.sendButtons(to, text),
+      sendCard: (to, _id, text) => chat.sendButtons(to, text, [] as never, "report-draft"),
     },
     now: () => clock.now,
     sendRetryDelayMs: 0,
   });
 
 const realNow = Date.now();
-const problems: string[] = [];
 for (const [at, service] of [
   [realNow - 8 * DAY, serviceWith(false)],
   [realNow, serviceWith(true)],
@@ -240,3 +252,7 @@ const lines = [
 ];
 writeFileSync(outFile, lines.join("\n"));
 console.log(`${outbox.length} messages written to ${outFile}`);
+if (problems.length) {
+  console.error(`${problems.length} problem(s), see the end of ${outFile}`);
+  process.exitCode = 1;
+}

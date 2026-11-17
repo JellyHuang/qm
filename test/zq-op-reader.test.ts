@@ -445,3 +445,30 @@ test("the child orders of an optimization order under a feature are read as that
     [[1, [61, 62]]],
   );
 });
+
+test("an optimization order is never asked for the feature-only answers, and a project outside the scope is not touched", async () => {
+  const unassigned = { stage_key: "execution.unassigned", status_key: "execution.unassigned" };
+  const rows = [
+    wp({ id: 1 }),
+    wp({ id: 60, type_key: "optimization", ...unassigned }),
+    wp({ id: 70, project_id: "other" }),
+    wp({ id: 71, type_key: "optimization", project_id: "other", ...unassigned }),
+  ];
+  const featureOnly = (a: Record<string, unknown>) =>
+    a["id"] === 1 ? { next_offset: null, results: [] } : new Error("invalid_feature: not a feature");
+  const f = fake({
+    openproject_zq_list_work_packages: () => ({ next_offset: null, results: rows }),
+    openproject_zq_check_exit: (a) => (a["id"] === 1 ? { ready: false, blockers: [] } : new Error("invalid_feature")),
+    openproject_zq_meetings_for_feature: featureOnly,
+    openproject_zq_bugs_for_feature: featureOnly,
+  });
+  const { facts } = await createMcpOpReader({ call: f.call, contract, projects: ["p1"] }).features(PERSON);
+  assert.deepEqual(
+    facts.map((x) => x.feature.id),
+    [1, 60],
+  );
+  assert.ok(
+    f.calls.every((c) => !/"id":(60|70|71)\b/.test(c)),
+    "no feature-only tool saw an order outside the features",
+  );
+});

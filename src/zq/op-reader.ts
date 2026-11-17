@@ -239,7 +239,12 @@ async function mapLimited<T, R>(items: readonly T[], work: (item: T) => Promise<
   return out;
 }
 
-export function createMcpOpReader(opts: { call: OpCall; contract: ZqContract; serverId?: string }): OpReader {
+export function createMcpOpReader(opts: {
+  call: OpCall;
+  contract: ZqContract;
+  serverId?: string;
+  projects?: readonly string[];
+}): OpReader {
   const { contract } = opts;
   const tool = (name: string) => `${opts.serverId ?? "openproject"}_${name}`;
 
@@ -274,13 +279,13 @@ export function createMcpOpReader(opts: { call: OpCall; contract: ZqContract; se
         }
       });
       const featureIds = new Set(found.filter((w) => w.typeKey === contract.featureType).map((w) => w.id));
-      const features = found.filter(
-        (w) =>
-          w.typeKey === contract.featureType ||
-          (contract.optimizationType !== undefined &&
-            w.typeKey === contract.optimizationType &&
-            !featureIds.has(w.parentId ?? -1)),
-      );
+      const inScope = (w: WorkView) =>
+        !opts.projects || (w.projectId !== undefined && opts.projects.includes(w.projectId));
+      const standalone = (w: WorkView) =>
+        contract.optimizationType !== undefined &&
+        w.typeKey === contract.optimizationType &&
+        !featureIds.has(w.parentId ?? -1);
+      const features = found.filter((w) => inScope(w) && (w.typeKey === contract.featureType || standalone(w)));
       const isBug = (w: WorkView) => w.typeKey === contract.bugType;
       const facts = await mapLimited(features, async (feature) => {
         const under = found.filter((w) => w.parentId === feature.id);
@@ -293,6 +298,7 @@ export function createMcpOpReader(opts: { call: OpCall; contract: ZqContract; se
           ...under.filter((w) => !isBug(w)),
           ...found.filter((w) => attached.has(w.parentId ?? -1) && !isBug(w)),
         ];
+        if (feature.typeKey !== contract.featureType) return { feature, children, bugs: under.filter(isBug) };
         const [bugs, meetings, exit] = await Promise.all([
           contract.tools.bugsForFeature
             ? pages(contract.tools.bugsForFeature, { id: feature.id }, scanner.principalId).then(

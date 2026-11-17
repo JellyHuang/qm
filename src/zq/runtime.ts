@@ -156,7 +156,12 @@ export function createZqRuntime(deps: {
       : undefined;
 
   const mcpReader = contract
-    ? createMcpOpReader({ call: deps.call, contract, serverId: OPENPROJECT_SERVER })
+    ? createMcpOpReader({
+        call: deps.call,
+        contract,
+        serverId: OPENPROJECT_SERVER,
+        ...(config.roleplay ? { projects: config.roleplay.projectIds } : {}),
+      })
     : undefined;
   const reader = mcpReader && roleplay ? roleplay.reader(mcpReader) : mcpReader;
   const reportSource =
