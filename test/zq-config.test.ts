@@ -85,6 +85,7 @@ test("patch package settings default to a QM identity and a documented ticket pa
   assert.equal(c.patchPackage.authorEmail, "qm-bot@invalid");
   assert.equal(c.patchPackage.subjectMax, 72);
   assert.equal(c.patchPackage.bodyMax, 5000);
+  assert.equal(c.patchPackage.maxPackageBytes, 80 * 1024 * 1024);
   assert.match(c.patchPackage.outputDir, /qm-patch-packages$/);
   assert.deepEqual(
     [c.identityMap, c.scanner.enabled, c.deliverReminders, c.reports.enabled, c.featureChannels, c.jenkins.rerun],
@@ -100,6 +101,7 @@ test("patch package settings come from the environment and bad values refuse sta
     ZQ_PATCH_OUTPUT_DIR: "/var/qm/patches",
     ZQ_PATCH_SUBJECT_MAX: "100",
     ZQ_PATCH_BODY_MAX: "2000",
+    ZQ_PATCH_MAX_PACKAGE_BYTES: "1048576",
   });
   assert.deepEqual(c.patchPackage, {
     ticketPattern: "^WP-[0-9]+$",
@@ -108,6 +110,7 @@ test("patch package settings come from the environment and bad values refuse sta
     outputDir: "/var/qm/patches",
     subjectMax: 100,
     bodyMax: 2000,
+    maxPackageBytes: 1048576,
   });
   assert.throws(() => zqConfigFromEnv({ ZQ_PATCH_TICKET_PATTERN: "(" }), /ZQ_PATCH_TICKET_PATTERN/);
   assert.throws(
@@ -116,4 +119,6 @@ test("patch package settings come from the environment and bad values refuse sta
   );
   assert.throws(() => zqConfigFromEnv({ ZQ_PATCH_OUTPUT_DIR: "relative/dir" }), /ZQ_PATCH_OUTPUT_DIR/);
   assert.throws(() => zqConfigFromEnv({ ZQ_PATCH_SUBJECT_MAX: "5" }), /ZQ_PATCH_SUBJECT_MAX/);
+  for (const bad of ["0", "-5", "1.5", "lots", "9007199254740993"])
+    assert.throws(() => zqConfigFromEnv({ ZQ_PATCH_MAX_PACKAGE_BYTES: bad }), /ZQ_PATCH_MAX_PACKAGE_BYTES/, bad);
 });

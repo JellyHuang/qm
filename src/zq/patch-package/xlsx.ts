@@ -1,10 +1,8 @@
 import { createWriteStream, type WriteStream } from "node:fs";
-import { copyFile, stat } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename } from "node:path";
 import { once } from "node:events";
 import type { GitMcpClient } from "../git-mcp/client.ts";
-import { createPackageDir, describeFile, removeQuietly, writeManifest, type PackageFile } from "./files.ts";
-import { PatchPackageError, validateTicket, type PatchPackageSettings } from "./settings.ts";
+import { PatchPackageError } from "./settings.ts";
 
 export interface XlsxSheetSummary {
   sheet: string;
@@ -55,25 +53,10 @@ export type FetchPage = (offset: number) => Promise<XlsxDiffResult>;
 
 export interface XlsxWorkbookInput {
   result: XlsxDiffResult;
-  file: string;
   fetchPage?: FetchPage;
 }
 
-export interface XlsxPackageOptions {
-  settings: PatchPackageSettings;
-  ticket?: string;
-  name?: string;
-  maxPages?: number;
-}
-
-export interface XlsxPackage {
-  dir: string;
-  manifestPath: string;
-  files: (PackageFile & { path: string })[];
-  workbooks: { path: string; rendered: number; total: number; complete: boolean }[];
-  manifest: Record<string, unknown>;
-}
-
+export const LFS_COMPARISON_NOTE = "comparison not available for LFS files";
 const LFS_NOTE = "LFS file, content not compared";
 const DEFAULT_MAX_PAGES = 10_000;
 
@@ -258,12 +241,11 @@ export async function renderXlsxDiff(
   }
 }
 
-function stemOf(file: string): string {
+export function stemOf(file: string): string {
   return basename(file).replace(/\.xlsx$/i, "");
 }
 
-function refuseUnusable(input: XlsxWorkbookInput): void {
-  const { result } = input;
+export function refuseUnusableResult(result: XlsxDiffResult): void {
   const label = result.path;
   if (result.kind === "unchanged")
     throw new PatchPackageError(
@@ -280,62 +262,4 @@ function refuseUnusable(input: XlsxWorkbookInput): void {
       "unsupported",
       `${label} could not be compared (${result.kind}${result.note ? `: ${result.note}` : ""})`,
     );
-}
-
-export async function buildXlsxPackage(
-  workbooks: readonly XlsxWorkbookInput[],
-  options: XlsxPackageOptions,
-): Promise<XlsxPackage> {
-  if (workbooks.length === 0) throw new PatchPackageError("bad_input", "give at least one workbook");
-  const ticket = options.ticket === undefined ? undefined : validateTicket(options.settings, options.ticket);
-  const stems = workbooks.map((workbook) => stemOf(workbook.file));
-  if (new Set(stems).size !== stems.length)
-    throw new PatchPackageError("bad_input", "the workbook file names must be different");
-  for (const workbook of workbooks) {
-    refuseUnusable(workbook);
-    const present = await stat(workbook.file).then(
-      (s) => s.isFile(),
-      () => false,
-    );
-    if (!present)
-      throw new PatchPackageError("missing_file", `the modified file ${basename(workbook.file)} is not on disk`);
-  }
-  const first = workbooks[0] as XlsxWorkbookInput;
-  const dir = await createPackageDir(
-    options.settings.outputDir,
-    options.name ?? `xlsx-${stems[0]?.replace(/[^\w.-]/g, "_")}-${first.result.head.commit.slice(0, 12)}`,
-  );
-  try {
-    const files: (PackageFile & { path: string })[] = [];
-    const entries: Record<string, unknown>[] = [];
-    const summary: XlsxPackage["workbooks"] = [];
-    for (const workbook of workbooks) {
-      const stem = stemOf(workbook.file);
-      const workbookName = `${stem}.xlsx`;
-      const diffName = `${stem}.diff.md`;
-      await copyFile(workbook.file, join(dir, workbookName));
-      const rendered = await renderXlsxDiff(join(dir, diffName), workbook.result, workbook.fetchPage, {
-        ...(ticket ? { ticket } : {}),
-        ...(options.maxPages === undefined ? {} : { maxPages: options.maxPages }),
-      });
-      const described = await Promise.all([describeFile(dir, workbookName), describeFile(dir, diffName)]);
-      files.push(...described.map((file) => ({ ...file, path: join(dir, file.name) })));
-      summary.push({ path: workbook.result.path, ...rendered });
-      entries.push({
-        path: workbook.result.path,
-        kind: workbook.result.kind,
-        base: workbook.result.base,
-        head: workbook.result.head,
-        workbook: described[0],
-        diff: described[1],
-        differences: { total: rendered.total, listed: rendered.rendered, complete: rendered.complete },
-      });
-    }
-    const manifest = { schema: 1, kind: "xlsx", ...(ticket ? { ticket } : {}), workbooks: entries };
-    const manifestPath = await writeManifest(dir, manifest);
-    return { dir, manifestPath, files, workbooks: summary, manifest };
-  } catch (e) {
-    await removeQuietly(dir);
-    throw e;
-  }
 }

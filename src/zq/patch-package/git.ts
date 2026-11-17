@@ -13,6 +13,7 @@ export const ALLOWED_GIT_SUBCOMMANDS: readonly string[] = [
   "commit",
   "format-patch",
   "am",
+  "check-attr",
 ];
 
 const OUTPUT_CAP_BYTES = 256 * 1024 * 1024;

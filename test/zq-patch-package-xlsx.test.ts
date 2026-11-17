@@ -1,19 +1,19 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { setFlagsFromString } from "node:v8";
 import { test } from "node:test";
 import { PatchPackageError } from "../src/zq/patch-package/settings.ts";
 import {
-  buildXlsxPackage,
+  refuseUnusableResult,
   renderXlsxDiff,
   xlsxPager,
   type XlsxDifference,
   type XlsxDiffResult,
   type XlsxSheetSummary,
 } from "../src/zq/patch-package/xlsx.ts";
-import { put, scratchDir, testSettings } from "./support/patch-package-fixture.ts";
+import { scratchDir } from "./support/patch-package-fixture.ts";
 
 const sheet = (over: Partial<XlsxSheetSummary> = {}): XlsxSheetSummary => ({
   sheet: "Data",
@@ -64,15 +64,8 @@ const result = (over: Partial<XlsxDiffResult> = {}): XlsxDiffResult => ({
   ...over,
 });
 
-function setup(t: Parameters<typeof scratchDir>[0], name = "items.xlsx") {
-  const out = scratchDir(t, "pp-xout-");
-  const src = scratchDir(t, "pp-xsrc-");
-  put(src, name, Buffer.from("PK-pretend-workbook"));
-  return { out, file: join(src, name), settings: testSettings(out) };
-}
-
-async function expectError(promise: Promise<unknown>, code: string, pattern?: RegExp) {
-  await assert.rejects(promise, (e: unknown) => {
+async function expectError(fn: () => unknown, code: string, pattern?: RegExp) {
+  assert.throws(fn, (e: unknown) => {
     assert.ok(e instanceof PatchPackageError, String(e));
     assert.equal(e.code, code, e.message);
     if (pattern) assert.match(e.message, pattern);
@@ -80,12 +73,19 @@ async function expectError(promise: Promise<unknown>, code: string, pattern?: Re
   });
 }
 
-test("the package holds the workbook, a diff table and a manifest with hashes and refs", async (t) => {
-  const s = setup(t);
-  const pkg = await buildXlsxPackage([{ result: result(), file: s.file }], { settings: s.settings, ticket: "WP-9" });
-  assert.deepEqual(readdirSync(pkg.dir).sort(), ["items.diff.md", "items.xlsx", "manifest.json"]);
-  assert.equal(readFileSync(join(pkg.dir, "items.xlsx"), "utf8"), "PK-pretend-workbook");
-  const md = readFileSync(join(pkg.dir, "items.diff.md"), "utf8");
+async function render(
+  t: Parameters<typeof scratchDir>[0],
+  first: XlsxDiffResult,
+  fetchPage?: (offset: number) => Promise<XlsxDiffResult>,
+  ticket?: string,
+) {
+  const file = join(scratchDir(t, "pp-xout-"), "table.diff.md");
+  const outcome = await renderXlsxDiff(file, first, fetchPage, ticket ? { ticket } : {});
+  return { md: readFileSync(file, "utf8"), outcome };
+}
+
+test("the table has refs, a summary and one row per difference", async (t) => {
+  const { md, outcome } = await render(t, result(), undefined, "WP-9");
   const lines = md.split("\n");
   assert.ok(lines.indexOf("## Summary") < lines.indexOf("## Differences"));
   assert.match(md, /^\| Data \| both \| 1\/2 \| id \| 3\/3 \| 1 \| 1 \| 1 \| 0 \| 1 \| 1 \| 0 \| 0 \| 0 \|$/m);
@@ -97,104 +97,55 @@ test("the package holds the workbook, a diff table and a manifest with hashes an
   assert.match(md, /^\| Data \| \(column\) \| note \| old column \| {2}\| column_removed \|$/m);
   assert.match(md, /ticket: WP-9/);
   assert.doesNotMatch(md, /TABLE CUT/);
-
-  const text = readFileSync(pkg.manifestPath, "utf8");
-  const manifest = JSON.parse(text) as {
-    ticket: string;
-    workbooks: {
-      base: { commit: string };
-      head: { ref: string };
-      workbook: { name: string; sha256: string; bytes: number };
-      diff: { sha256: string };
-      differences: { complete: boolean; listed: number };
-    }[];
-  };
-  const entry = manifest.workbooks[0];
-  assert.equal(manifest.ticket, "WP-9");
-  assert.equal(entry?.base.commit, "a".repeat(40));
-  assert.equal(entry?.head.ref, "main");
-  assert.equal(entry?.workbook.bytes, "PK-pretend-workbook".length);
-  assert.equal(entry?.differences.complete, true);
-  assert.equal(entry?.differences.listed, 5);
-  assert.equal(entry?.workbook.sha256, pkg.files.find((f) => f.name === "items.xlsx")?.sha256);
-  assert.ok(!text.includes(s.out) && !text.includes(s.file));
+  assert.deepEqual(outcome, { rendered: 5, total: 5, complete: true });
 });
 
 test("pipes, backslashes and newlines in values are escaped so the table stays one row per difference", async (t) => {
-  const s = setup(t);
-  const pkg = await buildXlsxPackage(
-    [
-      {
-        result: result({ total: 1, differences: [diff("cell_changed", "a|b", "c", "x|y\nz", "back\\slash\r\nend")] }),
-        file: s.file,
-      },
-    ],
-    { settings: s.settings },
+  const { md } = await render(
+    t,
+    result({ total: 1, differences: [diff("cell_changed", "a|b", "c", "x|y\nz", "back\\slash\r\nend")] }),
   );
-  const md = readFileSync(join(pkg.dir, "items.diff.md"), "utf8");
   assert.match(md, /^\| Data \| a\\\|b \| c \| x\\\|y\\nz \| back\\\\slash\\nend \| cell_changed \|$/m);
 });
 
 test("ambiguous keys and the suggested key columns are called out above the summary", async (t) => {
-  const s = setup(t);
-  const ambiguous = result({
-    summary: { sheets: [sheet({ ambiguous: 3, ambiguousKeys: 2, suggestedKeyColumns: ["A", "C"] })] },
-    total: 1,
-    differences: [diff("ambiguous", "(key)", "", "id", "id, name")],
-  });
-  const pkg = await buildXlsxPackage([{ result: ambiguous, file: s.file }], { settings: s.settings });
-  const md = readFileSync(join(pkg.dir, "items.diff.md"), "utf8");
+  const { md } = await render(
+    t,
+    result({
+      summary: { sheets: [sheet({ ambiguous: 3, ambiguousKeys: 2, suggestedKeyColumns: ["A", "C"] })] },
+      total: 1,
+      differences: [diff("ambiguous", "(key)", "", "id", "id, name")],
+    }),
+  );
   assert.ok(md.indexOf("Ambiguous rows") < md.indexOf("## Summary"));
   assert.match(md, /sheet Data: 2 key problems, 3 ambiguous in all; suggested key columns: A, C/);
   assert.match(md, /\| ambiguous \|$/m);
 });
 
 test("an LFS pointer is rendered as not compared and an unchanged or unsupported result is refused", async (t) => {
-  const s = setup(t);
-  const lfs = result({
-    kind: "lfs_pointer_changed",
-    oldLfs: { oid: "1".repeat(64), size: 10 },
-    newLfs: { oid: "2".repeat(64), size: 12 },
-  });
-  const pkg = await buildXlsxPackage([{ result: lfs, file: s.file }], { settings: s.settings });
-  const md = readFileSync(join(pkg.dir, "items.diff.md"), "utf8");
+  const { md } = await render(
+    t,
+    result({
+      kind: "lfs_pointer_changed",
+      oldLfs: { oid: "1".repeat(64), size: 10 },
+      newLfs: { oid: "2".repeat(64), size: 12 },
+    }),
+  );
   assert.match(md, /LFS file, content not compared/);
   assert.match(md, new RegExp(`oid ${"2".repeat(64)}, size 12`));
   assert.doesNotMatch(md, /^\| sheet \| key/m);
 
-  const other = setup(t);
+  await expectError(() => refuseUnusableResult(result({ kind: "unchanged" })), "unchanged", /unchanged/);
   await expectError(
-    buildXlsxPackage([{ result: result({ kind: "unchanged" }), file: other.file }], { settings: other.settings }),
-    "unchanged",
-    /unchanged/,
-  );
-  await expectError(
-    buildXlsxPackage([{ result: result({ kind: "unsupported", note: "macro workbook" }), file: other.file }], {
-      settings: other.settings,
-    }),
+    () => refuseUnusableResult(result({ kind: "unsupported", note: "macro workbook" })),
     "unsupported",
     /macro workbook/,
   );
-  await expectError(
-    buildXlsxPackage([{ result: result({ kind: "file_removed" }), file: other.file }], { settings: other.settings }),
-    "unsupported",
-    /removed/,
-  );
-  assert.deepEqual(readdirSync(other.out), []);
-});
-
-test("a missing modified file is refused without leaving anything behind", async (t) => {
-  const s = setup(t);
-  await expectError(
-    buildXlsxPackage([{ result: result(), file: join(s.out, "nope.xlsx") }], { settings: s.settings }),
-    "missing_file",
-    /not on disk/,
-  );
-  assert.deepEqual(readdirSync(s.out), []);
+  await expectError(() => refuseUnusableResult(result({ kind: "file_removed" })), "unsupported", /removed/);
+  refuseUnusableResult(result());
 });
 
 test("all pages are fetched through nextOffset until it is exhausted", async (t) => {
-  const s = setup(t);
   const all = Array.from({ length: 7 }, (_, i) => diff("cell_changed", String(i), "qty", "1", String(i)));
   const page = (offset: number, size: number): XlsxDiffResult =>
     result({
@@ -204,41 +155,21 @@ test("all pages are fetched through nextOffset until it is exhausted", async (t)
       nextOffset: offset + size < 7 ? offset + size : null,
     });
   const requested: number[] = [];
-  const pkg = await buildXlsxPackage(
-    [{ result: page(0, 3), file: s.file, fetchPage: async (offset) => (requested.push(offset), page(offset, 3)) }],
-    { settings: s.settings },
-  );
+  const { md, outcome } = await render(t, page(0, 3), async (offset) => (requested.push(offset), page(offset, 3)));
   assert.deepEqual(requested, [3, 6]);
-  const md = readFileSync(join(pkg.dir, "items.diff.md"), "utf8");
   assert.equal(md.split("\n").filter((line) => line.endsWith("| cell_changed |")).length, 7);
-  assert.equal(pkg.workbooks[0]?.complete, true);
+  assert.equal(outcome.complete, true);
 });
 
 test("a table that cannot be completed says so explicitly", async (t) => {
-  const s = setup(t);
   const first = result({ total: 7, differences: [diff("cell_changed", "0", "q", "1", "2")], nextOffset: 1 });
-  const noPager = await buildXlsxPackage([{ result: first, file: s.file }], { settings: s.settings, name: "a" });
-  assert.equal(noPager.workbooks[0]?.complete, false);
-  assert.match(
-    readFileSync(join(noPager.dir, "items.diff.md"), "utf8"),
-    /TABLE CUT: 1 of 7 differences are listed, no way to fetch/,
-  );
-  const manifest = JSON.parse(readFileSync(noPager.manifestPath, "utf8")) as {
-    workbooks: { differences: { complete: boolean } }[];
-  };
-  assert.equal(manifest.workbooks[0]?.differences.complete, false);
-
-  const failing = await buildXlsxPackage(
-    [{ result: first, file: s.file, fetchPage: async () => Promise.reject(new Error("service down")) }],
-    { settings: s.settings, name: "b" },
-  );
-  assert.match(readFileSync(join(failing.dir, "items.diff.md"), "utf8"), /TABLE CUT: 1 of 7.*service down/);
-
-  const stuck = await buildXlsxPackage([{ result: first, file: s.file, fetchPage: async () => first }], {
-    settings: s.settings,
-    name: "c",
-  });
-  assert.match(readFileSync(join(stuck.dir, "items.diff.md"), "utf8"), /did not advance/);
+  const noPager = await render(t, first);
+  assert.equal(noPager.outcome.complete, false);
+  assert.match(noPager.md, /TABLE CUT: 1 of 7 differences are listed, no way to fetch/);
+  const failing = await render(t, first, async () => Promise.reject(new Error("service down")));
+  assert.match(failing.md, /TABLE CUT: 1 of 7.*service down/);
+  const stuck = await render(t, first, async () => first);
+  assert.match(stuck.md, /did not advance/);
 });
 
 test("the pager asks diff_xlsx for the next offset with the same arguments", async () => {
@@ -261,25 +192,6 @@ test("the pager asks diff_xlsx for the next offset with the same arguments", asy
       caller: "qm-patch",
     },
   ]);
-});
-
-test("a ticket that does not match the pattern is refused for a spreadsheet package too", async (t) => {
-  const s = setup(t);
-  await expectError(
-    buildXlsxPackage([{ result: result(), file: s.file }], { settings: s.settings, ticket: "bad" }),
-    "bad_ticket",
-  );
-  await expectError(
-    buildXlsxPackage(
-      [
-        { result: result(), file: s.file },
-        { result: result(), file: s.file },
-      ],
-      { settings: s.settings },
-    ),
-    "bad_input",
-    /different/,
-  );
 });
 
 test("thousands of differences stream to disk with bounded memory", async (t) => {

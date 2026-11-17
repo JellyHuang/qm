@@ -65,6 +65,7 @@ export function testSettings(outputDir: string, overrides: Partial<PatchPackageS
     outputDir,
     subjectMax: 72,
     bodyMax: 5000,
+    maxPackageBytes: 80 * 1024 * 1024,
     ...overrides,
   };
 }

@@ -1,20 +1,34 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { PatchPackageError } from "./settings.ts";
 
 export interface PackageFile {
   name: string;
   sha256: string;
+  gitBlob: string;
   bytes: number;
+}
+
+export function gitBlobId(bytes: Buffer): string {
+  return createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+}
+
+export function sha256Hex(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 export async function describeFile(dir: string, name: string): Promise<PackageFile> {
   const path = join(dir, name);
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
-  return { name, sha256: hash.digest("hex"), bytes: (await stat(path)).size };
+  const bytes = (await stat(path)).size;
+  const sha256 = createHash("sha256");
+  const blob = createHash("sha1").update(`blob ${bytes}\0`);
+  for await (const chunk of createReadStream(path)) {
+    sha256.update(chunk as Buffer);
+    blob.update(chunk as Buffer);
+  }
+  return { name, sha256: sha256.digest("hex"), gitBlob: blob.digest("hex"), bytes };
 }
 
 export async function createPackageDir(outputDir: string, name: string): Promise<string> {
@@ -30,16 +44,6 @@ export async function createPackageDir(outputDir: string, name: string): Promise
     throw e;
   }
   return dir;
-}
-
-export async function writeManifest(dir: string, manifest: object): Promise<string> {
-  const path = join(dir, "manifest.json");
-  await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);
-  return path;
-}
-
-export async function listPackage(dir: string): Promise<string[]> {
-  return (await readdir(dir)).sort();
 }
 
 export async function removeQuietly(path: string): Promise<void> {

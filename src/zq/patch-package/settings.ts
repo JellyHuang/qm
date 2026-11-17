@@ -8,6 +8,7 @@ export interface PatchPackageSettings {
   outputDir: string;
   subjectMax: number;
   bodyMax: number;
+  maxPackageBytes: number;
 }
 
 export const DEFAULT_TICKET_PATTERN = "^(WP-)?[0-9]{1,9}$";
@@ -15,6 +16,7 @@ export const DEFAULT_AUTHOR_NAME = "QM Bot";
 export const DEFAULT_AUTHOR_EMAIL = "qm-bot@invalid";
 export const DEFAULT_SUBJECT_MAX = 72;
 export const DEFAULT_BODY_MAX = 5000;
+export const DEFAULT_MAX_PACKAGE_BYTES = 80 * 1024 * 1024;
 export const defaultOutputDir = () => join(tmpdir(), "qm-patch-packages");
 
 export type PatchPackageErrorCode =
@@ -28,7 +30,15 @@ export type PatchPackageErrorCode =
   | "missing_file"
   | "exists"
   | "git_failed"
-  | "verify_failed";
+  | "verify_failed"
+  | "not_utf8"
+  | "oid_mismatch"
+  | "too_large"
+  | "attributes_case_dependent"
+  | "attributes_changed"
+  | "lfs_attribute_mismatch"
+  | "unsupported_filter"
+  | "lfs_pointer_content";
 
 export class PatchPackageError extends Error {
   readonly code: PatchPackageErrorCode;
@@ -41,6 +51,7 @@ export class PatchPackageError extends Error {
 
 const CONTROL = /[\u0000-\u001f\u007f]/;
 const BODY_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/;
+const AI_TRAILER = "AI-Generated: true";
 const RESERVED_TRAILER = /^(Ticket|AI-Generated):/im;
 
 export function validateTicket(settings: PatchPackageSettings, ticket: unknown): string {
@@ -90,5 +101,5 @@ export function validateIdentity(name: string, email: string): void {
 }
 
 export function commitMessage(ticket: string, subject: string, body: string): string {
-  return `${subject}\n\n${body ? `${body}\n\n` : ""}Ticket: ${ticket}\nAI-Generated: QM\n`;
+  return `${subject}\n\n${body ? `${body}\n\n` : ""}Ticket: ${ticket}\n${AI_TRAILER}\n`;
 }

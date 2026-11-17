@@ -6,6 +6,7 @@ import {
   DEFAULT_AUTHOR_EMAIL,
   DEFAULT_AUTHOR_NAME,
   DEFAULT_BODY_MAX,
+  DEFAULT_MAX_PACKAGE_BYTES,
   DEFAULT_SUBJECT_MAX,
   DEFAULT_TICKET_PATTERN,
   defaultOutputDir,
@@ -107,6 +108,13 @@ function patchPackageSettings(env: NodeJS.ProcessEnv): PatchPackageSettings {
     outputDir,
     subjectMax: integer("ZQ_PATCH_SUBJECT_MAX", env.ZQ_PATCH_SUBJECT_MAX, DEFAULT_SUBJECT_MAX, 20, 200),
     bodyMax: integer("ZQ_PATCH_BODY_MAX", env.ZQ_PATCH_BODY_MAX, DEFAULT_BODY_MAX, 100, 50_000),
+    maxPackageBytes: integer(
+      "ZQ_PATCH_MAX_PACKAGE_BYTES",
+      env.ZQ_PATCH_MAX_PACKAGE_BYTES,
+      DEFAULT_MAX_PACKAGE_BYTES,
+      1,
+      Number.MAX_SAFE_INTEGER,
+    ),
   };
 }
 
