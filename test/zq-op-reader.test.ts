@@ -411,6 +411,13 @@ test("an optimization order with no feature parent is read like a feature, one u
 test("the completion confirmation of an optimization order is read from its flag, and only when true", () => {
   const read = (v: unknown) => parseWorkView(wp({ type_key: "optimization", completion_submitted: v }), contract)!;
   assert.equal(read(true).completionSubmitted, true);
+  assert.equal(
+    parseWorkView(wp({ type_key: "optimization", delivery_result: "pass" }), {
+      ...contract,
+      fields: { ...contract.fields, completionSubmitted: "delivery_result" },
+    })!.completionSubmitted,
+    true,
+  );
   assert.equal(read(false).completionSubmitted, undefined);
   assert.equal(read("yes").completionSubmitted, undefined);
 });

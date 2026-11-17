@@ -168,7 +168,7 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
     ...(typeof blocking === "boolean" ? { blocking } : {}),
     ...(awaited ? { awaited } : {}),
     ...(awaitingNote ? { awaitingNote } : {}),
-    ...(completionSubmitted === true ? { completionSubmitted } : {}),
+    ...(completionSubmitted === true || completionSubmitted === "pass" ? { completionSubmitted: true } : {}),
   };
 }
 
