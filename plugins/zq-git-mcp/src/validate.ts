@@ -23,6 +23,8 @@ const MAX_REF_LENGTH = 200;
 const MAX_PATH_LENGTH = 1024;
 const MAX_AUTHOR_LENGTH = 200;
 export const MAX_COMMITS = 10_000;
+const MAX_LINE_NUMBER = 1_000_000_000;
+const MAX_PATTERNS = 1000;
 
 const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/+@-]*$/;
 const REVISION = /^[A-Za-z0-9][A-Za-z0-9._/+@^~-]*$/;
@@ -53,7 +55,7 @@ export function checkBranch(value: unknown): string {
   return refLike("branch", value, BRANCH);
 }
 
-function checkRevision(value: unknown): string {
+export function checkRevision(value: unknown): string {
   return refLike("ref", value, REVISION);
 }
 
@@ -107,4 +109,36 @@ export function checkCount(value: unknown, fallback: number, max: number): numbe
 
 export function printable(value: unknown): string | undefined {
   return typeof value === "string" ? value.replace(CONTROL, "?").slice(0, MAX_PATH_LENGTH) : undefined;
+}
+
+export function checkLine(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > MAX_LINE_NUMBER)
+    throw new GitDenied("bad_number", "line numbers are integers from 1");
+  return value;
+}
+
+export function checkOffset(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+    throw new GitDenied("bad_number", "expected a non-negative integer");
+  return value;
+}
+
+export function checkPathPatterns(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_PATTERNS)
+    throw new GitDenied("bad_path", `expected 1 through ${MAX_PATTERNS} paths`);
+  return value.map(checkPath);
+}
+
+export function globToRegExp(pattern: string): RegExp {
+  let body = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i] ?? "";
+    if (c === "*" && pattern[i + 1] === "*") {
+      body += pattern[i + 2] === "/" ? "(?:.*/)?" : ".*";
+      i += pattern[i + 2] === "/" ? 2 : 1;
+    } else if (c === "*") body += "[^/]*";
+    else if (c === "?") body += "[^/]";
+    else body += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${body}$`);
 }

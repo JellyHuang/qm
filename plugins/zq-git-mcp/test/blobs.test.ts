@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { BlobFetchError, createBlobStore, type BlobStore } from "../src/blobs.ts";
 import { createBlobCache, type BlobCache } from "../src/cache.ts";
 import { dirSize } from "../src/fs-util.ts";
-import { createMemorySizeLedger } from "../src/ledger.ts";
+import { createMemoryBlobMetaLedger } from "../src/ledger.ts";
 import { createLimiter } from "../src/limiter.ts";
 import { createRepos, type Repos } from "../src/repos.ts";
 import { createGitRunner } from "../src/runner.ts";
@@ -52,7 +52,7 @@ before(() => {
 after(cleanup);
 
 interface Setup {
-  ledger: ReturnType<typeof createMemorySizeLedger>;
+  ledger: ReturnType<typeof createMemoryBlobMetaLedger>;
   blobs: BlobStore;
   repos: Repos;
   cache: BlobCache;
@@ -99,7 +99,7 @@ async function setup(
     pollMs: 10,
   });
   await repos.ensure(options.repo ?? "client");
-  const ledger = createMemorySizeLedger();
+  const ledger = createMemoryBlobMetaLedger();
   const blobs = createBlobStore({
     repos,
     runner,
@@ -137,10 +137,10 @@ describe("on-demand blob fetch", () => {
       stats,
     }));
     assert.match(first.text, new RegExp(`line one SECRET-FILE-CONTENT-MARKER`));
-    assert.deepEqual(first.stats, { hits: 0, fetched: 1 });
+    assert.deepEqual({ hits: first.stats.hits, fetched: first.stats.fetched }, { hits: 0, fetched: 1 });
     assert.equal(s.fetchCalls().length, 1);
     const second = await s.blobs.withBlobs("client", [fx.client.renamedOid], async (_paths, stats) => stats);
-    assert.deepEqual(second, { hits: 1, fetched: 0 });
+    assert.deepEqual({ hits: second.hits, fetched: second.fetched }, { hits: 1, fetched: 0 });
     assert.equal(s.fetchCalls().length, 1);
     assert.equal(s.cache.usage().entries, 1);
     assert.deepEqual(readdirSync(s.scratchDir), []);
@@ -439,16 +439,16 @@ describe("memory aware fetch limits", () => {
     const log = join(root, `small-${counter}.log`);
     const s = await setup({ gitBinary: overlapGit(log), maxBigFetches: 1, maxFetches: 4, maxJobs: 6, repo: "zq-ui" });
     const oids = [...new Set(manyOids["zq-ui"] ?? [])].slice(0, 4);
-    for (const oid of oids) s.ledger.record("zq-ui", oid, 20);
+    for (const oid of oids) s.ledger.record("zq-ui", oid, { size: 20 });
     await Promise.all(oids.map((oid) => s.blobs.withBlobs("zq-ui", [oid], async (paths) => read(paths, oid))));
     assert.ok(peakOf(log) > 1);
   });
 
   test("sizes learned after a download are remembered", async () => {
     const s = await setup();
-    assert.equal(s.ledger.size("client", fx.client.readmeOid), undefined);
+    assert.equal(s.ledger.get("client", fx.client.readmeOid)?.size, undefined);
     await s.blobs.withBlobs("client", [fx.client.readmeOid], async () => 1);
-    assert.equal(s.ledger.size("client", fx.client.readmeOid), "# client\nchanged\n".length);
+    assert.equal(s.ledger.get("client", fx.client.readmeOid)?.size, "# client\nchanged\n".length);
   });
 
   test("the temporary repository streams large packs instead of holding them in memory", async (t) => {
@@ -519,5 +519,53 @@ describe("temporary repository helper", () => {
       runner.run(s.repos.dir("client"), ["blame", "--porcelain", fx.client.second, "--", "README.md"]),
       /exited with \d+/,
     );
+  });
+});
+
+describe("batches with an unfetchable object", () => {
+  const BAD = "f".repeat(40);
+  const reals = () => [...new Set(manyOids["zq-ui"] ?? [])].slice(0, 3);
+
+  test("the batch is split, the fetchable objects are returned and only the failing one is remembered", async () => {
+    const s = await setup({ repo: "zq-ui" });
+    const [a = "", b = "", c = ""] = reals();
+    const order = [a, BAD, b, c];
+    const result = await s.blobs.withBlobs(
+      "zq-ui",
+      order,
+      async (paths, stats) => ({
+        texts: [a, b, c].map((oid) => read(paths, oid)),
+        failed: [...stats.failed.keys()],
+        fetched: stats.fetched,
+        hasBad: paths.has(BAD),
+      }),
+      { partial: true },
+    );
+    assert.match(result.texts[0] ?? "", /^zq-ui content \d+\n$/);
+    assert.deepEqual(result.failed, [BAD]);
+    assert.equal(result.fetched, 3);
+    assert.equal(result.hasBad, false);
+    const calls = s.fetchCalls();
+    assert.equal(calls.length, 5);
+    const occurrences = (oid: string) => calls.filter((call) => call.includes(oid)).length;
+    for (const oid of order) assert.ok(occurrences(oid) <= 3, `${oid} fetched ${occurrences(oid)} times`);
+    const again = await s.blobs.withBlobs("zq-ui", order, async (_paths, stats) => [...stats.failed.values()], {
+      partial: true,
+    });
+    assert.equal(s.fetchCalls().length, 5);
+    assert.match(again[0] ?? "", /failed recently, not retried yet/);
+    assert.deepEqual(readdirSync(s.scratchDir), []);
+  });
+
+  test("without partial results the failure is raised after the good objects have been cached", async () => {
+    const s = await setup({ repo: "zq-ui" });
+    const [a = "", b = ""] = reals();
+    await assert.rejects(
+      s.blobs.withBlobs("zq-ui", [a, BAD, b], async () => "never"),
+      (e) => e instanceof BlobFetchError && e.message.includes(`zq-ui ${BAD.slice(0, 10)}`),
+    );
+    const before = s.fetchCalls().length;
+    await s.blobs.withBlobs("zq-ui", [a, b], async (_paths, stats) => assert.equal(stats.hits, 2));
+    assert.equal(s.fetchCalls().length, before);
   });
 });

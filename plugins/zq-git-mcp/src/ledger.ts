@@ -1,12 +1,20 @@
-export interface SizeLedger {
-  size(repo: string, oid: string): number | undefined;
-  record(repo: string, oid: string, size: number): void;
+interface BlobMeta {
+  size: number;
+  binary?: boolean;
 }
 
-export function createMemorySizeLedger(): SizeLedger {
-  const sizes = new Map<string, number>();
+export interface BlobMetaLedger {
+  get(repo: string, oid: string): BlobMeta | undefined;
+  record(repo: string, oid: string, meta: BlobMeta): void;
+}
+
+export function createMemoryBlobMetaLedger(): BlobMetaLedger {
+  const metas = new Map<string, BlobMeta>();
   return {
-    size: (repo, oid) => sizes.get(`${repo}:${oid}`),
-    record: (repo, oid, size) => void sizes.set(`${repo}:${oid}`, size),
+    get: (repo, oid) => metas.get(`${repo}:${oid}`),
+    record(repo, oid, meta) {
+      const key = `${repo}:${oid}`;
+      metas.set(key, { ...metas.get(key), ...meta });
+    },
   };
 }

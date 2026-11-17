@@ -3,7 +3,7 @@ import { swallow } from "../../chassis/src/errors.ts";
 import { createMemoryAuditSink, type AuditSink } from "./audit.ts";
 import { createBlobStore } from "./blobs.ts";
 import { assertGitVersion } from "./git-version.ts";
-import { createMemorySizeLedger } from "./ledger.ts";
+import { createMemoryBlobMetaLedger } from "./ledger.ts";
 import { createBlobCache } from "./cache.ts";
 import type { Config } from "./config.ts";
 import { createDispatcher } from "./dispatch.ts";
@@ -56,6 +56,7 @@ export function createService(config: Config, deps: ServiceDeps = {}): Service {
         refreshMs: config.refreshMs,
         fetchTimeoutMs: config.fetchTimeoutMs,
       });
+      const ledger = createMemoryBlobMetaLedger();
       const blobs = createBlobStore({
         repos,
         runner,
@@ -63,16 +64,16 @@ export function createService(config: Config, deps: ServiceDeps = {}): Service {
         cache,
         fetches,
         bigFetches,
-        ledger: createMemorySizeLedger(),
+        ledger,
         fetchTimeoutMs: config.fetchTimeoutMs,
         noProgressMs: config.fetchNoProgressMs,
         failureTtlMs: config.fetchFailureTtlMs,
       });
       const dispatcher = createDispatcher({
         tools: TOOLS,
-        services: { repos, runner, blobs, cache },
-        audit,
+        services: { repos, runner, blobs, cache, ledger },
         truncateChars: config.truncateChars,
+        audit,
       });
       await scratch.sweep();
       await cache.scan();

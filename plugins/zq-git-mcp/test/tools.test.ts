@@ -48,7 +48,14 @@ describe("tool registry", () => {
   test("lists exactly the implemented read-only tools and no input takes a url or raw git arguments", async () => {
     const client = await h.connect();
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map((tool) => tool.name).sort(), ["get_commit", "list_commits", "list_repos"]);
+    assert.deepEqual(tools.map((tool) => tool.name).sort(), [
+      "blame",
+      "get_commit",
+      "get_diff",
+      "list_commits",
+      "list_repos",
+      "read_file",
+    ]);
     for (const tool of tools) {
       assert.doesNotMatch(tool.name, /write|push|commit_create|delete|merge|archive|clone/);
       const schema = tool.inputSchema as { additionalProperties?: boolean; properties?: Record<string, unknown> };

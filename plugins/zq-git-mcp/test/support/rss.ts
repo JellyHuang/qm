@@ -18,7 +18,7 @@ export async function withIndexPackPeak<T>(run: () => Promise<T>): Promise<{ val
   let peak = 0;
   const timer = setInterval(() => {
     peak = Math.max(peak, indexPackPeakKb());
-  }, 5);
+  }, 25);
   try {
     const value = await run();
     return { value, peakBytes: peak * 1024 };

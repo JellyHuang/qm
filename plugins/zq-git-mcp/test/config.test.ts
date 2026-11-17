@@ -25,7 +25,7 @@ test("a complete environment loads with the documented defaults", () => {
   assert.equal(config.maxHeavyJobs, 2);
   assert.equal(config.port, 8765);
   assert.equal(config.maxBigFetches, 2);
-  assert.equal(config.fetchNoProgressMs, 120_000);
+  assert.equal(config.fetchNoProgressMs, 180_000);
   assert.equal(config.fetchFailureTtlMs, 60_000);
   assert.equal(config.fetchTimeoutMs, 30 * 60_000);
 });

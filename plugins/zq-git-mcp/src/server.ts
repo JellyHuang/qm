@@ -26,11 +26,20 @@ function callerLabel(header: string | string[] | undefined): string {
 }
 
 async function serveMcp(dispatcher: Dispatcher, req: IncomingMessage, res: ServerResponse, body: unknown) {
+  const closed = new AbortController();
+  res.on("close", () => {
+    if (!res.writableFinished) closed.abort(new Error("request closed by the caller"));
+  });
   const caller = callerLabel(req.headers[CALLER_HEADER]);
   const server = new Server({ name: "zq-git-mcp", version: "0.1.0" }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: dispatcher.list() }));
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const reply = await dispatcher.call(request.params.name, request.params.arguments, caller);
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+    const reply = await dispatcher.call(
+      request.params.name,
+      request.params.arguments,
+      caller,
+      AbortSignal.any([closed.signal, extra.signal]),
+    );
     return { content: [{ type: "text" as const, text: reply.text }], isError: reply.isError };
   });
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });

@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { BlobMetaLedger } from "../ledger.ts";
 import type { BlobCache } from "../cache.ts";
 import type { BlobStore } from "../blobs.ts";
 import type { Repos } from "../repos.ts";
@@ -10,10 +11,13 @@ export interface Services {
   runner: GitRunner;
   blobs: BlobStore;
   cache: BlobCache;
+  ledger: BlobMetaLedger;
 }
 
 export interface ToolContext extends Services {
   caller: string;
+  signal: AbortSignal;
+  truncateChars: number;
   state: { cacheHit: boolean };
   git(repo: GitRepo, args: readonly string[], opts?: GitRunOptions): Promise<GitOutput>;
 }

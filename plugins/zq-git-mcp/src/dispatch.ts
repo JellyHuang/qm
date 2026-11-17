@@ -20,7 +20,7 @@ interface ToolReply {
 
 export interface Dispatcher {
   list(): ToolListing[];
-  call(name: string, rawArgs: unknown, caller: string): Promise<ToolReply>;
+  call(name: string, rawArgs: unknown, caller: string, signal?: AbortSignal): Promise<ToolReply>;
 }
 
 export interface DispatcherOptions {
@@ -81,13 +81,15 @@ export function createDispatcher(options: DispatcherOptions): Dispatcher {
         const { $schema: _schema, ...inputSchema } = z.toJSONSchema(tool.input) as Record<string, unknown>;
         return { name: tool.name, description: tool.description, inputSchema };
       }),
-    async call(name, rawArgs, caller) {
+    async call(name, rawArgs, caller, signal = new AbortController().signal) {
       const started = now();
       const ctx: ToolContext = {
         ...services,
         caller,
+        signal,
+        truncateChars,
         state: { cacheHit: false },
-        git: (repo, args, opts) => services.runner.run(services.repos.dir(repo), args, opts),
+        git: (repo, args, opts) => services.runner.run(services.repos.dir(repo), args, { signal, ...opts }),
       };
       let reply: ToolReply;
       let result: AuditResult = "ok";

@@ -51,7 +51,7 @@ const schema = z
     maxFetches: count(1, 4),
     maxHeavyJobs: count(1, 2),
     maxBigFetches: count(1, 2),
-    fetchNoProgressMs: count(1000, 120_000),
+    fetchNoProgressMs: count(1000, 180_000),
     fetchFailureTtlMs: count(0, 60_000),
     refreshMs: count(0, 60_000),
     fetchTimeoutMs: count(1000, 30 * 60_000),

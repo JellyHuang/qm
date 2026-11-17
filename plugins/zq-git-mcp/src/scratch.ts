@@ -30,7 +30,7 @@ export interface ScratchOptions {
 }
 
 export interface Scratch {
-  job<T>(fn: (job: ScratchJob) => Promise<T>): Promise<T>;
+  job<T>(fn: (job: ScratchJob) => Promise<T>, external?: AbortSignal): Promise<T>;
   sweep(): Promise<number>;
   enforceFloor(): Promise<void>;
   usedBytes(): Promise<number>;
@@ -70,17 +70,22 @@ export function createScratch(options: ScratchOptions): Scratch {
   }
 
   return {
-    job(fn) {
+    job(fn, external) {
       return heavy.run(async () => {
+        external?.throwIfAborted();
         await mkdir(dir, { recursive: true });
         await admit();
         const jobDir = join(dir, `${pid}-${randomUUID()}`);
         await mkdir(jobDir);
         const entry = { dir: jobDir, controller: new AbortController() };
         active.push(entry);
+        const onAbort = () => entry.controller.abort(external?.reason);
+        external?.addEventListener("abort", onAbort, { once: true });
+        if (external?.aborted) onAbort();
         try {
           return await fn({ dir: jobDir, signal: entry.controller.signal });
         } finally {
+          external?.removeEventListener("abort", onAbort);
           active.splice(active.indexOf(entry), 1);
           await rm(jobDir, { recursive: true, force: true });
         }

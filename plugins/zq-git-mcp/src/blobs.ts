@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { errMessage } from "../../chassis/src/errors.ts";
 import type { BlobCache, CacheLease } from "./cache.ts";
 import { dirSize } from "./fs-util.ts";
-import type { SizeLedger } from "./ledger.ts";
+import type { BlobMetaLedger } from "./ledger.ts";
 import type { Limiter } from "./limiter.ts";
 import type { Repos } from "./repos.ts";
 import type { GitOutput, GitRunOptions, GitRunner } from "./runner.ts";
@@ -14,13 +14,22 @@ import { checkOid, checkRepo, type GitRepo } from "./validate.ts";
 interface BlobStats {
   hits: number;
   fetched: number;
+  failed: ReadonlyMap<string, string>;
 }
 
 interface TempRepo {
+  dir: string;
   gitDir: string;
-  fetch(oids: readonly string[]): Promise<void>;
+  fetch(oids: readonly string[]): Promise<Map<string, string>>;
   git(args: readonly string[], opts?: GitRunOptions): Promise<GitOutput>;
+  local(args: readonly string[], opts?: GitRunOptions): Promise<GitOutput>;
+  sizes(oids: readonly string[]): Promise<Map<string, number>>;
   lazyFetches(): Promise<number>;
+}
+
+interface CallOptions {
+  signal?: AbortSignal;
+  partial?: boolean;
 }
 
 export interface BlobStore {
@@ -28,8 +37,9 @@ export interface BlobStore {
     repo: string,
     oids: readonly string[],
     fn: (paths: ReadonlyMap<string, string>, stats: BlobStats) => Promise<T>,
+    options?: CallOptions,
   ): Promise<T>;
-  withTempRepo<T>(repo: string, fn: (temp: TempRepo) => Promise<T>): Promise<T>;
+  withTempRepo<T>(repo: string, fn: (temp: TempRepo) => Promise<T>, options?: { signal?: AbortSignal }): Promise<T>;
 }
 
 export interface BlobStoreOptions {
@@ -39,7 +49,7 @@ export interface BlobStoreOptions {
   cache: BlobCache;
   fetches: Limiter;
   bigFetches: Limiter;
-  ledger: SizeLedger;
+  ledger: BlobMetaLedger;
   fetchTimeoutMs: number;
   noProgressMs: number;
   failureTtlMs: number;
@@ -60,10 +70,12 @@ const FETCH_BATCH = 100;
 const SMALL_BLOB_BYTES = 1024 * 1024;
 const BIG_FILE_THRESHOLD = "1m";
 const LAZY_FETCH_TRACE = /run_command:.*\bfetch\b.*--stdin/;
+const UNDIVISIBLE = /^(no progress|git timed out)/;
 
 interface Acquired {
   leases: Map<string, CacheLease>;
   paths: Map<string, string>;
+  failed: Map<string, string>;
 }
 
 export function createBlobStore(options: BlobStoreOptions): BlobStore {
@@ -77,18 +89,23 @@ export function createBlobStore(options: BlobStoreOptions): BlobStore {
 
   const keyOf = (repo: string, oid: string) => `${repo}:${oid}`;
 
-  function describe(repo: string, oids: readonly string[], message: string): string {
-    const more = oids.length > 1 ? ` (+${oids.length - 1} more)` : "";
-    return `fetch failed for ${repo} ${(oids[0] ?? "").slice(0, 10)}${more}: ${message}`;
+  function describe(repo: string, oid: string, message: string): string {
+    return `fetch failed for ${repo} ${oid.slice(0, 10)}: ${message}`;
   }
 
-  function refuseRecentFailures(repo: string, oids: readonly string[]): void {
-    for (const oid of oids) {
-      const entry = failed.get(keyOf(repo, oid));
-      if (!entry) continue;
-      if (entry.until <= now()) failed.delete(keyOf(repo, oid));
-      else throw new BlobFetchError(describe(repo, [oid], `failed recently, not retried yet: ${entry.message}`));
+  function recentFailure(repo: string, oid: string): string | undefined {
+    const entry = failed.get(keyOf(repo, oid));
+    if (!entry) return undefined;
+    if (entry.until <= now()) {
+      failed.delete(keyOf(repo, oid));
+      return undefined;
     }
+    return `failed recently, not retried yet: ${entry.message}`;
+  }
+
+  function firstFailure(repo: string, problems: ReadonlyMap<string, string>): BlobFetchError | undefined {
+    const [first] = problems;
+    return first ? new BlobFetchError(describe(repo, first[0], first[1])) : undefined;
   }
 
   async function prepareTempRepo(repo: GitRepo, gitDir: string, signal: AbortSignal) {
@@ -126,43 +143,66 @@ export function createBlobStore(options: BlobStoreOptions): BlobStore {
     }
   }
 
-  async function guardedFetch(repo: GitRepo, gitDir: string, dir: string, oids: readonly string[], job: ScratchJob) {
-    refuseRecentFailures(repo, oids);
-    try {
-      await watched(dir, job.signal, (signal) =>
-        runner.run(
-          gitDir,
-          [
-            "-c",
-            "fetch.negotiationAlgorithm=noop",
-            "fetch",
-            "--no-tags",
-            "--no-write-fetch-head",
-            "--quiet",
-            "origin",
-            ...oids,
-          ],
-          {
-            remote: true,
-            timeoutMs: fetchTimeoutMs,
-            signal,
-          },
-        ),
-      );
-    } catch (e) {
-      if (e instanceof DiskSpaceLowError) throw e;
-      const message = errMessage(e);
-      for (const oid of oids) failed.set(keyOf(repo, oid), { until: now() + options.failureTtlMs, message });
-      throw new BlobFetchError(describe(repo, oids, message), { cause: e });
-    }
+  async function fetchResolving(
+    repo: GitRepo,
+    gitDir: string,
+    dir: string,
+    oids: readonly string[],
+    job: ScratchJob,
+  ): Promise<Map<string, string>> {
+    const problems = new Map<string, string>();
+    const attempt = async (list: readonly string[]): Promise<void> => {
+      const todo: string[] = [];
+      for (const oid of list) {
+        const recent = recentFailure(repo, oid);
+        if (recent) problems.set(oid, recent);
+        else todo.push(oid);
+      }
+      if (todo.length === 0) return;
+      try {
+        await watched(dir, job.signal, (signal) =>
+          runner.run(
+            gitDir,
+            [
+              "-c",
+              "fetch.negotiationAlgorithm=noop",
+              "fetch",
+              "--no-tags",
+              "--no-write-fetch-head",
+              "--quiet",
+              "origin",
+              ...todo,
+            ],
+            { remote: true, timeoutMs: fetchTimeoutMs, signal },
+          ),
+        );
+      } catch (e) {
+        if (job.signal.aborted || e instanceof DiskSpaceLowError) throw e;
+        const message = errMessage(e);
+        if (todo.length > 1 && !UNDIVISIBLE.test(message)) {
+          const mid = Math.ceil(todo.length / 2);
+          await attempt(todo.slice(0, mid));
+          await attempt(todo.slice(mid));
+          return;
+        }
+        for (const oid of todo) {
+          failed.set(keyOf(repo, oid), { until: now() + options.failureTtlMs, message });
+          problems.set(oid, message);
+        }
+      }
+    };
+    await attempt(oids);
+    return problems;
   }
 
   async function fetchBatch(repo: GitRepo, oids: string[], dir: string, job: ScratchJob, got: Acquired) {
     const gitDir = join(dir, "git");
     await prepareTempRepo(repo, gitDir, job.signal);
-    await guardedFetch(repo, gitDir, dir, oids, job);
+    for (const [oid, message] of await fetchResolving(repo, gitDir, dir, oids, job)) got.failed.set(oid, message);
+    const present = oids.filter((oid) => !got.failed.has(oid));
+    if (present.length === 0) return;
     const checked = await runner.run(gitDir, ["cat-file", "--batch-check"], {
-      input: `${oids.join("\n")}\n`,
+      input: `${present.join("\n")}\n`,
       signal: job.signal,
     });
     const sizes = new Map<string, number>();
@@ -170,9 +210,9 @@ export function createBlobStore(options: BlobStoreOptions): BlobStore {
       const [oid = "", type = "", size = ""] = line.split(" ");
       if (type !== "blob") throw new Error(`object ${oid} is not a blob in ${repo}`);
       sizes.set(oid, Number(size));
-      ledger.record(repo, oid, Number(size));
+      ledger.record(repo, oid, { size: Number(size) });
     }
-    for (const oid of oids) {
+    for (const oid of present) {
       const size = sizes.get(oid);
       if (size === undefined) throw new Error(`object ${oid} was not fetched for ${repo}`);
       const keep = cache.keepable(size);
@@ -180,6 +220,7 @@ export function createBlobStore(options: BlobStoreOptions): BlobStore {
       try {
         const out = await runner.run(gitDir, ["cat-file", "blob", oid], {
           sink: createWriteStream(target),
+          timeoutMs: fetchTimeoutMs,
           signal: job.signal,
         });
         if (out.bytes !== size) throw new Error(`object ${oid} read ${out.bytes} of ${size} bytes`);
@@ -204,8 +245,7 @@ export function createBlobStore(options: BlobStoreOptions): BlobStore {
         fetches.run(async () => {
           const dir = join(job.dir, `batch-${i}`);
           await mkdir(dir, { recursive: true });
-          const known = batch.map((oid) => ledger.size(repo, oid));
-          const small = known.every((size) => size !== undefined && size <= smallBytes);
+          const small = batch.every((oid) => (ledger.get(repo, oid)?.size ?? Infinity) <= smallBytes);
           const run = () => fetchBatch(repo, batch, dir, job, got);
           await (small ? run() : bigFetches.run(run));
           await rm(join(dir, "git"), { recursive: true, force: true });
@@ -254,24 +294,26 @@ export function createBlobStore(options: BlobStoreOptions): BlobStore {
   }
 
   return {
-    async withBlobs(repoName, oids, fn) {
+    async withBlobs(repoName, oids, fn, callOptions = {}) {
       const repo = checkRepo(repoName);
       const unique = [...new Set(oids.map(checkOid))];
-      const got: Acquired = { leases: new Map(), paths: new Map() };
+      const got: Acquired = { leases: new Map(), paths: new Map(), failed: new Map() };
       try {
         const missing = await leaseAll(unique, got);
         const hits = unique.length - missing.length;
-        if (missing.length === 0) return await fn(got.paths, { hits, fetched: 0 });
-        refuseRecentFailures(repo, missing);
+        const stats = (fetched: number): BlobStats => ({ hits, fetched, failed: got.failed });
+        if (missing.length === 0) return await fn(got.paths, stats(0));
         return await scratch.job(async (job) => {
           await acquire(repo, missing, job, got);
-          return fn(got.paths, { hits, fetched: missing.length });
-        });
+          const problem = callOptions.partial ? undefined : firstFailure(repo, got.failed);
+          if (problem) throw problem;
+          return fn(got.paths, stats(missing.length - got.failed.size));
+        }, callOptions.signal);
       } finally {
         for (const lease of got.leases.values()) lease.release();
       }
     },
-    async withTempRepo(repoName, fn) {
+    async withTempRepo(repoName, fn, callOptions = {}) {
       const repo = checkRepo(repoName);
       return scratch.job(async (job) => {
         const dir = join(job.dir, "temp");
@@ -280,16 +322,41 @@ export function createBlobStore(options: BlobStoreOptions): BlobStore {
         await mkdir(dir, { recursive: true });
         await prepareTempRepo(repo, gitDir, job.signal);
         return fn({
+          dir,
           gitDir,
-          fetch: (oids) => guardedFetch(repo, gitDir, dir, oids.map(checkOid), job),
+          async fetch(oids) {
+            const unique = [...new Set(oids.map(checkOid))];
+            const problems = new Map<string, string>();
+            for (let i = 0; i < unique.length; i += batchSize)
+              for (const [oid, message] of await fetches.run(() =>
+                fetchResolving(repo, gitDir, dir, unique.slice(i, i + batchSize), job),
+              ))
+                problems.set(oid, message);
+            return problems;
+          },
           git: (args, opts = {}) =>
             runner.run(gitDir, args, { remote: true, timeoutMs: fetchTimeoutMs, signal: job.signal, trace, ...opts }),
+          local: (args, opts = {}) =>
+            runner.run(gitDir, args, { timeoutMs: fetchTimeoutMs, signal: job.signal, ...opts }),
+          async sizes(oids) {
+            const sizes = new Map<string, number>();
+            if (oids.length === 0) return sizes;
+            const out = await runner.run(gitDir, ["cat-file", "--batch-check"], {
+              input: `${oids.map(checkOid).join("\n")}\n`,
+              signal: job.signal,
+            });
+            for (const line of out.stdout.toString("utf8").split("\n").filter(Boolean)) {
+              const [oid = "", type = "", size = ""] = line.split(" ");
+              if (type === "blob") sizes.set(oid, Number(size));
+            }
+            return sizes;
+          },
           async lazyFetches() {
             const log = await readFile(trace, "utf8").catch(() => "");
             return log.split("\n").filter((line) => LAZY_FETCH_TRACE.test(line)).length;
           },
         });
-      });
+      }, callOptions.signal);
     },
   };
 }

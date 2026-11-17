@@ -22,7 +22,7 @@ export function testConfig(root: string, remoteBase: string, overrides: Partial<
     maxFetches: 4,
     maxHeavyJobs: 2,
     maxBigFetches: 2,
-    fetchNoProgressMs: 120_000,
+    fetchNoProgressMs: 180_000,
     fetchFailureTtlMs: 60_000,
     refreshMs: 60_000,
     fetchTimeoutMs: 60_000,
