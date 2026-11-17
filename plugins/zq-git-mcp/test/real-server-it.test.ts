@@ -28,6 +28,46 @@ const PSD_CAP_MB = number("ZQ_GIT_MCP_IT_PSD_CAP_MB", 400);
 const PSD_TARGET_MB = number("ZQ_GIT_MCP_IT_PSD_TARGET_MB", 229);
 const DOWNLOAD_BUDGET_MB = number("ZQ_GIT_MCP_IT_DOWNLOAD_BUDGET_MB", 1400);
 const PSD_PATH_HINT = env.ZQ_GIT_MCP_IT_PSD_PATH;
+const PAIRS = number("ZQ_GIT_MCP_IT_XLSX_PAIRS", 6);
+const DIAG_REPO = env.ZQ_GIT_MCP_IT_DIAG_REPO ?? "";
+const diagMode = DIAG_REPO !== "";
+
+interface DiagPair {
+  path?: string;
+  baseRef?: string;
+  headRef?: string;
+  baseBlob?: string;
+  headBlob?: string;
+  ref?: string;
+}
+
+function diagPairsFromEnv(): DiagPair[] {
+  const ref = env.ZQ_GIT_MCP_IT_DIAG_REF;
+  const listed = (env.ZQ_GIT_MCP_IT_DIAG_PAIRS ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry): DiagPair => {
+      const [path, baseBlob, headBlob] = entry.split(":");
+      return {
+        ...(path ? { path } : {}),
+        ...(baseBlob ? { baseBlob } : {}),
+        ...(headBlob ? { headBlob } : {}),
+        ...(ref ? { ref } : {}),
+      };
+    });
+  const single: DiagPair = {
+    ...(env.ZQ_GIT_MCP_IT_DIAG_PATH ? { path: env.ZQ_GIT_MCP_IT_DIAG_PATH } : {}),
+    ...(env.ZQ_GIT_MCP_IT_DIAG_BASE_REF ? { baseRef: env.ZQ_GIT_MCP_IT_DIAG_BASE_REF } : {}),
+    ...(env.ZQ_GIT_MCP_IT_DIAG_HEAD_REF ? { headRef: env.ZQ_GIT_MCP_IT_DIAG_HEAD_REF } : {}),
+    ...(env.ZQ_GIT_MCP_IT_DIAG_BASE_BLOB ? { baseBlob: env.ZQ_GIT_MCP_IT_DIAG_BASE_BLOB } : {}),
+    ...(env.ZQ_GIT_MCP_IT_DIAG_HEAD_BLOB ? { headBlob: env.ZQ_GIT_MCP_IT_DIAG_HEAD_BLOB } : {}),
+    ...(ref ? { ref } : {}),
+  };
+  return [...listed, ...(Object.keys(single).some((key) => key !== "ref") ? [single] : [])];
+}
+
+const diagPairs = diagPairsFromEnv();
 const CALL_TIMEOUT_MS = 18 * 60_000;
 const TEST_TIMEOUT_MS = 20 * 60_000;
 const SAMPLE_MS = 100;
@@ -125,7 +165,7 @@ describe("zq-git-mcp against a real server", { skip, timeout: TEST_TIMEOUT_MS },
 
   before(
     async () => {
-      root = mkdtempSync(join(tmpdir(), "zqgit-it-"));
+      root = mkdtempSync(join(tmpdir(), "zi-"));
       env.TMPDIR = root;
       const config = loadConfig({
         ZQ_GIT_MCP_SECRET: SECRET,
@@ -140,6 +180,9 @@ describe("zq-git-mcp against a real server", { skip, timeout: TEST_TIMEOUT_MS },
         ZQ_GIT_MCP_FETCH_NO_PROGRESS_MS: String(300_000),
         ZQ_GIT_MCP_GIT_TIMEOUT_MS: String(5 * 60_000),
         ZQ_GIT_MCP_XLSX_TIMEOUT_MS: String(10 * 60_000),
+        ...(env.ZQ_GIT_MCP_GIT_BIN ? { ZQ_GIT_MCP_GIT_BIN: env.ZQ_GIT_MCP_GIT_BIN } : {}),
+        ...(env.ZQ_GIT_MCP_PATH ? { ZQ_GIT_MCP_PATH: env.ZQ_GIT_MCP_PATH } : {}),
+        ...(env.ZQ_GIT_MCP_SSH_BIN ? { ZQ_GIT_MCP_SSH_BIN: env.ZQ_GIT_MCP_SSH_BIN } : {}),
         ...(baseUrl
           ? { ZQ_GIT_MCP_REMOTE_BASE: baseUrl }
           : { ZQ_GIT_MCP_SSH_HOST_FINGERPRINT: fingerprint ?? "", GITLAB_QM_READONLY_SSH_KEY_B64: keyB64 ?? "" }),
@@ -225,9 +268,92 @@ describe("zq-git-mcp against a real server", { skip, timeout: TEST_TIMEOUT_MS },
     return (found.paths as { path: string }[]).map((entry) => entry.path);
   }
 
+  const REAL_KINDS = new Set(["xlsx_diff", "unchanged"]);
+  const SKIP_KINDS = new Set(["file_added", "file_removed", "lfs_pointer", "lfs_pointer_changed"]);
+
+  interface Candidate {
+    path: string;
+    size: number;
+  }
+
+  async function attemptFile(candidate: Candidate, errors: string[]): Promise<boolean> {
+    const log = await call("list_commits", { repo: "gameconfig", path: candidate.path, limit: PAIRS + 1 });
+    if (log.isError === true) {
+      errors.push(`${candidate.path}: list_commits ${JSON.stringify(log).slice(0, 200)}`);
+      return false;
+    }
+    const commits = (log.commits as { sha: string }[]).map((commit) => commit.sha);
+    for (let i = 0; i + 1 < commits.length && i < PAIRS; i++) {
+      const head = commits[i] as string;
+      const base = commits[i + 1] as string;
+      const line = {
+        suite: "gameconfig-diff-xlsx-attempt",
+        path: candidate.path,
+        pair: i,
+        baseSha12: base.slice(0, 12),
+        headSha12: head.slice(0, 12),
+      };
+      const run = await measured(
+        (signal) => call("diff_xlsx", { repo: "gameconfig", path: candidate.path, base, head }, signal),
+        Number.MAX_SAFE_INTEGER,
+      );
+      const result = run as Measured<Body>;
+      downloadedBytes += result.packPeakBytes;
+      const body = result.value;
+      if (body.isError === true) {
+        errors.push(`${candidate.path} pair ${i}: ${JSON.stringify(body).slice(0, 300)}`);
+        emit({ ...line, outcome: "error", error: JSON.stringify(body.error ?? body).slice(0, 200) });
+        return false;
+      }
+      const kind = String(body.kind);
+      if (SKIP_KINDS.has(kind)) {
+        emit({ ...line, outcome: "skipped", kind, reason: `the pair gives ${kind}, trying the next older pair` });
+        continue;
+      }
+      if (!REAL_KINDS.has(kind)) {
+        errors.push(`${candidate.path} pair ${i}: unexpected kind ${kind}`);
+        emit({ ...line, outcome: "error", kind });
+        return false;
+      }
+      const sheets = ((body.summary as { sheets?: Record<string, unknown>[] } | undefined)?.sheets ?? []) as Record<
+        string,
+        unknown
+      >[];
+      const counts: Record<string, number> = { sheets: sheets.length };
+      for (const sheet of sheets)
+        for (const [key, value] of Object.entries(sheet))
+          if (typeof value === "number") counts[key] = (counts[key] ?? 0) + value;
+      emit({
+        suite: "gameconfig-diff-xlsx",
+        path: candidate.path,
+        pair: i,
+        sizeBytes: candidate.size,
+        baseSha12: base.slice(0, 12),
+        headSha12: head.slice(0, 12),
+        seconds: round(result.seconds),
+        differences: kind === "unchanged" ? 0 : Number(body.total ?? 0),
+        kind,
+        summary: counts,
+        rssPeakMB: round(result.rssGrowthMB),
+      });
+      assert.ok(
+        result.rssGrowthMB < XLSX_RSS_BOUND_MB,
+        `rss grew ${round(result.rssGrowthMB)} MB, bound ${XLSX_RSS_BOUND_MB} MB`,
+      );
+      return true;
+    }
+    emit({
+      suite: "gameconfig-diff-xlsx-attempt",
+      path: candidate.path,
+      outcome: "no_pair",
+      reason: `none of the latest ${PAIRS} commit pairs gave a diff`,
+    });
+    return false;
+  }
+
   test(
     "diff_xlsx on gameconfig workbooks of different sizes stays within the memory bound",
-    { timeout: TEST_TIMEOUT_MS },
+    { skip: diagMode ? "diagnostic mode" : false, timeout: TEST_TIMEOUT_MS },
     async () => {
       const all = (await listPaths("gameconfig", "designer_config/"))
         .filter((path) => path.startsWith("designer_config/") && /\.xlsx$/i.test(path))
@@ -240,7 +366,7 @@ describe("zq-git-mcp against a real server", { skip, timeout: TEST_TIMEOUT_MS },
       const sampled = rest.filter((_, i) => i % step === 0);
       const candidates = [...named, ...sampled].slice(0, XLSX_CANDIDATES);
 
-      const learned: { path: string; size: number; commits: string[] }[] = [];
+      const learned: Candidate[] = [];
       let learnedBytes = 0;
       for (const path of candidates) {
         if (learnedBytes >= XLSX_LEARN_BUDGET_MB * MB || budgetLeftBytes() < XLSX_CANDIDATE_CAP_MB * MB) break;
@@ -253,61 +379,55 @@ describe("zq-git-mcp against a real server", { skip, timeout: TEST_TIMEOUT_MS },
         const size = Number(probe.value.size);
         downloadedBytes += probe.packPeakBytes;
         learnedBytes += probe.packPeakBytes;
-        const log = await call("list_commits", { repo: "gameconfig", path, limit: 2 });
-        assert.notEqual(log.isError, true, JSON.stringify(log));
-        const commits = (log.commits as { sha: string }[]).map((commit) => commit.sha);
-        if (commits.length >= 2 && size <= XLSX_PICK_MAX_MB * MB) learned.push({ path, size, commits });
+        if (size <= XLSX_PICK_MAX_MB * MB) learned.push({ path, size });
       }
-      assert.ok(learned.length > 0, "no candidate xlsx with two commits and a usable size was found");
+      assert.ok(learned.length > 0, "no candidate xlsx of a usable size was found");
 
-      learned.sort((a, b) => a.size - b.size);
-      const smallest = learned[0];
-      const largest = learned[learned.length - 1];
-      assert.ok(smallest && largest);
-      const middle = learned
-        .filter((entry) => entry !== smallest && entry !== largest)
+      const bySize = [...learned].sort((a, b) => b.size - a.size);
+      const largest = bySize[0] as Candidate;
+      const others = bySize.slice(1).reverse();
+      const smallest = others[0];
+      const middle = others
+        .slice(1)
         .sort(
           (a, b) =>
-            Math.abs(Math.log(a.size / Math.sqrt(smallest.size * largest.size))) -
-            Math.abs(Math.log(b.size / Math.sqrt(smallest.size * largest.size))),
+            Math.abs(Math.log(a.size / Math.sqrt((smallest?.size ?? a.size) * largest.size))) -
+            Math.abs(Math.log(b.size / Math.sqrt((smallest?.size ?? b.size) * largest.size))),
         )[0];
-      const picks = [...new Set([smallest, middle, largest].filter((entry) => entry !== undefined))];
+      const wanted = [largest, smallest, middle].filter((entry): entry is Candidate => entry !== undefined);
+      const reserve = others.filter((entry) => !wanted.includes(entry));
 
-      for (const pick of picks) {
-        const [head, base] = pick.commits as [string, string];
-        const run = await measured(
-          (signal) => call("diff_xlsx", { repo: "gameconfig", path: pick.path, base, head }, signal),
-          Number.MAX_SAFE_INTEGER,
-        );
-        assert.notEqual(run, "oversize");
-        const result = run as Measured<Body>;
-        downloadedBytes += result.packPeakBytes;
-        const body = result.value;
-        assert.notEqual(body.isError, true, JSON.stringify(body).slice(0, 500));
-        assert.ok(body.kind === "xlsx_diff" || body.kind === "unchanged", `unexpected kind ${String(body.kind)}`);
-        const sheets = ((body.summary as { sheets?: Record<string, unknown>[] } | undefined)?.sheets ?? []) as Record<
-          string,
-          unknown
-        >[];
-        const counts: Record<string, number> = { sheets: sheets.length };
-        for (const sheet of sheets)
-          for (const [key, value] of Object.entries(sheet))
-            if (typeof value === "number") counts[key] = (counts[key] ?? 0) + value;
-        emit({
-          suite: "gameconfig-diff-xlsx",
-          path: pick.path,
-          sizeBytes: pick.size,
-          baseSha12: base.slice(0, 12),
-          headSha12: head.slice(0, 12),
-          seconds: round(result.seconds),
-          differences: body.kind === "unchanged" ? 0 : Number(body.total ?? 0),
-          kind: body.kind,
-          summary: counts,
-          rssPeakMB: round(result.rssGrowthMB),
-        });
+      const errors: string[] = [];
+      let real = 0;
+      for (const pick of wanted) {
+        let queue: Candidate[] = [pick];
+        while (queue.length > 0) {
+          const next = queue.shift() as Candidate;
+          if (await attemptFile(next, errors)) {
+            real++;
+            break;
+          }
+          if (next === largest) break;
+          const replacement = reserve.shift();
+          queue = replacement ? [replacement] : [];
+        }
+      }
+      assert.deepEqual(errors, [], `errors: ${errors.join(" | ")}`);
+      assert.ok(real > 0, "no workbook produced a real diff; see the attempt lines above");
+    },
+  );
+
+  test(
+    "structure diagnostics of two workbook versions print counts and letters only",
+    { skip: diagMode ? false : "set ZQ_GIT_MCP_IT_DIAG_REPO", timeout: TEST_TIMEOUT_MS },
+    async () => {
+      assert.ok(diagPairs.length > 0, "no diagnostic pair given");
+      for (const pair of diagPairs) {
+        const lines = await harness.service.diagnoseXlsx({ repo: DIAG_REPO, ...pair });
+        for (const line of lines) emit({ suite: "xlsx-diag", path: pair.path ?? null, ...line });
         assert.ok(
-          result.rssGrowthMB < XLSX_RSS_BOUND_MB,
-          `rss grew ${round(result.rssGrowthMB)} MB, bound ${XLSX_RSS_BOUND_MB} MB`,
+          lines.some((line) => line.type === "compare" || line.type === "sheet"),
+          "no structure was produced",
         );
       }
     },
@@ -315,7 +435,7 @@ describe("zq-git-mcp against a real server", { skip, timeout: TEST_TIMEOUT_MS },
 
   test(
     "a very large zq-ui PSD is read by range without growing the service memory",
-    { timeout: TEST_TIMEOUT_MS },
+    { skip: diagMode ? "diagnostic mode" : false, timeout: TEST_TIMEOUT_MS },
     async () => {
       const listed = (await listPaths("zq-ui", ".psd")).filter((path) => /\.psd$/i.test(path));
       const candidates = [

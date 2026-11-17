@@ -42,3 +42,23 @@ ZQ_GIT_MCP_IT_KEY_B64=... ZQ_GIT_MCP_IT_HOST_FINGERPRINT=SHA256:... node --test 
 ```
 
 Requires git 2.44 or newer and node 24 or newer.
+
+## Changes after the first real run
+
+- Temporary directories are short (`/tmp/zqit.<pid>` from the wrapper, `zi-*` from the test) because the ssh control socket path must stay under 107 characters.
+- `ZQ_GIT_MCP_GIT_BIN`, `ZQ_GIT_MCP_PATH` and `ZQ_GIT_MCP_SSH_BIN` are passed through to the service, so a git built under `/opt` can be used.
+- The xlsx test now walks back through the commits of a path. For every file it tries up to `ZQ_GIT_MCP_IT_XLSX_PAIRS` (default 6) pairs of consecutive commits and moves on when a pair gives `file_added`, `file_removed` or an LFS result. Only `xlsx_diff` and `unchanged` count as results. Every attempted pair prints one JSON line, with `suite` `gameconfig-diff-xlsx-attempt` for skipped or failed pairs and `gameconfig-diff-xlsx` for a real one. The largest candidate workbook is always attempted first. The test fails if any call returned an error or if no real diff was produced.
+
+## Structure diagnostics (no content)
+
+`ZQ_GIT_MCP_IT_DIAG_REPO` switches the file to a read-only diagnostic: the other tests are skipped and, for each pair, the same parse pipeline as `diff_xlsx` runs and prints one JSON line per workbook, sheet and side with `suite` `xlsx-diag`. The lines contain sheet names, counts, column letters and the reasons of the header decision, never a cell value or a header text.
+
+| Variable                                            | Meaning                                                                                                                                                  |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ZQ_GIT_MCP_IT_DIAG_REPO`                           | Repository, for example `gameconfig`                                                                                                                     |
+| `ZQ_GIT_MCP_IT_DIAG_PAIRS`                          | `path:baseBlob:headBlob`, comma separated. Blob ids are 7 to 40 hex digits; a short id is resolved from the history of the path, so the path is required |
+| `ZQ_GIT_MCP_IT_DIAG_REF`                            | Ref whose history is used to resolve short blob ids, default `main`                                                                                      |
+| `ZQ_GIT_MCP_IT_DIAG_PATH`, `_BASE_REF`, `_HEAD_REF` | Alternative: one path and two refs                                                                                                                       |
+| `ZQ_GIT_MCP_IT_DIAG_BASE_BLOB`, `_HEAD_BLOB`        | Alternative: two full or short blob ids (a short id needs `_PATH`)                                                                                       |
+
+Through the wrapper: `ZQ_MCP_IT_MODE=diag ZQ_MCP_IT_DIAG_REPO=gameconfig ZQ_MCP_IT_DIAG_PAIRS=<path>:<base>:<head>[,...] scripts/zq-git-mcp-real-it.sh`.
