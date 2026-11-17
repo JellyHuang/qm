@@ -70,6 +70,7 @@ export interface Assembled {
   date: Date;
   patch: string | null;
   resultTree: string | null;
+  resultCommit: string | null;
   changes: ChangeEntry[];
   payloads: Payload[];
   warnings: string[];
@@ -353,6 +354,7 @@ export async function assembleChange(
 
   let patch: string | null = null;
   let resultTree: string | null = null;
+  let resultCommit: string | null = null;
   if (textChanges.length > 0) {
     const messageFile = join(scratch, "message.txt");
     await writeFile(messageFile, message);
@@ -360,7 +362,7 @@ export async function assembleChange(
       cwd: build,
       env: dateEnv,
     });
-    const resultCommit = (await git.run("rev-parse", ["HEAD"], { cwd: build })).toString("utf8").trim();
+    resultCommit = (await git.run("rev-parse", ["HEAD"], { cwd: build })).toString("utf8").trim();
     resultTree = (await git.run("rev-parse", ["HEAD^{tree}"], { cwd: build })).toString("utf8").trim();
     const patchDir = join(scratch, "patches");
     await mkdir(patchDir);
@@ -397,5 +399,5 @@ export async function assembleChange(
         "applying the patch to the base commit gave a different commit message",
       );
   }
-  return { ticket, subject, message, date, patch, resultTree, changes: entries, payloads, warnings };
+  return { ticket, subject, message, date, patch, resultTree, resultCommit, changes: entries, payloads, warnings };
 }

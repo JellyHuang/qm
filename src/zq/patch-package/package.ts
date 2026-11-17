@@ -6,6 +6,7 @@ import { APPLY_CMD, APPLY_PS1, renderReadme } from "./readme.ts";
 import { renderApplyScript, withoutManifestLine, type ScriptData } from "./apply-script.ts";
 import { createPackageDir, describeFile, gitBlobId, removeQuietly, sha256Hex, type PackageFile } from "./files.ts";
 import { PatchPackageError } from "./settings.ts";
+import { packageZip, type PackageZip } from "./zip.ts";
 import { assembleChange, type AssembleOptions, type ChangeEntry, type ChangeInput } from "./text.ts";
 
 export interface PatchPackageInput extends ChangeInput {
@@ -17,12 +18,15 @@ export interface PatchPackageInput extends ChangeInput {
 export interface PatchPackage {
   dir: string;
   id: string;
+  ticket: string;
+  repo?: string;
   manifestPath: string;
   baseCommit: string;
   resultTree: string | null;
+  resultCommit: string | null;
   files: (PackageFile & { path: string })[];
   changes: ChangeEntry[];
-  zipSizeBound: number;
+  zip: PackageZip;
   manifest: Record<string, unknown>;
 }
 
@@ -36,18 +40,16 @@ interface Comparison {
 
 const MANIFEST_SCHEMA = 2;
 const GENERATED_BY = "qm zq patch-package 2";
-const ZIP_ENTRY_OVERHEAD = 76;
-const ZIP_END_RECORD = 22;
+
+function tooLarge(bytes: number, cap: number): PatchPackageError {
+  return new PatchPackageError(
+    "too_large",
+    `the package is ${bytes} bytes, over the limit of ${cap} (ZQ_PATCH_MAX_PACKAGE_BYTES); ask for another delivery route`,
+  );
+}
 
 function isoSeconds(date: Date): string {
   return new Date(Math.floor(date.getTime() / 1000) * 1000).toISOString().replace(".000Z", "Z");
-}
-
-function zipSizeBound(files: readonly { name: string; bytes: number }[]): number {
-  return (
-    files.reduce((sum, file) => sum + file.bytes + ZIP_ENTRY_OVERHEAD + 2 * Buffer.byteLength(file.name), 0) +
-    ZIP_END_RECORD
-  );
 }
 
 export async function buildPatchPackage(input: PatchPackageInput, options: AssembleOptions): Promise<PatchPackage> {
@@ -286,35 +288,32 @@ export async function buildPatchPackage(input: PatchPackageInput, options: Assem
     await writeFile(scriptPath, script);
     await chmod(scriptPath, 0o755);
 
-    const all = [
-      ...described.map((file) => ({ name: file.name, bytes: file.bytes })),
-      { name: "apply.sh", bytes: Buffer.byteLength(script) },
-      { name: "manifest.json", bytes: manifestBytes.length },
-    ];
-    const bound = zipSizeBound(all);
-    if (bound > settings.maxPackageBytes)
-      throw new PatchPackageError(
-        "too_large",
-        `the package would be about ${bound} bytes, over the limit of ${settings.maxPackageBytes} (ZQ_PATCH_MAX_PACKAGE_BYTES); ask for another delivery route`,
-      );
+    const names = [...described.map((file) => file.name), "apply.sh", "manifest.json"].sort();
     const files = await Promise.all(
-      all
-        .map((file) => file.name)
-        .sort()
-        .map(async (name) => ({
-          ...(await describeFile(dir, name)),
-          path: join(dir, name),
-        })),
+      names.map(async (name) => ({
+        ...(await describeFile(dir, name)),
+        path: join(dir, name),
+      })),
     );
+    const total = files.reduce((sum, file) => sum + file.bytes, 0);
+    if (total > settings.maxPackageBytes) throw tooLarge(total, settings.maxPackageBytes);
+    const zip = packageZip(
+      id,
+      await Promise.all(files.map(async (file) => ({ name: file.name, bytes: await readFile(file.path) }))),
+    );
+    if (zip.bytes > settings.maxPackageBytes) throw tooLarge(zip.bytes, settings.maxPackageBytes);
     return {
       dir,
       id,
+      ticket: assembled.ticket,
+      ...(input.repo ? { repo: input.repo } : {}),
       manifestPath,
       baseCommit: input.baseCommit,
       resultTree: assembled.resultTree,
+      resultCommit: assembled.resultCommit,
       files,
       changes: assembled.changes,
-      zipSizeBound: bound,
+      zip,
       manifest,
     };
   } catch (e) {

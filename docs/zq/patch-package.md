@@ -1,6 +1,6 @@
 # Patch packages (library)
 
-Status: library only. Nothing in QM calls it, no agent tool exposes it, no delivery, retention table or setting beyond the ones listed under Settings exists, and nothing is switched on. It implements the "Patch packages" decision in `gitlab-mcp-v1.md`: QM never pushes, never opens a merge request and never writes to any GitLab remote; it hands the responsible person a package that they apply and commit themselves. The format is the one of `docs/zq-patch-package-phase4-design.md` (on `oa/spike-git`), as changed by the PM on 2026-11-17: the applier is author and committer, the commit goes on the current branch by default, and the AI marking is the trailer `AI-Generated: true`.
+Status: library only. Nothing in QM calls it, no agent tool exposes it, no delivery exists, and nothing is switched on. The builder also produces the deterministic zip (step 4b, below); keeping the zip and its record is `docs/zq/patch-package-retention.md`, off by default and not wired into startup. It implements the "Patch packages" decision in `gitlab-mcp-v1.md`: QM never pushes, never opens a merge request and never writes to any GitLab remote; it hands the responsible person a package that they apply and commit themselves. The format is the one of `docs/zq-patch-package-phase4-design.md` (on `oa/spike-git`), as changed by the PM on 2026-11-17: the applier is author and committer, the commit goes on the current branch by default, and the AI marking is the trailer `AI-Generated: true`.
 
 Everything is local. The code makes no network access, holds no credentials and runs only the git subcommands in `ALLOWED_GIT_SUBCOMMANDS` (`src/zq/patch-package/git.ts`): `init`, `rev-parse`, `read-tree`, `update-ref`, `add`, `apply`, `diff`, `cat-file`, `commit`, `format-patch`, `am`, `check-attr`. There is no `push`, `fetch`, `clone` or `remote`; scratch repositories are created with `git init` and borrow objects from the source repository through `objects/info/alternates`, so no remote can exist in them. The environment sets `GIT_ALLOW_PROTOCOL=none`, an empty global and system config and no hooks. Blob ids are computed in process (`gitBlobId`, tested against `git hash-object --no-filters`), so `hash-object` is not on the list.
 
@@ -20,7 +20,7 @@ buildPatchPackage(
 
 `reader` is the `BaseReader` (`stat(path)`, `bytes(path)`) used for the `.gitattributes` chain and the base blob of every changed path. The default reads the objects of `repoDir`; `createServiceReader(readFile)` in `reader.ts` is the adapter over the git MCP `read_file` tool.
 
-Steps: validate the ticket and message; stage the change in a scratch repository; refuse an empty change, submodules (mode 160000) and paths with control characters; decide for each path whether it is `text`, `binary` or `lfs` (next section); commit the text part with the message below; `git format-patch --binary --full-index --no-signature -M`; verify by `git am --3way --keep-cr --keep-non-patch` onto a second scratch repository at the base commit and compare the resulting tree and commit message with the intended ones; check that no path is in both parts; write the package, the manifest, the README and the scripts; refuse when the package is over `ZQ_PATCH_MAX_PACKAGE_BYTES`. Scratch directories are always removed; the package directory is removed on any failure.
+Steps: validate the ticket and message; stage the change in a scratch repository; refuse an empty change, submodules (mode 160000) and paths with control characters; decide for each path whether it is `text`, `binary` or `lfs` (next section); commit the text part with the message below; `git format-patch --binary --full-index --no-signature -M`; verify by `git am --3way --keep-cr --keep-non-patch` onto a second scratch repository at the base commit and compare the resulting tree and commit message with the intended ones; check that no path is in both parts; write the package, the manifest, the README and the scripts; refuse when the package is over `ZQ_PATCH_MAX_PACKAGE_BYTES` (first the sum of the file sizes, then the real zip). Scratch directories are always removed; the package directory is removed on any failure.
 
 The verification checks out only the touched paths (sparse checkout), so a huge repository costs only the changed files.
 
@@ -74,6 +74,15 @@ LFS deletions, pure renames and mode changes (same blob) stay in the text part. 
 ```
 
 The directory name is the ticket and the first 12 hex characters of the sha256 over the sorted lines `<name> <sha256>` of the patch and payload files: the same inputs give the same id. The same inputs and `commitDate` give a byte-identical package (patch, payloads, manifest, script).
+
+### The zip
+
+`PatchPackage.zip` is `{ name, sha256, bytes, data }`: the package as one zip file named `<id>.zip` (`src/zq/patch-package/zip.ts`, a minimal writer on `node:zlib.crc32`; no dependency was added, because core has no zip library and `fflate` belongs to the `zq-git-mcp` plugin package, which core must not import). The zip is built in memory after the package directory is complete, and nothing is written to disk by the builder for it.
+
+- Entries are `<id>/<name>` for every file of the package (the directory listing of the layout above, including `manifest.json` and `apply.sh`), sorted by the bytes of the name, forward slashes only, no absolute or `..` names (a bad name is refused).
+- Entries are STORED (method 0, no compression), with the fixed time 1980-01-01 00:00:00, the UTF-8 name flag, no extra fields, no data descriptors, no zip64 and no comments. Unix permissions are in the external attributes (version made by 3, unix): `apply.sh` is `0755`, every other file `0644`. Stored entries make the bytes independent of the zlib version, so the sha256 told to a recipient can always be reproduced, and make the cheap size pre-check exact. The cost is no compression (a large text patch is not shrunk); a package over 4 GiB or 65534 entries is refused.
+- The same inputs and `commitDate` give the same zip, byte for byte (tested: two builds, two output directories, identical sha256 and bytes).
+- Tested: `unzip -t` and Python `zipfile.testzip()` accept it, the unzipped tree is byte-identical (CRLF text, binary, `apply.cmd` with CRLF) with `apply.sh` executable, and `apply.sh` run from the unzipped tree against a real throwaway clone makes the one commit with every byte intact.
 
 ### Manifest, schema 2
 
@@ -144,7 +153,7 @@ Parsed in `src/zq/config.ts` as `ZqConfig.patchPackage`. Precedence: the setting
 | Body length, 100 to 50000   | `ZQ_PATCH_BODY_MAX`          | 5000                            |
 | Package size cap in bytes   | `ZQ_PATCH_MAX_PACKAGE_BYTES` | 83886080 (80 MiB)               |
 
-`ZQ_PATCH_MAX_PACKAGE_BYTES` is new in this step: a positive integer (at most 2^53 - 1), environment only, a bad value refuses startup. It is not a feature switch and nothing reads it unless a builder is called. The design reads it as the size of the delivered zip. This phase does not build a zip (that is the delivery step), so the builder measures an upper bound of the zip: the sum of all package file sizes (patch, payloads, comparison, message, README, scripts, manifest) plus 76 bytes and twice the name length per entry plus 22 bytes, which is the size of a zip that stores every entry uncompressed. Over the cap the builder refuses with `too_large` and removes the package.
+`ZQ_PATCH_MAX_PACKAGE_BYTES` (step 4a, unchanged name and default): a positive integer (at most 2^53 - 1), environment only, a bad value refuses startup. It is not a feature switch and nothing reads it unless a builder is called. Since step 4b it is measured on the REAL zip: first a cheap check of the sum of the file sizes (the zip cannot be smaller, because entries are stored), which refuses before any zip is built, then the final check on the size of the zip itself. Over the cap the builder refuses with `too_large`, the message names the setting and asks for another delivery route, and the package directory is removed. The 4a upper-bound estimate (`zipSizeBound`) no longer exists.
 
 The author name and email are now a marker inside the package (the mbox `From:` line, the manifest `author`, the script data used by `--keep-bot-author`); the applied commit is authored by the applier unless `--keep-bot-author` is given. The name or the email must contain `QM`, so the marker is recognisable.
 
@@ -167,5 +176,5 @@ The committer date of the text part is the build time unless `commitDate` is pas
 - Submodules are refused. Symlinks are carried as git carries them in the text part; an LFS file must be a regular file.
 - One commit per package; the patch size is not limited by itself, only the package as a whole (`ZQ_PATCH_MAX_PACKAGE_BYTES`).
 - Comparison tables only for `.xlsx` workbooks that are not under LFS; the workbook is delivered as is, QM never edits it.
-- Not done in this step: no zip, no retention, no delivery, no agent tool, no repository-source route that builds the working copy from service reads. Those are the later steps 4b to 4d.
+- Not done in this step: no delivery, no agent tool, no wiring of retention into startup, no repository-source route that builds the working copy from service reads. Those are the later steps 4b to 4d.
 - Not verified: a real git-lfs (the tests simulate the clean filter with a stub), Windows and PowerShell, `dash`, the real `read_file` service, git older than 2.52.

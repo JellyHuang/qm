@@ -379,9 +379,8 @@ test("a package above ZQ_PATCH_MAX_PACKAGE_BYTES is refused and leaves nothing",
   assert.deepEqual(readdirSync(out), []);
   assert.deepEqual(readdirSync(tmp), []);
   const ok = await buildFrom(t, fixture, {}, { maxPackageBytes: 300_000 });
-  assert.ok(ok.zipSizeBound > 200_000 && ok.zipSizeBound < 300_000);
-  const total = ok.files.reduce((sum, f) => sum + f.bytes, 0);
-  assert.ok(ok.zipSizeBound >= total);
+  assert.ok(ok.zip.bytes > 200_000 && ok.zip.bytes < 300_000);
+  assert.equal(ok.zip.data.length, ok.zip.bytes);
 });
 
 function xlsxResult(path: string, over: Partial<XlsxDiffResult> = {}): XlsxDiffResult {
