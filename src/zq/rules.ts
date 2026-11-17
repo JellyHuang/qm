@@ -33,6 +33,7 @@ export interface WorkView {
   awaited?: AwaitedChild[];
   awaitingNote?: string;
   completionSubmitted?: boolean;
+  completionSubmittedAt?: number;
 }
 
 export interface AwaitedChild {
@@ -211,6 +212,7 @@ function optimizationRules(
         planner,
         `优化单${where(feature)}的执行人${feature.assignee ? ` ${feature.assignee.name} ` : ""}已提交完成确认。请验收,通过后把它转为「${label(contract, done)}」。`,
       ),
+      subjectId: `wp:${feature.id}${feature.completionSubmittedAt === undefined ? "" : `:submitted:${feature.completionSubmittedAt}`}`,
       once: true,
     });
   if (live.length && live.every((c) => c.statusKey === done))

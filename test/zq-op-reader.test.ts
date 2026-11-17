@@ -472,3 +472,13 @@ test("an optimization order is never asked for the feature-only answers, and a p
     "no feature-only tool saw an order outside the features",
   );
 });
+
+test("the time an optimization order was submitted is read from its submission time property", () => {
+  const read = (v: unknown) =>
+    parseWorkView(wp({ type_key: "optimization", delivery_result: "pass", delivery_submitted_at: v }), {
+      ...contract,
+      fields: { ...contract.fields, completionSubmitted: "delivery_result" },
+    })!;
+  assert.equal(read("2026-11-17T09:00:00Z").completionSubmittedAt, Date.parse("2026-11-17T09:00:00Z"));
+  assert.equal(read(null).completionSubmittedAt, undefined);
+});

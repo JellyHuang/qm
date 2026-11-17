@@ -142,6 +142,7 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
   const awaited = awaitedChildren(item[contract.fields.awaitedChildren]);
   const awaitingNote = str(item[contract.fields.awaitingNote]);
   const completionSubmitted = item[contract.fields.completionSubmitted];
+  const completionSubmittedAt = time(item[contract.fields.completionSubmittedAt]);
   return {
     id,
     subject: str(item["subject"]) ?? `#${id}`,
@@ -169,6 +170,7 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
     ...(awaited ? { awaited } : {}),
     ...(awaitingNote ? { awaitingNote } : {}),
     ...(completionSubmitted === true || completionSubmitted === "pass" ? { completionSubmitted: true } : {}),
+    ...(completionSubmittedAt !== undefined ? { completionSubmittedAt } : {}),
   };
 }
 

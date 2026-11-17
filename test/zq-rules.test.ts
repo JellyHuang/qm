@@ -449,3 +449,15 @@ test("an order still in the unassigned stage that already has an executor is not
   assert.match(out[0]!.text, /#3/);
   assert.doesNotMatch(out[0]!.text, /#2/);
 });
+
+test("each new submission time of an optimization order is reminded once, and a missing time keeps the single reminder", () => {
+  const base = optimization({ assignee: BOB, statusKey: "execution.active", completionSubmitted: true });
+  const first = rules({ feature: { ...base, completionSubmittedAt: NOW - DAY }, children: [] })[0]!;
+  const again = rules({ feature: { ...base, completionSubmittedAt: NOW - DAY }, children: [] })[0]!;
+  const resubmitted = rules({ feature: { ...base, completionSubmittedAt: NOW }, children: [] })[0]!;
+  const untimed = rules({ feature: base, children: [] })[0]!;
+  assert.equal(first.subjectId, again.subjectId);
+  assert.notEqual(first.subjectId, resubmitted.subjectId);
+  assert.equal(untimed.subjectId, "wp:60");
+  assert.ok([first, resubmitted, untimed].every((a) => a.once === true));
+});
