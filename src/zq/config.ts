@@ -22,6 +22,9 @@ export interface ZqConfig {
     externalDomains: readonly string[];
     botNames: readonly string[];
     domainAliases: Readonly<Record<string, string>>;
+    mapping: boolean;
+    ignoredReopenDays: number;
+    queueRetentionDays: number;
   };
   jenkins: { url?: string; rerun: boolean; jobs: readonly string[]; rerunJobs: readonly string[]; hourlyCap: number };
 }
@@ -149,6 +152,9 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
       externalDomains: names(env.ZQ_GIT_EXTERNAL_DOMAINS),
       botNames: names(env.ZQ_GIT_BOT_NAMES),
       domainAliases: domainAliases("ZQ_GIT_DOMAIN_ALIASES", env.ZQ_GIT_DOMAIN_ALIASES),
+      mapping: on(env.ZQ_GIT_AUTHOR_MAPPING),
+      ignoredReopenDays: integer("ZQ_GIT_IGNORED_REOPEN_DAYS", env.ZQ_GIT_IGNORED_REOPEN_DAYS, 0, 0, 3650),
+      queueRetentionDays: integer("ZQ_GIT_UNMAPPED_RETENTION_DAYS", env.ZQ_GIT_UNMAPPED_RETENTION_DAYS, 180, 1, 3650),
     },
     jenkins: {
       ...(jenkinsUrl ? { url: jenkinsUrl } : {}),

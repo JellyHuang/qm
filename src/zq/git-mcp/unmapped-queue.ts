@@ -35,13 +35,31 @@ export interface UnmappedQueue {
   list(status?: UnmappedStatus): Promise<UnmappedAuthor[]>;
   resolve(email: string, person: Person, by: string): Promise<UnmappedAuthor | null>;
   ignore(email: string, by: string): Promise<UnmappedAuthor | null>;
+  prune(): Promise<number>;
 }
 
 const SHA_WINDOW = 200;
+const DAY_MS = 86_400_000;
+export const UNMAPPED_RETENTION_DAYS = 180;
+
+export function unmappedCutoff(now: number, days = UNMAPPED_RETENTION_DAYS): number {
+  if (!Number.isInteger(days) || days < 1) throw new Error("the retention is a whole number of days from 1");
+  return now - days * DAY_MS;
+}
 
 const keyOf = (email: string) => normaliseEmail(email) || "(none)";
 
-function absorb(entry: UnmappedAuthor, sighting: UnmappedSighting, now: number): UnmappedAuthor {
+function absorb(
+  entry: UnmappedAuthor,
+  sighting: UnmappedSighting,
+  now: number,
+  reopenIgnoredAfterDays: number,
+): UnmappedAuthor {
+  const reopen =
+    entry.status === "resolved" ||
+    (entry.status === "ignored" &&
+      reopenIgnoredAfterDays > 0 &&
+      now - (entry.closedAt ?? entry.lastSeenAt) >= reopenIgnoredAfterDays * DAY_MS);
   const seen = new Set(entry.recentShas);
   const fresh = sighting.commits.filter((c, i, all) => !seen.has(c.sha) && all.findIndex((o) => o.sha === c.sha) === i);
   return {
@@ -49,7 +67,7 @@ function absorb(entry: UnmappedAuthor, sighting: UnmappedSighting, now: number):
     name: sighting.name || entry.name,
     reason: sighting.reason,
     candidates: [...(sighting.candidates ?? [])],
-    status: entry.status === "resolved" ? "open" : entry.status,
+    status: reopen ? "open" : entry.status,
     lastSeenAt: now,
     count: entry.count + fresh.length,
     recentShas: [...entry.recentShas, ...fresh.map((c) => c.sha)].slice(-SHA_WINDOW),
@@ -59,8 +77,11 @@ function absorb(entry: UnmappedAuthor, sighting: UnmappedSighting, now: number):
 export function createUnmappedQueue(opts: {
   map: DurableMap<UnmappedAuthor>;
   aliases: Pick<AuthorAliases, "add">;
+  retentionDays?: number;
+  reopenIgnoredAfterDays?: number;
   now?: () => number;
 }): UnmappedQueue {
+  const reopenAfter = opts.reopenIgnoredAfterDays ?? 0;
   const now = opts.now ?? (() => Date.now());
   const close = (email: string, status: "resolved" | "ignored", by: string, personId?: string) =>
     opts.map.update(keyOf(email), (entry) => ({
@@ -89,8 +110,9 @@ export function createUnmappedQueue(opts: {
         exampleSha: first.sha,
         recentShas: [],
       };
-      if (await opts.map.insertIfAbsent(key, absorb(fresh, sighting, at))) return (await opts.map.get(key))!;
-      return (await opts.map.update(key, (entry) => absorb(entry, sighting, now())))!;
+      if (await opts.map.insertIfAbsent(key, absorb(fresh, sighting, at, reopenAfter)))
+        return (await opts.map.get(key))!;
+      return (await opts.map.update(key, (entry) => absorb(entry, sighting, now(), reopenAfter)))!;
     },
     async list(status = "open") {
       return (await opts.map.all())
@@ -103,5 +125,14 @@ export function createUnmappedQueue(opts: {
       return close(email, "resolved", by, person.personId);
     },
     ignore: (email, by) => close(email, "ignored", by),
+    async prune() {
+      const cutoff = unmappedCutoff(now(), opts.retentionDays);
+      const stale = (entry: UnmappedAuthor) =>
+        entry.status !== "open" && Math.max(entry.closedAt ?? 0, entry.lastSeenAt) < cutoff;
+      let removed = 0;
+      for (const [key, entry] of await opts.map.entries())
+        if (stale(entry) && (await opts.map.deleteIf(key, stale))) removed++;
+      return removed;
+    },
   };
 }

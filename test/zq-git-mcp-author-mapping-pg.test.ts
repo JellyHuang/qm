@@ -17,10 +17,10 @@ test("the unmapped queue and alias table persist and resolve on Postgres", async
   };
   const build = () =>
     createAuthorMapping({
-      config: zqConfigFromEnv({}).gitAuthors,
+      config: zqConfigFromEnv({ ZQ_GIT_AUTHOR_MAPPING: "1" }).gitAuthors,
       directory: createMemoryPeopleDirectory([{ emails: ["li@corp.example"], person: li }]),
       map,
-    });
+    })!;
   const before = build();
   const commits = [
     {

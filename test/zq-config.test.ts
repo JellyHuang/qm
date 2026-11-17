@@ -61,7 +61,14 @@ test("who hears about an empty responsibility field is configured and never chos
 test("the zq-git-mcp service address and secret go together and the author rules are plain lists", () => {
   const off = zqConfigFromEnv({});
   assert.equal(off.gitMcp, undefined);
-  assert.deepEqual(off.gitAuthors, { externalDomains: [], botNames: [], domainAliases: {} });
+  assert.deepEqual(off.gitAuthors, {
+    externalDomains: [],
+    botNames: [],
+    domainAliases: {},
+    mapping: false,
+    ignoredReopenDays: 0,
+    queueRetentionDays: 180,
+  });
   const on = zqConfigFromEnv({
     ZQ_GIT_MCP_URL: "http://127.0.0.1:8765/mcp",
     ZQ_GIT_MCP_SECRET: "a-shared-secret-0123456789",
@@ -74,6 +81,9 @@ test("the zq-git-mcp service address and secret go together and the author rules
     externalDomains: ["@yizhu", "partner.example"],
     botNames: ["ZQBot.compiler"],
     domainAliases: { "old.example": "corp.example", legacy: "corp.example" },
+    mapping: false,
+    ignoredReopenDays: 0,
+    queueRetentionDays: 180,
   });
   assert.throws(() => zqConfigFromEnv({ ZQ_GIT_DOMAIN_ALIASES: "old.example" }), /ZQ_GIT_DOMAIN_ALIASES/);
   assert.throws(() => zqConfigFromEnv({ ZQ_GIT_MCP_URL: "http://127.0.0.1:8765/mcp" }), /go together/);

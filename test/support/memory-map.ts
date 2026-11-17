@@ -30,6 +30,12 @@ export function memoryMap<T>(rows: Map<string, T> = new Map()): DurableMap<T> {
       rows.set(id, next);
       return next;
     },
+    async deleteIf(id: string, predicate: (value: T) => boolean) {
+      const current = rows.get(id);
+      if (!current || !predicate(current)) return false;
+      rows.delete(id);
+      return true;
+    },
     async delete(id: string) {
       rows.delete(id);
     },

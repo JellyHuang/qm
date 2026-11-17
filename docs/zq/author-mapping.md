@@ -31,7 +31,8 @@ Durable table `zq_git_unmapped_authors`, key the normalised email (`(none)` if e
 - `queue.resolve(email, person, by)` adds an alias and marks the entry `resolved`; it leaves the open list. If the alias is later removed and the author shows up again, the entry reopens.
 - `queue.ignore(email, by)` marks it `ignored`; it keeps counting but is not listed as open.
 - `queue.list(status = "open")` lists by status.
-- Nothing prunes the queue yet.
+- Ignored authors stay silent for good by default: they keep counting but are never listed as open. `ZQ_GIT_IGNORED_REOPEN_DAYS` (default `0`, off) reopens an ignored entry when the author is seen again that many days after it was ignored.
+- Retention: `queue.prune()` (cutoff `unmappedCutoff(now, days)`, default 180 days, `ZQ_GIT_UNMAPPED_RETENTION_DAYS`) deletes resolved and ignored entries whose later of closed time and last-seen time is older than the cutoff. Open entries are never pruned. It is not scheduled and not called from startup, like `pruneGitAudit`.
 
 ## Processing
 
@@ -43,13 +44,37 @@ Logs carry only `hashEmail(email)` (first 12 hex characters of SHA-256 of the no
 
 ## Configuration
 
-| Setting                   | Default | Meaning                                                                                                        |
-| ------------------------- | ------- | -------------------------------------------------------------------------------------------------------------- |
-| `ZQ_GIT_BOT_NAMES`        | empty   | Existing. Bot author names or email local parts                                                                |
-| `ZQ_GIT_EXTERNAL_DOMAINS` | empty   | Existing. Non-company domains; sub-domains match                                                               |
-| `ZQ_GIT_DOMAIN_ALIASES`   | empty   | New. Comma list of `old.example=corp.example`; an address on the left domain is also tried on the right domain |
+| Setting                          | Default   | Meaning                                                                                                                   |
+| -------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `ZQ_GIT_BOT_NAMES`               | empty     | Existing. Bot author names or email local parts                                                                           |
+| `ZQ_GIT_EXTERNAL_DOMAINS`        | empty     | Existing. Non-company domains; sub-domains match                                                                          |
+| `ZQ_GIT_AUTHOR_MAPPING`          | off       | New. `1` turns the layer on. Off: `createAuthorMapping` returns `undefined`, requests no durable map and touches no table |
+| `ZQ_GIT_IGNORED_REOPEN_DAYS`     | `0` (off) | New. Days after which a still-seen ignored author reopens; 0 to 3650                                                      |
+| `ZQ_GIT_UNMAPPED_RETENTION_DAYS` | `180`     | New. Retention of resolved and ignored queue entries; 1 to 3650                                                           |
+| `ZQ_GIT_DOMAIN_ALIASES`          | empty     | New. Comma list of `old.example=corp.example`; an address on the left domain is also tried on the right domain            |
 
 Environment variables are the only source. A malformed pair fails at startup. There is no company-domain allowlist: any address that is not bot or external and matches nobody goes to the PM.
+
+## Tables and the switch
+
+Table creation is not lazy at startup. `createPostgresMap` (`src/persistence/durable-map.ts`) registers its migrations as soon as the map object is built (`pg.registerMigration`), and `src/start.ts` then runs `migrateRegisteredPgSchemas`, which applies every registered migration. So merely building the two maps would create the tables at boot, and the first read or write would also create them (`ready()` calls `pg.migrate`). There is no skip mode: `src/migrate-main.ts` only runs the same migrations as a separate step. The module is therefore safe by construction. With `ZQ_GIT_AUTHOR_MAPPING` off, which is the default and is set in no environment (CI, dev, staging, production), `createAuthorMapping` returns before touching `deps.map`; a test spies on the map factory to prove it; and nothing in startup calls it. Turning the switch on makes the durable-map layer create both tables, so it needs the approved DDL first (`docs/zq-git-mcp-ddl-proposal.md` on `oa/spike-git`, section "Author mapping tables (not yet approved)").
+
+For each of `zq_git_author_aliases` and `zq_git_unmapped_authors` (written `T`) the layer creates, in order (`mapMigrations`, `durableMapTenancy`, `tenantTables` and `tenantRowSecurity` in `src/tenants/migrations.ts`):
+
+```sql
+CREATE TABLE IF NOT EXISTS T (id TEXT PRIMARY KEY, json JSONB NOT NULL);
+CREATE TABLE IF NOT EXISTS durable_map_versions (tbl TEXT PRIMARY KEY, v BIGINT NOT NULL);
+ALTER TABLE T ADD COLUMN tenant_id UUID NOT NULL DEFAULT <first tenant, only if T already has rows>;
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS T_tenant_pkey ON T(tenant_id, id);
+ALTER TABLE T DROP CONSTRAINT T_pkey, ADD CONSTRAINT T_pkey PRIMARY KEY USING INDEX T_tenant_pkey;
+ALTER TABLE T ALTER COLUMN tenant_id SET DEFAULT qm_bound_tenant();
+ALTER TABLE T ADD CONSTRAINT T_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id);
+ALTER TABLE T ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON T
+  USING (tenant_id = qm_bound_tenant()) WITH CHECK (tenant_id = qm_bound_tenant());
+```
+
+It also creates the functions `claim_T` and `claim_T_tenants`. No indexed fields are declared, so no other index exists. `durable_map_versions` already exists and gets one row per tenant and table. The Postgres test is gated on `DATABASE_URL`.
 
 ## What the PM must supply
 

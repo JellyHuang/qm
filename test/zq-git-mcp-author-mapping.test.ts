@@ -8,6 +8,7 @@ import {
   hashEmail,
   type AuthorNotificationSink,
 } from "../src/zq/git-mcp/author-mapping.ts";
+import { UNMAPPED_RETENTION_DAYS, unmappedCutoff } from "../src/zq/git-mcp/unmapped-queue.ts";
 import type { UpdatedCommit } from "../src/zq/git-mcp/client.ts";
 import { createMemoryPeopleDirectory } from "../src/zq/git-mcp/people.ts";
 import type { CommitBatch } from "../src/zq/git-mcp/poller.ts";
@@ -26,6 +27,7 @@ const directory = createMemoryPeopleDirectory([
 const config = zqConfigFromEnv({
   ZQ_GIT_BOT_NAMES: "ZQBot.compiler",
   ZQ_GIT_EXTERNAL_DOMAINS: "@yizhu",
+  ZQ_GIT_AUTHOR_MAPPING: "1",
 }).gitAuthors;
 
 const commit = (sha: string, authorEmail: string, authorName = "A", branch = "main"): UpdatedCommit => ({
@@ -53,14 +55,19 @@ function maps() {
   return { tables, map };
 }
 
-function build(sink?: AuthorNotificationSink, shared = maps(), clock = { now: 1000 }) {
+function build(
+  sink?: AuthorNotificationSink,
+  shared = maps(),
+  clock = { now: 1000 },
+  overrides: Partial<typeof config> = {},
+) {
   const mapping = createAuthorMapping({
-    config,
+    config: { ...config, ...overrides },
     directory,
     map: shared.map,
     now: () => clock.now,
     ...(sink ? { sink } : {}),
-  });
+  })!;
   return { mapping, shared, clock };
 }
 
@@ -251,9 +258,117 @@ test("a failing sink fails the handler so the poller retries, without double cou
 test("logs carry only a hash of the address", async () => {
   const lines: string[] = [];
   const shared = maps();
-  const mapping = createAuthorMapping({ config, directory, map: shared.map, log: (line) => lines.push(line) });
+  const mapping = createAuthorMapping({ config, directory, map: shared.map, log: (line) => lines.push(line) })!;
   await mapping.mapper.map([batch("client", "main", [commit("c1", "nobody@corp.example", "Nobody")])]);
   assert.equal(lines.length, 1);
   assert.ok(lines[0]!.includes(hashEmail("NOBODY@corp.example")));
   assert.ok(!lines[0]!.includes("nobody"));
+});
+
+const DAY = 86_400_000;
+
+test("with the switch off nothing instantiates a map and no mapper exists", () => {
+  const asked: string[] = [];
+  const off = zqConfigFromEnv({ ZQ_GIT_BOT_NAMES: "ZQBot.compiler" }).gitAuthors;
+  assert.equal(off.mapping, false);
+  const mapping = createAuthorMapping({
+    config: off,
+    directory,
+    map: <T>(table: string) => {
+      asked.push(table);
+      return memoryMap<T>();
+    },
+  });
+  assert.equal(mapping, undefined);
+  assert.deepEqual(asked, []);
+  assert.equal(zqConfigFromEnv({ ZQ_GIT_AUTHOR_MAPPING: "0" }).gitAuthors.mapping, false);
+  assert.equal(zqConfigFromEnv({ ZQ_GIT_AUTHOR_MAPPING: "1" }).gitAuthors.mapping, true);
+});
+
+test("with the switch on exactly the two author tables are requested", () => {
+  const asked: string[] = [];
+  createAuthorMapping({
+    config,
+    directory,
+    map: <T>(table: string) => {
+      asked.push(table);
+      return memoryMap<T>();
+    },
+  });
+  assert.deepEqual(asked.sort(), ["zq_git_author_aliases", "zq_git_unmapped_authors"]);
+});
+
+test("the retention and reopen settings default to 180 days and off, and reject bad values", () => {
+  const defaults = zqConfigFromEnv({}).gitAuthors;
+  assert.deepEqual([defaults.queueRetentionDays, defaults.ignoredReopenDays], [180, 0]);
+  const set = zqConfigFromEnv({ ZQ_GIT_UNMAPPED_RETENTION_DAYS: "30", ZQ_GIT_IGNORED_REOPEN_DAYS: "7" }).gitAuthors;
+  assert.deepEqual([set.queueRetentionDays, set.ignoredReopenDays], [30, 7]);
+  assert.throws(() => zqConfigFromEnv({ ZQ_GIT_UNMAPPED_RETENTION_DAYS: "0" }), /ZQ_GIT_UNMAPPED_RETENTION_DAYS/);
+  assert.throws(() => zqConfigFromEnv({ ZQ_GIT_IGNORED_REOPEN_DAYS: "-1" }), /ZQ_GIT_IGNORED_REOPEN_DAYS/);
+});
+
+test("the cutoff is the retention in days before now", () => {
+  assert.equal(UNMAPPED_RETENTION_DAYS, 180);
+  assert.equal(unmappedCutoff(1_000 * DAY), 820 * DAY);
+  assert.equal(unmappedCutoff(1_000 * DAY, 30), 970 * DAY);
+  for (const bad of [0, -1, 1.5, Number.NaN]) assert.throws(() => unmappedCutoff(1, bad), /whole number of days/);
+});
+
+test("pruning removes only resolved and ignored entries older than the retention and never open ones", async () => {
+  const clock = { now: 0 };
+  const { mapping } = build(undefined, maps(), clock);
+  const see = (email: string, sha: string) => mapping.mapper.map([batch("client", "main", [commit(sha, email)])]);
+  await see("open@corp.example", "o1");
+  await see("resolved@corp.example", "r1");
+  await see("ignored@corp.example", "i1");
+  await see("recent@corp.example", "n1");
+  await mapping.queue.resolve("resolved@corp.example", zhang, "pm");
+  await mapping.queue.ignore("ignored@corp.example", "pm");
+  clock.now = 100 * DAY;
+  await see("recent@corp.example", "n2");
+  await mapping.queue.ignore("recent@corp.example", "pm");
+  clock.now = 181 * DAY;
+  assert.equal(await mapping.queue.prune(), 2);
+  assert.deepEqual(
+    (await mapping.queue.list()).map((e) => e.email),
+    ["open@corp.example"],
+  );
+  assert.deepEqual(
+    (await mapping.queue.list("ignored")).map((e) => e.email),
+    ["recent@corp.example"],
+  );
+  assert.deepEqual(await mapping.queue.list("resolved"), []);
+  clock.now = 281 * DAY;
+  assert.equal(await mapping.queue.prune(), 1);
+  assert.equal(await mapping.queue.prune(), 0);
+});
+
+test("an ignored author that is still seen is kept past the retention", async () => {
+  const clock = { now: 0 };
+  const { mapping } = build(undefined, maps(), clock);
+  await mapping.mapper.map([batch("client", "main", [commit("c1", "noisy@corp.example")])]);
+  await mapping.queue.ignore("noisy@corp.example", "pm");
+  clock.now = 179 * DAY;
+  await mapping.mapper.map([batch("client", "main", [commit("c2", "noisy@corp.example")])]);
+  clock.now = 200 * DAY;
+  assert.equal(await mapping.queue.prune(), 0);
+});
+
+test("an ignored author reopens after the configured days and stays silent forever by default", async () => {
+  for (const [days, reopened] of [
+    [0, false],
+    [30, true],
+  ] as const) {
+    const clock = { now: 0 };
+    const { mapping } = build(undefined, maps(), clock, { ignoredReopenDays: days });
+    await mapping.mapper.map([batch("client", "main", [commit("c1", "noisy@corp.example")])]);
+    await mapping.queue.ignore("noisy@corp.example", "pm");
+    clock.now = 29 * DAY;
+    await mapping.mapper.map([batch("client", "main", [commit("c2", "noisy@corp.example")])]);
+    assert.deepEqual((await mapping.queue.list()).length, 0);
+    clock.now = 31 * DAY;
+    await mapping.mapper.map([batch("client", "main", [commit("c3", "noisy@corp.example")])]);
+    assert.equal((await mapping.queue.list()).length, reopened ? 1 : 0);
+    assert.equal((await mapping.queue.list(reopened ? "open" : "ignored"))[0]?.count, 3);
+  }
 });

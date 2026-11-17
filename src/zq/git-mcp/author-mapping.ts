@@ -150,7 +150,8 @@ export function createAuthorMapping(deps: {
   sink?: AuthorNotificationSink;
   now?: () => number;
   log?: (line: string) => void;
-}): AuthorMapping {
+}): AuthorMapping | undefined {
+  if (!deps.config.mapping) return undefined;
   const aliases = createAuthorAliases({
     map: deps.map<AuthorAlias>("zq_git_author_aliases"),
     ...(deps.now ? { now: deps.now } : {}),
@@ -158,6 +159,8 @@ export function createAuthorMapping(deps: {
   const queue = createUnmappedQueue({
     map: deps.map<UnmappedAuthor>("zq_git_unmapped_authors"),
     aliases,
+    retentionDays: deps.config.queueRetentionDays,
+    reopenIgnoredAfterDays: deps.config.ignoredReopenDays,
     ...(deps.now ? { now: deps.now } : {}),
   });
   const resolver = createAuthorResolver({
