@@ -31,11 +31,16 @@ export interface ZqConfig {
     maxAgeMs: number;
     failureResults: readonly string[];
     causes: readonly JenkinsCauseKind[];
+    botIds: readonly string[];
+    dangerParams: readonly string[];
+    dangerAckJobs: readonly string[];
     owners: Readonly<Record<string, string>>;
     defaultOwner?: string;
   };
 }
 
+const NOT_RERUN_BY_DEFAULT = ["Server-Run", "PackageSent"];
+const DANGER_PARAMS = ["DROP_DATABASE", "TARGET_SERVER", "SOURCE"];
 const FAILURE_RESULTS = ["FAILURE", "UNSTABLE", "ABORTED", "NOT_BUILT"] as const;
 const CAUSE_KINDS = ["timer", "scm", "upstream", "user", "remote", "other"] as const;
 
@@ -148,7 +153,15 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   if (jenkinsNotify && !(jenkinsPoll && notifyChannel))
     throw new Error("ZQ_JENKINS_NOTIFY needs ZQ_JENKINS_POLL and ZQ_JENKINS_NOTIFY_CHANNEL");
   const jenkinsJobs = jobNames("ZQ_JENKINS_JOBS", env.ZQ_JENKINS_JOBS, JENKINS_JOBS);
-  const rerunJobs = jobNames("ZQ_JENKINS_RERUN_JOBS", env.ZQ_JENKINS_RERUN_JOBS, jenkinsJobs);
+  const rerunJobs = jobNames(
+    "ZQ_JENKINS_RERUN_JOBS",
+    env.ZQ_JENKINS_RERUN_JOBS,
+    jenkinsJobs.filter((job) => !NOT_RERUN_BY_DEFAULT.includes(job)),
+  );
+  const dangerAckJobs = jobNames("ZQ_JENKINS_DANGER_ACK_JOBS", env.ZQ_JENKINS_DANGER_ACK_JOBS, []);
+  const unlisted = dangerAckJobs.filter((job) => !rerunJobs.includes(job));
+  if (unlisted.length > 0)
+    throw new Error(`ZQ_JENKINS_DANGER_ACK_JOBS names jobs outside ZQ_JENKINS_RERUN_JOBS: ${unlisted.join(", ")}`);
   const outside = rerunJobs.filter((job) => !jenkinsJobs.includes(job));
   if (outside.length > 0)
     throw new Error(`ZQ_JENKINS_RERUN_JOBS names jobs outside ZQ_JENKINS_JOBS: ${outside.join(", ")}`);
@@ -205,6 +218,9 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
         "scm",
         "upstream",
       ]),
+      botIds: names(env.ZQ_JENKINS_BOT_IDS),
+      dangerParams: names(env.ZQ_JENKINS_DANGER_PARAMS ?? DANGER_PARAMS.join(",")).map((n) => n.toUpperCase()),
+      dangerAckJobs,
       owners: owners(env.ZQ_JENKINS_OWNERS),
       ...(env.ZQ_JENKINS_DEFAULT_OWNER?.trim() ? { defaultOwner: env.ZQ_JENKINS_DEFAULT_OWNER.trim() } : {}),
     },

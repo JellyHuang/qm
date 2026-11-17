@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { JenkinsBuild, JenkinsCauseKind, JenkinsParam } from "./client.ts";
+import type { JenkinsBuild, JenkinsCause, JenkinsCauseKind, JenkinsParam } from "./client.ts";
 
 export type JenkinsState =
   | "observed"
@@ -13,6 +13,7 @@ export type JenkinsState =
 
 export type SkipReason =
   | "job_not_enabled"
+  | "dangerous_parameters"
   | "is_rerun"
   | "bot_triggered"
   | "manual_trigger"
@@ -37,7 +38,9 @@ export interface DecisionPolicy {
   causes: readonly JenkinsCauseKind[];
   maxAgeMs: number;
   hourlyCap: number;
-  botUser: string;
+  botUsers: readonly string[];
+  dangerParams: readonly string[];
+  dangerAckJobs: readonly string[];
 }
 
 export interface DecisionInput {
@@ -59,8 +62,13 @@ export const fingerprint = (params: readonly JenkinsParam[]): string =>
     .update(JSON.stringify(params.map((p) => [p.name, p.value]).sort()))
     .digest("hex");
 
-export const causedByBot = (build: Pick<JenkinsBuild, "causes">, botUser: string): boolean =>
-  build.causes.some((c) => c.kind === "user" && c.userId?.toLowerCase() === botUser.toLowerCase());
+const byBot = (cause: JenkinsCause, botUsers: readonly string[]): boolean =>
+  (cause.kind === "user" &&
+    [cause.userId, cause.userName].some((id) => id && botUsers.some((b) => b.toLowerCase() === id.toLowerCase()))) ||
+  (cause.upstream ?? []).some((c) => byBot(c, botUsers));
+
+export const causedByBot = (build: Pick<JenkinsBuild, "causes">, botUsers: readonly string[]): boolean =>
+  build.causes.some((c) => byBot(c, botUsers));
 
 export function paramProblem(
   build: Pick<JenkinsBuild, "params" | "maskedParams">,
@@ -94,8 +102,11 @@ export function decide(input: DecisionInput, policy: DecisionPolicy): Decision {
   });
   if (!isCandidate(build, policy, now)) return skip("too_old");
   if (input.rerunNumbers.has(build.number)) return skip("is_rerun");
-  if (causedByBot(build, policy.botUser)) return skip("bot_triggered");
+  if (causedByBot(build, policy.botUsers)) return skip("bot_triggered");
   if (!policy.rerunJobs.includes(input.job)) return skip("job_not_enabled");
+  const names = [...input.definedParams, ...build.params.map((p) => p.name), ...build.maskedParams];
+  if (!policy.dangerAckJobs.includes(input.job) && names.some((n) => policy.dangerParams.includes(n.toUpperCase())))
+    return skip("dangerous_parameters", "needs_attention");
   const kinds: JenkinsCauseKind[] = build.causes.length > 0 ? build.causes.map((c) => c.kind) : ["other"];
   if (!kinds.every((kind) => policy.causes.includes(kind)))
     return skip(kinds.includes("user") && !policy.causes.includes("user") ? "manual_trigger" : "cause_not_allowed");

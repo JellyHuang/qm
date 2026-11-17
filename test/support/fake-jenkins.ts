@@ -10,17 +10,29 @@ export interface FakeParam {
 export interface FakeCause {
   cls: string;
   userId?: string;
+  userName?: string;
+  upstream?: FakeCause[];
 }
 
 export const CAUSES = {
   timer: { cls: "hudson.triggers.TimerTrigger$TimerTriggerCause" },
   scm: { cls: "hudson.triggers.SCMTrigger$SCMTriggerCause" },
   upstream: { cls: "hudson.model.Cause$UpstreamCause" },
+  upstreamOf: (...roots: FakeCause[]): FakeCause => ({ cls: "hudson.model.Cause$UpstreamCause", upstream: roots }),
   user: (userId: string): FakeCause => ({ cls: "hudson.model.Cause$UserIdCause", userId }),
   rebuild: (userId: string): FakeCause => ({ cls: "com.sonyericsson.rebuild.RebuildCause", userId }),
   remote: { cls: "hudson.model.Cause$RemoteCause" },
   unknown: { cls: "org.example.MysteryCause" },
 } as const;
+
+function rawCause(c: FakeCause): object {
+  return {
+    _class: c.cls,
+    ...(c.userId ? { userId: c.userId } : {}),
+    ...(c.userName ? { userName: c.userName } : {}),
+    ...(c.upstream ? { upstreamCauses: c.upstream.map(rawCause) } : {}),
+  };
+}
 
 export interface FakeBuildSpec {
   result?: string | null;
@@ -122,7 +134,7 @@ export async function startFakeJenkins(opts: { now: () => number; secret?: strin
     timestamp: b.timestamp,
     duration: b.duration,
     actions: [
-      { causes: b.causes.map((c) => ({ _class: c.cls, ...(c.userId ? { userId: c.userId } : {}) })) },
+      { causes: b.causes.map(rawCause) },
       {
         parameters: b.params.map((p) => ({
           _class: p.cls ?? "hudson.model.StringParameterValue",

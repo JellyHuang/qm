@@ -58,7 +58,9 @@ async function harness(opts: Options = {}) {
     causes: ["timer", "scm", "upstream"],
     maxAgeMs: 30 * 60_000,
     hourlyCap: 3,
-    botUser: FAKE_USER,
+    botUsers: [FAKE_USER],
+    dangerParams: ["DROP_DATABASE", "TARGET_SERVER", "SOURCE"],
+    dangerAckJobs: [],
     ...opts.policy,
   };
   const newStore = () =>
@@ -327,6 +329,55 @@ scenario(
     assert.equal((await wide.state(22))?.reason, "chain_rerun");
     assert.equal(wide.fake.posts.length, 1);
     await wide.fake.close();
+  },
+);
+
+scenario(
+  "an upstream-triggered failure is rerun once, parameters verbatim, and its own failure is never rerun",
+  async () => {
+    const h = await harness();
+    h.failed(10, { causes: [CAUSES.upstreamOf(CAUSES.timer)] });
+    await h.poller.tick();
+    assert.deepEqual(
+      [...new URLSearchParams(h.fake.posts[0]?.body)],
+      PARAMS.map((p) => [p.name, p.value]),
+    );
+    assert.equal((await h.state(10))?.rerunNumber, 11);
+    assert.deepEqual(h.fake.build(JOB, 11)?.causes, [CAUSES.user(FAKE_USER)]);
+    h.fake.finish(JOB, 11, "FAILURE");
+    for (let i = 0; i < 3; i++) await h.poller.tick();
+    assert.equal(h.fake.posts.length, 1);
+    assert.equal((await h.state(11))?.reason, "is_rerun");
+    assert.equal(h.sink.sent.length, 1);
+    await h.fake.close();
+  },
+);
+
+scenario(
+  "builds by the bot account are never rerun unless they are our own rerun, which is only reported",
+  async () => {
+    const h = await harness({ policy: { causes: ["timer", "upstream", "user"] } });
+    h.failed(10, { causes: [CAUSES.user(FAKE_USER)] });
+    h.failed(12, { causes: [CAUSES.upstreamOf(CAUSES.user(FAKE_USER))] });
+    h.failed(14, { causes: [{ ...CAUSES.user("someone"), userName: FAKE_USER }] });
+    await h.poller.tick();
+    assert.deepEqual(
+      (await h.rows()).map((r) => [r.number, r.reason]),
+      [
+        [10, "bot_triggered"],
+        [12, "bot_triggered"],
+        [14, "bot_triggered"],
+      ],
+    );
+    assert.deepEqual(h.fake.posts, []);
+    h.failed(20, { causes: [CAUSES.timer] });
+    await h.poller.tick();
+    h.fake.finish(JOB, 21, "FAILURE");
+    await h.poller.tick();
+    assert.equal((await h.state(21))?.reason, "is_rerun");
+    assert.equal(h.fake.posts.length, 1);
+    assert.equal(h.sink.sent.filter((m) => /重跑 #21/.test(m.text)).length, 1);
+    await h.fake.close();
   },
 );
 

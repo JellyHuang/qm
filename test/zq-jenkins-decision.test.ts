@@ -18,7 +18,9 @@ const policy: DecisionPolicy = {
   causes: ["timer", "scm", "upstream"],
   maxAgeMs: 30 * 60_000,
   hourlyCap: 3,
-  botUser: "qm-bot",
+  botUsers: ["qm-bot"],
+  dangerParams: ["DROP_DATABASE"],
+  dangerAckJobs: [],
 };
 
 const build = (patch: Partial<JenkinsBuild> = {}): JenkinsBuild => ({
@@ -33,6 +35,8 @@ const build = (patch: Partial<JenkinsBuild> = {}): JenkinsBuild => ({
   maskedParams: [],
   ...patch,
 });
+
+const A = { name: "A", value: "1" };
 
 const input = (patch: Partial<DecisionInput> = {}): DecisionInput => ({
   job: "Server-Build",
@@ -72,6 +76,58 @@ const cases: Array<[string, Partial<DecisionInput>, Decision, Partial<DecisionPo
     { build: build({ causes: [{ kind: "user", userId: "QM-Bot" }] }) },
     { action: "skip", reason: "bot_triggered" },
     { causes: ["timer", "user"] },
+  ],
+  [
+    "a bot user found by display name is a bot build",
+    { build: build({ causes: [{ kind: "user", userName: "AI-Agent" }] }) },
+    { action: "skip", reason: "bot_triggered" },
+    { botUsers: ["qm-bot", "ai-agent"] },
+  ],
+  [
+    "an upstream build whose chain contains the bot is a bot build",
+    {
+      build: build({
+        causes: [
+          { kind: "upstream", upstream: [{ kind: "upstream", upstream: [{ kind: "user", userId: "qm-bot" }] }] },
+        ],
+      }),
+    },
+    { action: "skip", reason: "bot_triggered" },
+  ],
+  [
+    "an upstream build whose chain ends in a timer is rerun",
+    { build: build({ causes: [{ kind: "upstream", upstream: [{ kind: "timer" }] }] }) },
+    { action: "rerun" },
+  ],
+  [
+    "a job with a dangerous parameter is refused even when it is on the rerun list",
+    {
+      job: "Danger",
+      definedParams: ["A", "DROP_DATABASE"],
+      build: build({ params: [A, { name: "DROP_DATABASE", value: "false" }] }),
+    },
+    { action: "skip", reason: "dangerous_parameters", notice: "needs_attention" },
+    { rerunJobs: ["Danger"] },
+  ],
+  [
+    "a dangerous parameter name matches whatever its case",
+    {
+      job: "Danger",
+      definedParams: ["A", "Target_Server"],
+      build: build({ params: [A, { name: "Target_Server", value: "x" }] }),
+    },
+    { action: "skip", reason: "dangerous_parameters", notice: "needs_attention" },
+    { rerunJobs: ["Danger"], dangerParams: ["TARGET_SERVER"] },
+  ],
+  [
+    "a dangerous job runs once it is acknowledged",
+    {
+      job: "Danger",
+      definedParams: ["A", "DROP_DATABASE"],
+      build: build({ params: [A, { name: "DROP_DATABASE", value: "false" }] }),
+    },
+    { action: "rerun" },
+    { rerunJobs: ["Danger"], dangerAckJobs: ["Danger"] },
   ],
   ["a job outside the rerun list is skipped", { job: "LLM-Wiki" }, { action: "skip", reason: "job_not_enabled" }],
   [

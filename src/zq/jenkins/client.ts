@@ -18,9 +18,11 @@ const TAIL_BYTES = 4096;
 
 export type JenkinsCauseKind = "timer" | "scm" | "upstream" | "user" | "remote" | "other";
 
-interface JenkinsCause {
+export interface JenkinsCause {
   kind: JenkinsCauseKind;
   userId?: string;
+  userName?: string;
+  upstream?: JenkinsCause[];
 }
 
 export interface JenkinsParam {
@@ -77,6 +79,8 @@ interface RawParam {
 interface RawCause {
   _class?: string;
   userId?: string;
+  userName?: string;
+  upstreamCauses?: RawCause[];
 }
 
 interface RawBuild {
@@ -90,7 +94,7 @@ interface RawBuild {
 }
 
 const BUILD_TREE =
-  "number,url,building,result,timestamp,duration,actions[causes[_class,userId],parameters[_class,name,value]]";
+  "number,url,building,result,timestamp,duration,actions[causes[_class,userId,userName,upstreamCauses[_class,userId,userName,upstreamCauses[_class,userId,userName]]],parameters[_class,name,value]]";
 
 const CAUSE_KINDS: ReadonlyArray<[RegExp, JenkinsCauseKind]> = [
   [/TimerTrigger/, "timer"],
@@ -118,6 +122,16 @@ function readParams(actions: RawBuild["actions"]): Pick<JenkinsBuild, "params" |
   return { params, maskedParams };
 }
 
+function toCause(c: RawCause): JenkinsCause {
+  const upstream = (c.upstreamCauses ?? []).map(toCause);
+  return {
+    kind: causeKind(c._class),
+    ...(c.userId ? { userId: c.userId } : {}),
+    ...(c.userName ? { userName: c.userName } : {}),
+    ...(upstream.length > 0 ? { upstream } : {}),
+  };
+}
+
 function toBuild(raw: RawBuild): JenkinsBuild {
   return {
     number: Number(raw.number),
@@ -126,9 +140,7 @@ function toBuild(raw: RawBuild): JenkinsBuild {
     result: raw.result ?? null,
     timestamp: Number(raw.timestamp ?? 0),
     duration: Number(raw.duration ?? 0),
-    causes: (raw.actions ?? []).flatMap((a) =>
-      (a.causes ?? []).map((c) => ({ kind: causeKind(c._class), ...(c.userId ? { userId: c.userId } : {}) })),
-    ),
+    causes: (raw.actions ?? []).flatMap((a) => (a.causes ?? []).map(toCause)),
     ...readParams(raw.actions),
   };
 }

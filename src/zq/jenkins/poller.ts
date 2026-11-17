@@ -193,10 +193,10 @@ export function createJenkinsPoller(deps: JenkinsPollerDeps): JenkinsPoller {
           job,
           build,
           newer: builds.filter(
-            (b) => b.number > build.number && !ours.has(b.number) && !causedByBot(b, policy.botUser),
+            (b) => b.number > build.number && !ours.has(b.number) && !causedByBot(b, policy.botUsers),
           ),
           rerunNumbers: ours,
-          definedParams: candidate ? await definedParams() : [],
+          definedParams: candidate && policy.rerunJobs.includes(job) ? await definedParams() : [],
           claimsLastHour: claims,
           chainFingerprints: chain,
           now: now(),
@@ -281,7 +281,7 @@ export function createJenkinsPoller(deps: JenkinsPollerDeps): JenkinsPoller {
           (b) =>
             b.number > record.number &&
             !taken.has(b.number) &&
-            causedByBot(b, policy.botUser) &&
+            causedByBot(b, policy.botUsers) &&
             fingerprint(b.params) === record.fingerprint,
         );
         if (match) {

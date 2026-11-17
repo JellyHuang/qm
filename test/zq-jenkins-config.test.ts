@@ -23,7 +23,18 @@ test("every Jenkins switch is off by default and the monitored jobs are the eigh
     [false, false, false, undefined, undefined],
   );
   assert.equal(jenkins.jobs.length, 8);
-  assert.deepEqual(jenkins.rerunJobs, jenkins.jobs);
+  assert.deepEqual(jenkins.rerunJobs, [
+    "CheckServerConfig",
+    "LLM-Wiki",
+    "Server-Build",
+    "Server-Clang-Tidy",
+    "Server-CodeReview",
+    "Server-Config",
+  ]);
+  assert.deepEqual(
+    [jenkins.dangerParams, jenkins.dangerAckJobs, jenkins.botIds],
+    [["DROP_DATABASE", "TARGET_SERVER", "SOURCE"], [], []],
+  );
   assert.deepEqual(
     [jenkins.hourlyCap, jenkins.maxAgeMs, jenkins.poll.intervalMs, jenkins.failureResults, jenkins.causes],
     [3, 30 * 60_000, 120_000, ["FAILURE"], ["timer", "scm", "upstream"]],
@@ -45,12 +56,19 @@ test("every setting is read from its environment name", () => {
     ZQ_JENKINS_FAILURE_RESULTS: "FAILURE,UNSTABLE",
     ZQ_JENKINS_RERUN_CAUSES: "timer,user",
     ZQ_JENKINS_OWNERS: "A=alice, B=bob",
+    ZQ_JENKINS_BOT_IDS: "AI-Agent",
+    ZQ_JENKINS_DANGER_PARAMS: "wipe, Reset",
+    ZQ_JENKINS_DANGER_ACK_JOBS: "B",
     ZQ_JENKINS_DEFAULT_OWNER: "carol",
   });
   assert.deepEqual(jenkins.credential, { user: FAKE_USER, secret: FAKE_SECRET });
   assert.deepEqual(
     [jenkins.rerun, jenkins.notify, jenkins.jobs, jenkins.rerunJobs, jenkins.hourlyCap, jenkins.poll.intervalMs],
     [true, { live: true, channelId: "chan1" }, ["A", "B"], ["B"], 5, 60_000],
+  );
+  assert.deepEqual(
+    [jenkins.botIds, jenkins.dangerParams, jenkins.dangerAckJobs],
+    [["AI-Agent"], ["WIPE", "RESET"], ["B"]],
   );
   assert.deepEqual(
     [jenkins.maxAgeMs, jenkins.failureResults, jenkins.causes, jenkins.owners, jenkins.defaultOwner],
@@ -70,6 +88,7 @@ test("the switches refuse to start without what they need, and bad values are re
   );
   assert.throws(() => zqConfigFromEnv({ ZQ_JENKINS_FAILURE_RESULTS: "BROKEN" }), /ZQ_JENKINS_FAILURE_RESULTS/);
   assert.throws(() => zqConfigFromEnv({ ZQ_JENKINS_RERUN_CAUSES: "nobody" }), /ZQ_JENKINS_RERUN_CAUSES/);
+  assert.throws(() => zqConfigFromEnv({ ZQ_JENKINS_DANGER_ACK_JOBS: "Server-Run" }), /ZQ_JENKINS_DANGER_ACK_JOBS/);
   assert.throws(() => zqConfigFromEnv({ ZQ_JENKINS_OWNERS: "alice" }), /ZQ_JENKINS_OWNERS/);
   assert.throws(() => zqConfigFromEnv({ ZQ_JENKINS_POLL_SECONDS: "5" }), /ZQ_JENKINS_POLL_SECONDS/);
 });
