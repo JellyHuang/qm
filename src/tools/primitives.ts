@@ -1,4 +1,6 @@
+import { attestableAudience, attestedPerson } from "../directory/person.ts";
 import { zqChildren, type ProposeInput } from "../zq/children.ts";
+import { zqGitIdentity, type IdentityArgs } from "../zq/git-mcp/identity.ts";
 import { openAgentsService } from "../integrations/openagents/service.ts";
 import { trialCronScript, type CronScriptTrial } from "../cron/script.ts";
 import type { AdminToolAccess } from "./admin.ts";
@@ -255,6 +257,7 @@ export interface ToolContext extends SurfaceToolDeps {
   callMcpTool(name: string, args: Record<string, unknown>, approval?: string): Promise<string>;
   callOpenAgents?(args: Record<string, unknown>): Promise<string>;
   proposeZqChildren?(input: ProposeInput): Promise<string>;
+  callZqGitIdentity?(args: IdentityArgs): Promise<string>;
   mcpToolNeedsApproval(name: string, args: Record<string, unknown>): Promise<boolean>;
   awaitClientResult(
     callId: string,
@@ -1202,6 +1205,18 @@ export function createToolContext(deps: ToolContextDeps): ToolContext {
       if (!service) throw new Error("adding execution orders is not enabled on this deployment");
       if (!deps.createdBy) throw new Error("no requester for this turn");
       return service.propose(input, deps.createdBy);
+    },
+
+    async callZqGitIdentity(args: IdentityArgs): Promise<string> {
+      const service = zqGitIdentity();
+      if (!service) throw new Error("git author names are not enabled on this deployment");
+      return service.call(args, {
+        principalId: attestedPerson(deps.createdBy, "zq_git_identity"),
+        human: deps.humanTurn === true,
+        orgAdmin: deps.admin?.operationsAvailable === true,
+        privateAudience: attestableAudience(deps.createdBy, deps.audienceScopeId),
+        scope: deps.audienceScopeId ?? writableScopeId,
+      });
     },
 
     async mcpToolNeedsApproval(name: string, args: Record<string, unknown>): Promise<boolean> {
