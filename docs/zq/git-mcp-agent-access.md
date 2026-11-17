@@ -5,7 +5,7 @@ Decision: route B, an in-process agent tool `zq_git` that uses the direct QM-sid
 ## What it is
 
 - Off by default. `ZQ_GIT_AGENT=1` offers one tool, `zq_git`, with eight read operations: `list_repos`, `list_commits`, `get_commit`, `get_diff`, `read_file`, `blame`, `search`, `diff_xlsx`. It needs `ZQ_GIT_MCP_URL` and `ZQ_GIT_MCP_SECRET`; `ZQ_GIT_AGENT=1` without them stops startup with a configuration error. The URL and secret alone enable nothing.
-- `check_updates` is not an operation and no argument named `ack` exists. Each operation has a strict schema, so an unknown argument is refused before anything is sent. The set of operations is a constant in the module, so the tool cannot be made to call any other service tool.
+- `check_updates` is not an operation and no argument named `ack` exists. Each operation has a strict schema, so an unknown argument is rejected at the agent entry, before any request is made. The set of operations is a constant in the module, so the tool cannot be made to call any other service tool. A forged `check_updates` is rejected by that same input validation in core and never reaches the service. The service itself does not refuse it: the plugin's caller label guard for `ack` is not implemented in route B, so the protection of `check_updates` is entirely on the core side.
 - Every call carries `X-QM-Caller`: the person who asked (their canonical principal id), or `qm-job` for a turn that has no person (scheduled work, system actors). The service writes it into its audit rows. The secret goes only in the `Authorization` header and is removed from every error.
 - On first use and every five minutes the tool runs `client.verify()`. A service that drops a tool, adds a write-like tool or a tool taking raw git arguments disables `zq_git` with a clear message until a later check passes.
 - The tool is read-only, so it is also offered in read-only turns.
@@ -14,7 +14,7 @@ Decision: route B, an in-process agent tool `zq_git` that uses the direct QM-sid
 ## Why route B
 
 - No extra network exposure: the service stays on loopback, bearer secret held by core only.
-- `check_updates` is unreachable by construction (a fixed operation list), so the agent cannot advance stored branch tips. This needs no guard in the plugin.
+- `check_updates` is unreachable from the agent by construction (a fixed operation list checked in core before any request), so the agent cannot advance stored branch tips. No plugin guard is built; anyone who holds the shared secret can still call `check_updates` on the service directly.
 - Nothing to relax in core: the connector fetch refuses loopback even when the origin is listed, and this route does not use it.
 - Cost: a tool description and eight argument schemas to maintain in core; they mirror the plugin's schemas and are checked by tests against a fake service.
 - The poller (`createGitCommitPoller`) keeps its own client and the label it is configured with; it is the only caller of `check_updates`.
