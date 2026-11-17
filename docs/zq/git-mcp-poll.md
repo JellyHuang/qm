@@ -1,6 +1,6 @@
 # Git commit poll (phase 2, default off; phase 3 author mapping, default off)
 
-QM asks the zq-git-mcp service for new commits on a schedule. With `ZQ_GIT_POLL=1` alone it only counts and logs them: no author mapping, no messages, no table in QM. With `ZQ_GIT_AUTHOR_MAPPING=1` as well (phase 3, see the last section) it also classifies each commit author and records them. It never sends a message in either case.
+QM asks the zq-git-mcp service for new commits on a schedule. With `ZQ_GIT_POLL=1` alone it only counts and logs them: no author mapping, no messages, no table in QM. With `ZQ_GIT_AUTHOR_MAPPING=1` as well (phase 3, see the last section) it also classifies each commit author by name and records them. It never sends a message in either case.
 
 ## What runs
 
@@ -40,20 +40,21 @@ The stored tips live in the service. After a QM restart the poller simply contin
 
 ## Phase 3: author mapping composed into the poll (default off)
 
-Setting: `ZQ_GIT_AUTHOR_MAPPING=1` (default off). Nothing else is new: the retention, reopen, bot, external and domain alias settings are described in `docs/zq/author-mapping.md`.
+Settings, all off or inert by default (full list in `docs/zq/author-mapping.md`): `ZQ_GIT_AUTHOR_MAPPING=1` turns the layer on; `ZQ_GIT_AUTHOR_BIND=1` offers the `zq_git_identity` tool; `ZQ_GIT_MATTERMOST_EMAIL_FALLBACK=1` adds a last-resort email match; `ZQ_GIT_BOT_TOKENS`, `ZQ_GIT_GENERIC_NAMES`, `ZQ_GIT_IDENTITY_ADMINS` and `ZQ_GIT_BIND_MAX_PER_PERSON` tune rules and limits. `ZQ_GIT_DOMAIN_ALIASES` is removed.
 
-| Combination                                       | Result                                                                                              |
-| ------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| defaults, URL and secret only, `ZQ_GIT_POLL=1`    | as phase 2: no author table requested, no directory lookup                                          |
-| `ZQ_GIT_AUTHOR_MAPPING=1` without `ZQ_GIT_POLL=1` | startup configuration error: `ZQ_GIT_AUTHOR_MAPPING needs ZQ_GIT_POLL=1`                            |
-| both on, Mattermost configured                    | the poll handler also runs the author mapper; the two tables below are created at the next start    |
-| both on, Mattermost not configured                | startup error: `ZQ_GIT_AUTHOR_MAPPING needs Mattermost`; nothing is built and no table is requested |
+Commit authors are recognised by their git author NAME (normalised), not by email: a person binds the names they see with `git config user.name`, the PM keeps an ignore list for pipeline scripts and outside people, and a departed person's commits go to the PM. The committer is never read.
 
-Without a Mattermost directory every author would be classified unmapped and written to the durable queue as a false entry, so the combination is refused instead of warned about. The people directory is `createMattermostPeopleDirectory(mattermost.mmUserIdsOfEmail)`, passed to `createGitMcpRuntime` in `src/wiring.ts` only when Mattermost is configured.
+| Combination                                                   | Result                                                                                                                                      |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| defaults, URL and secret only, `ZQ_GIT_POLL=1`                | as phase 2: no author table requested, no directory lookup                                                                                  |
+| `ZQ_GIT_AUTHOR_MAPPING=1` without `ZQ_GIT_POLL=1`             | startup configuration error: `ZQ_GIT_AUTHOR_MAPPING needs ZQ_GIT_POLL=1`                                                                    |
+| `ZQ_GIT_AUTHOR_MAPPING=1` and `ZQ_GIT_POLL=1`                 | the poll handler also runs the author mapper; the two tables below are created at the next start; no Mattermost directory call, none needed |
+| plus `ZQ_GIT_AUTHOR_BIND=1`                                   | the `zq_git_identity` tool is offered (never in read-only turns); no further table. Without the mapping switch: startup error               |
+| plus `ZQ_GIT_MATTERMOST_EMAIL_FALLBACK=1`, Mattermost present | an author not claimed by any name row is also matched against Mattermost verified emails; without Mattermost: startup error                 |
 
-Composition: the sink handed to `dedupeBySha` first logs the per-branch count line, then calls `mapper.handle(batches)`. The mapper classifies each commit (person, unmapped, ambiguous, bot, external), writes unmapped and ambiguous authors to the queue, and hands person groupings to the recording sink (memory only, `createRecordingSink`, injectable as `authorSink`). No message of any kind is sent; notification is a later phase behind its own switch. The sha is remembered by the LRU only after the whole handler succeeded; the queue also ignores shas it already counted, so a failed handler followed by a retry, or a restart that redelivers a batch, does not double a count. A directory or store failure fails the handler, nothing is acknowledged and the next run retries. The recording sink is memory only and is empty after a restart.
+Composition: the sink handed to `dedupeBySha` first logs the per-branch count line, then calls `mapper.handle(batches)`. The mapper classifies each commit (person, ignored, bot, external, unmapped, ambiguous), writes unmapped and ambiguous authors to the queue, hands person groupings to the recording sink and departed persons' commits to its PM channel (memory only, `createRecordingSink`, injectable as `authorSink`). No message of any kind is sent; notification is a later phase behind its own switch. The sha is remembered by the LRU only after the whole handler succeeded; the queue also ignores shas it already counted, so a failed handler followed by a retry, or a restart that redelivers a batch, does not double a count. A name store, queue or (with the fallback) directory failure fails the handler, nothing is acknowledged and the next run retries. The recording sink is memory only and is empty after a restart.
 
-Tables created at the next start with both switches on, and only then: `zq_git_author_aliases` and `zq_git_unmapped_authors`, the approved DDL in `docs/zq-git-mcp-ddl-proposal.md` section 8 on `oa/spike-git` (listed in `docs/zq/author-mapping.md`). No other table is added. The queue prune function stays unscheduled. Log lines carry only email hashes (`hashEmail`), the reason and a count.
+Tables created at the next start with both switches on, and only then: `zq_git_author_aliases` (one row per normalised name, kind `person` or `ignored`) and `zq_git_unmapped_authors` (keyed by name), described in `docs/zq/author-mapping.md`. No other table is added. The queue prune function stays unscheduled. Log lines carry only hashes of names and emails, the reason and a count; ignored commits are counted in the log per name hash and reason only.
 
 ## Rollback
 
