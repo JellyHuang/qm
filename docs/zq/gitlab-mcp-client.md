@@ -1,16 +1,18 @@
 # GitLab MCP: the QM side
 
-QM reads the seven GitLab repositories only through the `zq-git-mcp` service (`plugins/zq-git-mcp`). Nothing here is wired into production yet; this document describes the pieces in `src/zq/git-mcp/`.
+QM reads the seven GitLab repositories only through the `zq-git-mcp` service (`plugins/zq-git-mcp`). Only the `zq_git` agent tool is wired (off unless `ZQ_GIT_AGENT=1`); this document describes the pieces in `src/zq/git-mcp/`.
 
-## Register the service as an MCP server
+## How agents reach the service
 
-An organization administrator registers it once, like OpenProject. The service listens on loopback and takes a shared secret, so the registration uses bearer auth:
+Agents use the in-process tool `zq_git` when `ZQ_GIT_AGENT=1` (needs `ZQ_GIT_MCP_URL` and `ZQ_GIT_MCP_SECRET`); see `docs/zq/git-mcp-agent-access.md`. It offers the eight read operations and never `check_updates`. Registering the service as a connector is not used and cannot work against the service as deployed: it listens on `127.0.0.1`, and core's connector fetch refuses loopback addresses even when the origin is listed in `PRIVATE_NETWORK_ALLOWED_ORIGINS` (the list only opens private addresses, never loopback, link-local or metadata addresses).
+
+For a hypothetical deployment where the service listens on a private non-loopback address, not used and not supported by the plugin today, the registration would list that origin in `PRIVATE_NETWORK_ALLOWED_ORIGINS` and use bearer auth:
 
 ```
 PUT /v1/admin/mcp-servers/zq-git
 {
   "name": "ZQ Git",
-  "url": "http://127.0.0.1:8765/mcp",
+  "url": "http://<private-address>:8765/mcp",
   "auth": "bearer",
   "bearerToken": "<shared secret>",
   "readOnly": true,
@@ -18,11 +20,11 @@ PUT /v1/admin/mcp-servers/zq-git
 }
 ```
 
-`GIT_MCP_CONTRACT` (`src/zq/git-mcp/contract.ts`) requires exactly `list_repos`, `list_commits`, `get_commit`, `get_diff`, `read_file`, `blame`, `search`, `diff_xlsx`, `check_updates`, and forbids names starting with `push`, `write`, `archive`, `bundle`, `clone`, `delete`, `merge`, `create`, `update`, `remove`, `upload`, `commit_`, `fetch`, `pull`, `exec`, `run` or `git_`. With the contract, the existing connector code rejects a server that drops a tool or adds a forbidden one at save and at every refresh (`contract_violation`, tools withdrawn), as for OpenProject.
+Such a registration would also offer `check_updates` to agents, because the contract requires all nine tools.
 
-The names alone cannot say whether a tool takes a url or raw git arguments, or whether a differently named tool appeared. `GitMcpClient.verify()` therefore lists the tools and runs `assertGitMcpListing`: any tool outside the nine is `unexpected`, and any input property named like `url`, `remote`, `args`, `argv`, `command` or `git_args` is a violation. `verify()` is meant to run at start and at every refresh by the job that uses the client.
+`GIT_MCP_CONTRACT` (`src/zq/git-mcp/contract.ts`) requires exactly `list_repos`, `list_commits`, `get_commit`, `get_diff`, `read_file`, `blame`, `search`, `diff_xlsx`, `check_updates`, and forbids names starting with `push`, `write`, `archive`, `bundle`, `clone`, `delete`, `merge`, `create`, `update`, `remove`, `upload`, `commit_`, `fetch`, `pull`, `exec`, `run` or `git_`.
 
-When the server is registered with `attestActor` (catalog, shared bearer), the connector sends the signed-in person in `x-qm-actor`; the service uses it as the audit label when no `X-QM-Caller` is present.
+The names alone cannot say whether a tool takes a url or raw git arguments, or whether a differently named tool appeared. `GitMcpClient.verify()` therefore lists the tools and runs `assertGitMcpListing`: any tool outside the nine is `unexpected`, and any input property named like `url`, `remote`, `args`, `argv`, `command` or `git_args` is a violation. The `zq_git` tool runs it on first use and every five minutes and refuses to serve while it fails.
 
 ## Client
 
@@ -45,10 +47,11 @@ When the server is registered with `attestActor` (catalog, shared bearer), the c
 | ------------------------- | ------- | ------------------------------------------------------------------------------------------- |
 | `ZQ_GIT_MCP_URL`          | unset   | `http(s)` address of the service's `/mcp` endpoint; must be set together with the secret    |
 | `ZQ_GIT_MCP_SECRET`       | unset   | The shared bearer secret; never logged, never put in an error                               |
+| `ZQ_GIT_AGENT`            | off     | `1` offers the `zq_git` agent tool; needs the URL and the secret, else startup fails        |
 | `ZQ_GIT_EXTERNAL_DOMAINS` | empty   | Comma list of non-company email domains (`@yizhu`, `partner.example`); subdomains match too |
 | `ZQ_GIT_BOT_NAMES`        | empty   | Comma list of bot author names or email local parts (`ZQBot.compiler`)                      |
 
-They are parsed into `ZqConfig.gitMcp` and `ZqConfig.gitAuthors` and read by nothing in production yet. Environment variables are the only source.
+They are parsed into `ZqConfig.gitMcp`, `ZqConfig.gitAgent` and `ZqConfig.gitAuthors`; only `gitAgent` is read in production. Environment variables are the only source.
 
 ## Audit retention
 
