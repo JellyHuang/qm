@@ -71,7 +71,7 @@ export interface JenkinsStore {
   pruneAudit(): Promise<number>;
 }
 
-export const JENKINS_AUDIT_RETENTION_DAYS = 90;
+const JENKINS_AUDIT_RETENTION_DAYS = 90;
 
 const MAX_NOTICE_ATTEMPTS = 5;
 
