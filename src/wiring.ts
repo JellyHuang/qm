@@ -2656,7 +2656,11 @@ export function buildApp(
   setOpenAgentsService(openAgents);
   zq =
     mattermost &&
-    (config.zq.scanner.enabled || config.zq.reports.enabled || config.zq.identityMap || config.zq.childOrders)
+    (config.zq.scanner.enabled ||
+      config.zq.reports.enabled ||
+      config.zq.identityMap ||
+      config.zq.childOrders ||
+      config.zq.jenkins.poll.enabled)
       ? createZqRuntime({
           config: config.zq,
           call: (name, args, principalId) => mcpToolService.call(name, args, principalId),

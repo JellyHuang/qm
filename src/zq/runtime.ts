@@ -13,6 +13,15 @@ import { createZqReminderStore, type ZqReminder } from "./reminders.ts";
 import { createZqReports, type ZqReportDraft } from "./reports.ts";
 import { createReportSource } from "./report-source.ts";
 import type { ScanPerson, ZqFeatureRef } from "./scanner.ts";
+import { createJenkinsClient } from "./jenkins/client.ts";
+import { createRecordingSink } from "./jenkins/notices.ts";
+import { createJenkinsPoller } from "./jenkins/poller.ts";
+import {
+  createJenkinsStore,
+  type JenkinsAuditRow,
+  type JenkinsBuildRecord,
+  type JenkinsNotice,
+} from "./jenkins/store.ts";
 import { createZqService, type ZqRunState } from "./service.ts";
 
 const TICK_MS = 60_000;
@@ -187,13 +196,64 @@ export function createZqRuntime(deps: {
     { label: "zq scanner" },
   );
 
+  const jenkins = config.jenkins;
+  const jenkinsPoller =
+    jenkins.poll.enabled && jenkins.url && jenkins.credential
+      ? createJenkinsPoller({
+          client: createJenkinsClient({
+            baseUrl: jenkins.url,
+            user: jenkins.credential.user,
+            password: jenkins.credential.secret,
+            jobs: jenkins.jobs,
+          }),
+          store: createJenkinsStore({
+            builds: deps.map<JenkinsBuildRecord>("zq_jenkins_builds"),
+            audits: deps.map<JenkinsAuditRow>("zq_jenkins_audit"),
+            noticeMap: deps.map<JenkinsNotice>("zq_jenkins_notices"),
+          }),
+          policy: {
+            failureResults: jenkins.failureResults,
+            rerunJobs: jenkins.rerunJobs,
+            causes: jenkins.causes,
+            maxAgeMs: jenkins.maxAgeMs,
+            hourlyCap: jenkins.hourlyCap,
+            botUser: jenkins.credential.user,
+          },
+          jobs: jenkins.jobs,
+          live: jenkins.rerun,
+          noticeMode: jenkins.notify.live && chat.postToChannel ? "live" : "dry-run",
+          channelId: jenkins.notify.channelId ?? "",
+          sink:
+            jenkins.notify.live && chat.postToChannel
+              ? { send: ({ channelId, text }) => chat.postToChannel!(channelId, text) }
+              : createRecordingSink(),
+          owner: (job) => jenkins.owners[job] ?? jenkins.defaultOwner,
+          onError: (error) =>
+            console.error(`[zq jenkins] ${error.kind}${error.job ? ` ${error.job}` : ""}: ${error.message}`),
+          createSweeper: (work, intervalMs, opts) =>
+            deps.createSweeper(
+              () =>
+                deps.leaderLease.hold("zq:jenkins", async () => {
+                  await work();
+                }),
+              intervalMs,
+              opts,
+            ),
+          intervalMs: jenkins.poll.intervalMs,
+          ...(deps.now ? { now: deps.now } : {}),
+        })
+      : undefined;
+
   return {
     identityAdmin: identity,
     ...(children ? { children } : {}),
     start() {
       if (config.scanner.enabled || config.reports.enabled) sweeper.start();
+      jenkinsPoller?.start();
     },
-    stop: () => sweeper.stop(),
+    stop: async () => {
+      await Promise.all([sweeper.stop(), jenkinsPoller?.stop()]);
+    },
     async decide(op, id, approve, clickerMmUserId) {
       if (op === "children") {
         if (!children) throw new Error("增加子单的功能没有开启");

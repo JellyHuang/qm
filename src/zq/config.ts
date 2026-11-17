@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { Cron } from "croner";
-import { JENKINS_JOBS } from "./jenkins/client.ts";
+import { JENKINS_JOBS, type JenkinsCauseKind } from "./jenkins/client.ts";
 import { parseContract, type Duty, type ZqContract } from "./contract.ts";
 
 export interface ZqConfig {
@@ -19,8 +19,25 @@ export interface ZqConfig {
   reports: { enabled: boolean; dailyCron?: string; weeklyCron?: string };
   gitMcp?: { url: string; secret: string };
   gitAuthors: { externalDomains: readonly string[]; botNames: readonly string[] };
-  jenkins: { url?: string; rerun: boolean; jobs: readonly string[]; rerunJobs: readonly string[]; hourlyCap: number };
+  jenkins: {
+    url?: string;
+    credential?: { user: string; secret: string };
+    poll: { enabled: boolean; intervalMs: number };
+    rerun: boolean;
+    notify: { live: boolean; channelId?: string };
+    jobs: readonly string[];
+    rerunJobs: readonly string[];
+    hourlyCap: number;
+    maxAgeMs: number;
+    failureResults: readonly string[];
+    causes: readonly JenkinsCauseKind[];
+    owners: Readonly<Record<string, string>>;
+    defaultOwner?: string;
+  };
 }
+
+const FAILURE_RESULTS = ["FAILURE", "UNSTABLE", "ABORTED", "NOT_BUILT"] as const;
+const CAUSE_KINDS = ["timer", "scm", "upstream", "user", "remote", "other"] as const;
 
 const DEFAULT_CRON = "*/5 * * * *";
 const DEFAULT_TIMEZONE = "Asia/Shanghai";
@@ -72,6 +89,26 @@ function jobNames(name: string, raw: string | undefined, fallback: readonly stri
   return list;
 }
 
+function choices<T extends string>(name: string, raw: string | undefined, allowed: readonly T[], fallback: T[]): T[] {
+  const list = names(raw);
+  if (list.length === 0) return fallback;
+  for (const item of list)
+    if (!(allowed as readonly string[]).includes(item))
+      throw new Error(`${name} must list ${allowed.join(", ")}: ${item}`);
+  return list as T[];
+}
+
+function owners(raw: string | undefined): Record<string, string> {
+  return Object.fromEntries(
+    names(raw).map((pair) => {
+      const [job, owner, ...extra] = pair.split("=").map((s) => s.trim());
+      if (!job || !owner || extra.length > 0)
+        throw new Error(`ZQ_JENKINS_OWNERS must look like Server-Build=alice: ${pair}`);
+      return [job, owner];
+    }),
+  );
+}
+
 export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   const cron = env.ZQ_SCANNER_CRON?.trim() || DEFAULT_CRON;
   const timezone = env.ZQ_SCANNER_TZ?.trim() || DEFAULT_TIMEZONE;
@@ -99,9 +136,19 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   const jenkinsUrl = env.ZQ_JENKINS_URL?.trim().replace(/\/+$/, "");
   if (jenkinsUrl && !/^https?:\/\//.test(jenkinsUrl)) throw new Error("ZQ_JENKINS_URL must be an http(s) URL");
   const jenkinsRerun = on(env.ZQ_JENKINS_RERUN);
-  if (jenkinsRerun && !jenkinsUrl) throw new Error("ZQ_JENKINS_RERUN needs ZQ_JENKINS_URL");
+  const jenkinsPoll = on(env.ZQ_JENKINS_POLL);
+  const jenkinsNotify = on(env.ZQ_JENKINS_NOTIFY);
+  const notifyChannel = env.ZQ_JENKINS_NOTIFY_CHANNEL?.trim();
+  const botUser = env.JENKINS_QM_BOT_USER?.trim();
+  const botSecret = env.JENKINS_QM_BOT_TOKEN?.trim() || env.JENKINS_QM_BOT_PASSWORD?.trim();
+  if (jenkinsPoll && !jenkinsUrl) throw new Error("ZQ_JENKINS_POLL needs ZQ_JENKINS_URL");
+  if (jenkinsPoll && !(botUser && botSecret))
+    throw new Error("ZQ_JENKINS_POLL needs JENKINS_QM_BOT_USER and JENKINS_QM_BOT_TOKEN (or JENKINS_QM_BOT_PASSWORD)");
+  if (jenkinsRerun && !jenkinsPoll) throw new Error("ZQ_JENKINS_RERUN needs ZQ_JENKINS_POLL");
+  if (jenkinsNotify && !(jenkinsPoll && notifyChannel))
+    throw new Error("ZQ_JENKINS_NOTIFY needs ZQ_JENKINS_POLL and ZQ_JENKINS_NOTIFY_CHANNEL");
   const jenkinsJobs = jobNames("ZQ_JENKINS_JOBS", env.ZQ_JENKINS_JOBS, JENKINS_JOBS);
-  const rerunJobs = jobNames("ZQ_JENKINS_RERUN_JOBS", env.ZQ_JENKINS_RERUN_JOBS, []);
+  const rerunJobs = jobNames("ZQ_JENKINS_RERUN_JOBS", env.ZQ_JENKINS_RERUN_JOBS, jenkinsJobs);
   const outside = rerunJobs.filter((job) => !jenkinsJobs.includes(job));
   if (outside.length > 0)
     throw new Error(`ZQ_JENKINS_RERUN_JOBS names jobs outside ZQ_JENKINS_JOBS: ${outside.join(", ")}`);
@@ -139,10 +186,27 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
     },
     jenkins: {
       ...(jenkinsUrl ? { url: jenkinsUrl } : {}),
+      ...(botUser && botSecret ? { credential: { user: botUser, secret: botSecret } } : {}),
+      poll: {
+        enabled: jenkinsPoll,
+        intervalMs: integer("ZQ_JENKINS_POLL_SECONDS", env.ZQ_JENKINS_POLL_SECONDS, 120, 30, 3600) * 1000,
+      },
       rerun: jenkinsRerun,
+      notify: { live: jenkinsNotify, ...(notifyChannel ? { channelId: notifyChannel } : {}) },
       jobs: jenkinsJobs,
       rerunJobs,
       hourlyCap: integer("ZQ_JENKINS_RERUN_HOURLY_CAP", env.ZQ_JENKINS_RERUN_HOURLY_CAP, 3, 1, 100),
+      maxAgeMs: integer("ZQ_JENKINS_MAX_AGE_MINUTES", env.ZQ_JENKINS_MAX_AGE_MINUTES, 30, 1, 1440) * 60_000,
+      failureResults: choices("ZQ_JENKINS_FAILURE_RESULTS", env.ZQ_JENKINS_FAILURE_RESULTS, FAILURE_RESULTS, [
+        "FAILURE",
+      ]),
+      causes: choices("ZQ_JENKINS_RERUN_CAUSES", env.ZQ_JENKINS_RERUN_CAUSES, CAUSE_KINDS, [
+        "timer",
+        "scm",
+        "upstream",
+      ]),
+      owners: owners(env.ZQ_JENKINS_OWNERS),
+      ...(env.ZQ_JENKINS_DEFAULT_OWNER?.trim() ? { defaultOwner: env.ZQ_JENKINS_DEFAULT_OWNER.trim() } : {}),
     },
   };
 }
