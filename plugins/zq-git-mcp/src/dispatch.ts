@@ -3,7 +3,7 @@ import { errMessage, swallow } from "../../chassis/src/errors.ts";
 import type { AuditResult, AuditSink } from "./audit.ts";
 import { BlobFetchError } from "./blobs.ts";
 import { DiskSpaceLowError } from "./scratch.ts";
-import type { ToolContext, ToolDef, Services } from "./tools/types.ts";
+import { ToolFailure, type ToolContext, type ToolDef, type Services } from "./tools/types.ts";
 import { fitToChars } from "./truncate.ts";
 import { GitDenied, printable } from "./validate.ts";
 
@@ -34,7 +34,13 @@ export interface DispatcherOptions {
 const MAX_ARGS_JSON = 4096;
 const ENVELOPE_RESERVE = 160;
 
-function describeFailure(e: unknown): { code: string; message: string; result: AuditResult } {
+function describeFailure(e: unknown): {
+  code: string;
+  message: string;
+  result: AuditResult;
+  details?: Record<string, unknown>;
+} {
+  if (e instanceof ToolFailure) return { code: e.code, message: e.message, result: "error", details: e.details };
   if (e instanceof GitDenied) return { code: e.reason, message: e.message, result: `refused:${e.reason}` };
   if (e instanceof BlobFetchError) return { code: "fetch_failed", message: e.message, result: "error" };
   if (e instanceof DiskSpaceLowError) return { code: "disk_space_low", message: e.message, result: "error" };
@@ -101,7 +107,10 @@ export function createDispatcher(options: DispatcherOptions): Dispatcher {
       } catch (e) {
         const failure = describeFailure(e);
         result = failure.result;
-        reply = { text: JSON.stringify({ error: { code: failure.code, message: failure.message } }), isError: true };
+        reply = {
+          text: JSON.stringify({ ...failure.details, error: { code: failure.code, message: failure.message } }),
+          isError: true,
+        };
       }
       const argsJson = JSON.stringify(rawArgs ?? {}) ?? "{}";
       try {

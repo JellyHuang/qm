@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { errMessage } from "../../../chassis/src/errors.ts";
-import { GIT_REPOS, checkRepo, type GitRepo } from "../validate.ts";
+import { GIT_REPOS, GitDenied, checkBranch, checkRepo, type GitRepo } from "../validate.ts";
 import { COMMIT_FORMAT, parseCommitRecord } from "./commit-format.ts";
 import { defineTool, type ToolContext } from "./types.ts";
 
@@ -95,16 +95,47 @@ async function describeBranch(
   return { status: forward ? "updated" : "rewritten", commits: commits.length > 0 ? commits : await tipOnly() };
 }
 
+interface AckEntry {
+  repo: string;
+  branch: string;
+  from: string | null;
+  to: string | null;
+}
+
+const TIP = /^[0-9a-f]{40,64}$/;
+
+function parseAck(value: unknown): AckEntry {
+  const entry = value as { repo: string; branch: string; from: string | null; to: string | null };
+  const tip = (tip: string | null) => {
+    if (tip !== null && !TIP.test(tip)) throw new GitDenied("bad_sha", "expected a full object id or null");
+    return tip;
+  };
+  return { repo: checkRepo(entry.repo), branch: checkBranch(entry.branch), from: tip(entry.from), to: tip(entry.to) };
+}
+
+async function applyAcks(ctx: ToolContext, repo: GitRepo, acks: AckEntry[]): Promise<number> {
+  let applied = 0;
+  const stored = await ctx.tips.list(repo);
+  for (const ack of acks) {
+    if ((stored.get(ack.branch)?.tip ?? null) !== ack.from) continue;
+    if (ack.to === null) await ctx.tips.delete(repo, ack.branch);
+    else await ctx.tips.put(repo, ack.branch, ack.to, Date.now());
+    applied++;
+  }
+  return applied;
+}
+
 async function checkOne(ctx: ToolContext, repo: GitRepo, budget: number) {
   let remote: Map<string, string>;
   try {
     remote = await ctx.repos.heads(repo);
   } catch (e) {
-    return { repo, status: "error", error: errMessage(e) };
+    return { result: { repo, status: "error", error: errMessage(e) }, acks: [] as AckEntry[] };
   }
   const stored = await ctx.tips.list(repo);
   const seenAt = Date.now();
   const writes: (() => Promise<void>)[] = [];
+  const acks: AckEntry[] = [];
   const record = (branch: string, tip: string) => writes.push(() => ctx.tips.put(repo, branch, tip, seenAt));
   let result: Record<string, unknown>;
 
@@ -120,7 +151,7 @@ async function checkOne(ctx: ToolContext, repo: GitRepo, budget: number) {
       try {
         if (changed.length > 0) await ctx.repos.ensure(repo, { force: true });
       } catch (e) {
-        return { repo, status: "error", error: errMessage(e) };
+        return { result: { repo, status: "error", error: errMessage(e) }, acks: [] as AckEntry[] };
       }
       const updates: BranchUpdate[] = [];
       let used = 0;
@@ -135,7 +166,7 @@ async function checkOne(ctx: ToolContext, repo: GitRepo, budget: number) {
         }
         const partial = kept.length < described.commits.length;
         const advanceTo = partial ? (kept.at(-1)?.sha ?? newTip) : newTip;
-        record(branch, advanceTo);
+        acks.push({ repo, branch, from: oldTip ?? null, to: advanceTo });
         updates.push({
           branch,
           status: described.status,
@@ -146,7 +177,7 @@ async function checkOne(ctx: ToolContext, repo: GitRepo, budget: number) {
         });
       }
       for (const [branch, entry] of deleted) {
-        writes.push(() => ctx.tips.delete(repo, branch));
+        acks.push({ repo, branch, from: entry.tip, to: null });
         updates.push({ branch, status: "deleted", oldTip: entry.tip, commits: [] });
       }
       result = {
@@ -159,18 +190,50 @@ async function checkOne(ctx: ToolContext, repo: GitRepo, budget: number) {
     }
   }
   for (const write of writes) await write();
-  return result;
+  return { result, acks };
 }
 
 export const checkUpdates = defineTool({
   name: "check_updates",
   description:
-    "Poll the remote branch tips of one repository, or of all seven when repo is omitted, and return the commits (metadata only) that appeared since the previous call: new branches report their tip commit, updated branches the commits from the old tip, deleted branches are listed. The first call for a repository only records its tips. An unreachable remote is reported per repository as an error, never as no updates.",
-  input: z.strictObject({ repo: z.string().optional() }),
+    "Poll the remote branch tips of one repository, or of all seven when repo is omitted, and return the commits (metadata only) that appeared since the last acknowledged state: new branches report their tip commit, updated branches the commits from the old tip, deleted branches are listed. Delivery is at-least-once: the stored tips only advance when a later call passes the acks of a response back in ack; an unacknowledged poll reports the same commits again. The first call for a repository only records its tips. An unreachable remote is reported per repository as an error, never as no updates.",
+  input: z.strictObject({
+    repo: z.string().optional(),
+    ack: z
+      .array(
+        z.strictObject({
+          repo: z.string(),
+          branch: z.string(),
+          from: z.string().nullable(),
+          to: z.string().nullable(),
+        }),
+      )
+      .optional(),
+  }),
   async run(ctx, args) {
     const repos = args.repo === undefined ? (Object.keys(GIT_REPOS) as GitRepo[]) : [checkRepo(args.repo)];
+    const acks = (args.ack ?? []).map(parseAck);
     const budget = Math.max(MIN_REPO_BUDGET, Math.floor((ctx.truncateChars - RESERVE_CHARS) / repos.length));
-    const results = await Promise.all(repos.map((repo) => withLock(ctx.tips, repo, () => checkOne(ctx, repo, budget))));
-    return { repos: results, truncated: false };
+    const touched = new Set<GitRepo>([...repos, ...acks.map((ack) => ack.repo as GitRepo)]);
+    let acknowledged = 0;
+    const results = await Promise.all(
+      [...touched].map((repo) =>
+        withLock(ctx.tips, repo, async () => {
+          acknowledged += await applyAcks(
+            ctx,
+            repo,
+            acks.filter((ack) => ack.repo === repo),
+          );
+          return repos.includes(repo) ? checkOne(ctx, repo, budget) : undefined;
+        }),
+      ),
+    );
+    const polled = results.filter((result): result is NonNullable<typeof result> => result !== undefined);
+    return {
+      repos: polled.map((entry) => entry.result),
+      ack: polled.flatMap((entry) => entry.acks),
+      acknowledged,
+      truncated: false,
+    };
   },
 });

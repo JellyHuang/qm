@@ -15,6 +15,8 @@ interface BlobStats {
   hits: number;
   fetched: number;
   failed: ReadonlyMap<string, string>;
+  dir?: string;
+  signal?: AbortSignal;
 }
 
 interface TempRepo {
@@ -30,6 +32,7 @@ interface TempRepo {
 interface CallOptions {
   signal?: AbortSignal;
   partial?: boolean;
+  scratch?: boolean;
 }
 
 export interface BlobStore {
@@ -301,13 +304,18 @@ export function createBlobStore(options: BlobStoreOptions): BlobStore {
       try {
         const missing = await leaseAll(unique, got);
         const hits = unique.length - missing.length;
-        const stats = (fetched: number): BlobStats => ({ hits, fetched, failed: got.failed });
-        if (missing.length === 0) return await fn(got.paths, stats(0));
+        const stats = (fetched: number, job?: ScratchJob): BlobStats => ({
+          hits,
+          fetched,
+          failed: got.failed,
+          ...(job ? { dir: job.dir, signal: job.signal } : {}),
+        });
+        if (missing.length === 0 && !callOptions.scratch) return await fn(got.paths, stats(0));
         return await scratch.job(async (job) => {
-          await acquire(repo, missing, job, got);
+          if (missing.length > 0) await acquire(repo, missing, job, got);
           const problem = callOptions.partial ? undefined : firstFailure(repo, got.failed);
           if (problem) throw problem;
-          return fn(got.paths, stats(missing.length - got.failed.size));
+          return fn(got.paths, stats(missing.length - got.failed.size, job));
         }, callOptions.signal);
       } finally {
         for (const lease of got.leases.values()) lease.release();

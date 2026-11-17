@@ -7,6 +7,25 @@ import type { Repos } from "../repos.ts";
 import type { GitOutput, GitRunOptions, GitRunner } from "../runner.ts";
 import type { GitRepo } from "../validate.ts";
 
+export interface ToolLimits {
+  xlsxTimeoutMs: number;
+  xlsxNoProgressMs: number;
+  xlsxMaxHeapMb: number;
+  regexTimeoutMs: number;
+  regexMaxChars: number;
+}
+
+export class ToolFailure extends Error {
+  readonly code: string;
+  readonly details: Record<string, unknown>;
+  constructor(code: string, message: string, details: Record<string, unknown> = {}) {
+    super(message);
+    this.name = "ToolFailure";
+    this.code = code;
+    this.details = details;
+  }
+}
+
 export interface Services {
   repos: Repos;
   runner: GitRunner;
@@ -14,6 +33,7 @@ export interface Services {
   cache: BlobCache;
   ledger: BlobMetaLedger;
   tips: TipStore;
+  limits: ToolLimits;
 }
 
 export interface ToolContext extends Services {

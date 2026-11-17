@@ -30,6 +30,12 @@ interface Update {
   commits: { sha: string; authorName: string; authorEmail: string; date: string; subject: string; branch: string }[];
   partial?: boolean;
 }
+interface Ack {
+  repo: string;
+  branch: string;
+  from: string | null;
+  to: string | null;
+}
 interface RepoResult {
   repo: string;
   status: string;
@@ -42,7 +48,7 @@ async function check(args: Record<string, unknown> = {}, harness = h) {
   const out = await harness.call("check_updates", args);
   assert.equal(out.isError, false, JSON.stringify(out.body));
   const repos = out.body.repos as RepoResult[];
-  return { repos, byName: new Map(repos.map((r) => [r.repo, r])), body: out.body };
+  return { repos, byName: new Map(repos.map((r) => [r.repo, r])), body: out.body, ack: out.body.ack as Ack[] };
 }
 
 const blobFetches = () =>
@@ -84,8 +90,8 @@ describe("changes", () => {
     git(work, ["checkout", "-q", "main"]);
     push(work, ["main", "feature/two"]);
     push(work, ["--delete", "feature/login"]);
-    const { byName } = await check({ repo: "client" });
-    const client = byName.get("client");
+    const first = await check({ repo: "client" });
+    const client = first.byName.get("client");
     assert.equal(client?.status, "changed");
     const updates = new Map(client?.updates.map((u) => [u.branch, u]));
     const main = updates.get("main");
@@ -113,11 +119,29 @@ describe("changes", () => {
     assert.equal(updates.get("feature/login")?.status, "deleted");
     assert.equal(updates.get("feature/login")?.oldTip, fx.client.featureTip);
     assert.equal(blobFetches(), 0);
-    const again = await check({ repo: "client" });
-    assert.equal(again.byName.get("client")?.status, "unchanged");
+    assert.deepEqual(first.ack.map((entry) => [entry.branch, entry.from === null, entry.to === null]).sort(), [
+      ["feature/login", false, true],
+      ["feature/two", true, false],
+      ["main", false, false],
+    ]);
+    const lost = await check({ repo: "client" });
+    assert.equal(lost.byName.get("client")?.status, "changed");
+    assert.deepEqual(
+      lost.byName
+        .get("client")
+        ?.updates.find((u) => u.branch === "main")
+        ?.commits.map((c) => c.sha),
+      [c1, c2],
+    );
+    const acknowledged = await check({ repo: "client", ack: lost.ack });
+    assert.equal(acknowledged.body.acknowledged, 3);
+    assert.equal(acknowledged.byName.get("client")?.status, "unchanged");
+    const stale = await check({ repo: "client", ack: lost.ack });
+    assert.equal(stale.body.acknowledged, 0);
+    assert.equal(stale.byName.get("client")?.status, "unchanged");
   });
 
-  test("concurrent callers do not both report the same commits", async () => {
+  test("concurrent callers may all report a commit but none can lose it, and an ack settles it for everyone", async () => {
     const work = fx.work.server;
     await check({ repo: "server" });
     writeFileSync(join(work, "c.txt"), "c\n");
@@ -128,10 +152,18 @@ describe("changes", () => {
       check({ repo: "server" }),
       check({ repo: "server" }),
     ]);
-    const reported = results.flatMap((r) => r.byName.get("server")?.updates ?? []).flatMap((u) => u.commits);
-    assert.equal(reported.length, 1);
-    assert.equal(reported[0]?.subject, "concurrent");
-    assert.equal(results.filter((r) => r.byName.get("server")?.status === "changed").length, 1);
+    for (const result of results) {
+      const commits = (result.byName.get("server")?.updates ?? []).flatMap((u) => u.commits);
+      assert.deepEqual(
+        commits.map((c) => c.subject),
+        ["concurrent"],
+      );
+    }
+    const done = await check({ repo: "server", ack: results[0]?.ack ?? [] });
+    assert.equal(done.byName.get("server")?.status, "unchanged");
+    const late = await check({ repo: "server", ack: results[1]?.ack ?? [] });
+    assert.equal(late.body.acknowledged, 0);
+    assert.equal(late.byName.get("server")?.status, "unchanged");
   });
 
   test("a rewritten branch is reported as rewritten and never as no updates", async () => {
@@ -140,7 +172,7 @@ describe("changes", () => {
     writeFileSync(join(work, "r.txt"), "r\n");
     commitAll(work, "to be dropped", ALICE, "2024-12-02T10:00:00Z");
     push(work, ["main"]);
-    await check({ repo: "clientcode" });
+    await check({ repo: "clientcode", ack: (await check({ repo: "clientcode" })).ack });
     git(work, ["reset", "-q", "--hard", "HEAD~1"]);
     push(work, ["--force", "main"]);
     const { byName } = await check({ repo: "clientcode" });
@@ -168,14 +200,24 @@ describe("changes", () => {
       push(work, ["main"]);
       const seen: string[] = [];
       let rounds = 0;
+      let acks: Ack[] = [];
       for (; rounds < 20; rounds++) {
-        const { byName } = await check({ repo: "gameconfig" }, small);
+        const polled = await check({ repo: "gameconfig", ack: acks }, small);
+        const byName = polled.byName;
+        acks = polled.ack;
         const result = byName.get("gameconfig");
         if (result?.status === "unchanged") break;
         const update = result?.updates[0];
         assert.ok(update && update.commits.length > 0);
         seen.push(...update.commits.map((c) => c.sha));
-        if (rounds === 0) assert.equal(update.partial, true);
+        if (rounds === 0) {
+          assert.equal(update.partial, true);
+          const replay = await check({ repo: "gameconfig" }, small);
+          assert.deepEqual(
+            replay.byName.get("gameconfig")?.updates[0]?.commits.map((c) => c.sha),
+            update.commits.map((c) => c.sha),
+          );
+        }
       }
       assert.ok(rounds > 1);
       assert.deepEqual(seen, made);

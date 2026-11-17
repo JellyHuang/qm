@@ -15,10 +15,11 @@ import {
 } from "../validate.ts";
 import { COMMIT_FORMAT, parseCommitRecord } from "./commit-format.ts";
 import { grepFile, type GrepHit } from "./grep.ts";
+import { RegexTimeoutError, createRegexGrep } from "./regex-grep.ts";
 import { readLfsPointer } from "./lfs.ts";
 import { sniff } from "./text-scan.ts";
 import { listTree, resolveCommit, type TreeEntry } from "./tree.ts";
-import { defineTool, type ToolContext } from "./types.ts";
+import { ToolFailure, defineTool, type ToolContext } from "./types.ts";
 
 const DEFAULT_LIMIT = 200;
 const CHUNK = 100;
@@ -137,61 +138,92 @@ async function searchContent(ctx: ToolContext, request: Request) {
   let matchCount = 0;
   let filesLeft = files.length;
 
-  for (let start = 0; start < oids.length && !stopped; start += CHUNK) {
-    const chunk = oids.slice(start, start + CHUNK);
-    await ctx.blobs.withBlobs(
-      repo,
-      chunk,
-      async (paths, stats) => {
-        if (stats.hits > 0) ctx.state.cacheHit = true;
-        for (const oid of chunk) {
-          if (stopped) return;
-          const sites = byOid.get(oid) ?? [];
-          const file = paths.get(oid);
-          if (!file) {
-            for (const site of sites) {
-              unavailableCount++;
-              if (unavailable.length < LISTED_SKIPS)
-                unavailable.push({ path: site.path, message: stats.failed.get(oid) ?? "unavailable" });
-            }
-            filesLeft -= sites.length;
-            continue;
-          }
-          const isBinary = (await sniff(file)).includes(0);
-          const pointer = isBinary ? undefined : await readLfsPointer(file);
-          if (pointer) {
-            for (const site of sites) {
-              lfsCount++;
-              if (lfs.length < LISTED_SKIPS) lfs.push({ path: site.path, lfsOid: pointer.oid, lfsSize: pointer.size });
-            }
-            filesLeft -= sites.length;
-            continue;
-          }
-          if (isBinary) {
-            binary += sites.length;
-            filesLeft -= sites.length;
-            continue;
-          }
-          for (const site of sites) {
-            await grepFile(file, { matches, context }, (hit) => {
-              const entry = { path: site.path, ...hit };
-              chars += JSON.stringify(entry).length + 1;
-              if (chars > budget || matchCount >= limit) {
-                stopped = true;
-                return false;
-              }
-              matchCount++;
-              found.push(entry);
-              return true;
-            });
+  const regexGrep = request.regex
+    ? createRegexGrep({
+        pattern: request.regex.source,
+        flags: request.regex.flags,
+        context,
+        timeoutMs: ctx.limits.regexTimeoutMs,
+        signal: ctx.signal,
+      })
+    : undefined;
+  const scan = async (file: string, onHit: (hit: GrepHit) => boolean) => {
+    if (regexGrep) await regexGrep.grep(file, onHit);
+    else await grepFile(file, { matches, context }, onHit);
+  };
+
+  try {
+    for (let start = 0; start < oids.length && !stopped; start += CHUNK) {
+      const chunk = oids.slice(start, start + CHUNK);
+      await ctx.blobs.withBlobs(
+        repo,
+        chunk,
+        async (paths, stats) => {
+          if (stats.hits > 0) ctx.state.cacheHit = true;
+          for (const oid of chunk) {
             if (stopped) return;
-            searched++;
-            filesLeft--;
+            const sites = byOid.get(oid) ?? [];
+            const file = paths.get(oid);
+            if (!file) {
+              for (const site of sites) {
+                unavailableCount++;
+                if (unavailable.length < LISTED_SKIPS)
+                  unavailable.push({ path: site.path, message: stats.failed.get(oid) ?? "unavailable" });
+              }
+              filesLeft -= sites.length;
+              continue;
+            }
+            const isBinary = (await sniff(file)).includes(0);
+            const pointer = isBinary ? undefined : await readLfsPointer(file);
+            if (pointer) {
+              for (const site of sites) {
+                lfsCount++;
+                if (lfs.length < LISTED_SKIPS)
+                  lfs.push({ path: site.path, lfsOid: pointer.oid, lfsSize: pointer.size });
+              }
+              filesLeft -= sites.length;
+              continue;
+            }
+            if (isBinary) {
+              binary += sites.length;
+              filesLeft -= sites.length;
+              continue;
+            }
+            for (const site of sites) {
+              await scan(file, (hit) => {
+                const entry = { path: site.path, ...hit };
+                chars += JSON.stringify(entry).length + 1;
+                if (chars > budget || matchCount >= limit) {
+                  stopped = true;
+                  return false;
+                }
+                matchCount++;
+                found.push(entry);
+                return true;
+              });
+              if (stopped) return;
+              searched++;
+              filesLeft--;
+            }
           }
-        }
-      },
-      { signal: ctx.signal, partial: true },
-    );
+        },
+        { signal: ctx.signal, partial: true },
+      );
+    }
+  } catch (e) {
+    if (e instanceof RegexTimeoutError)
+      throw new ToolFailure("regex_timeout", e.message, {
+        repo,
+        commit,
+        searched,
+        notSearched: filesLeft,
+        matchCount,
+        matches: found,
+        truncated: true,
+      });
+    throw e;
+  } finally {
+    await regexGrep?.close();
   }
 
   return {
@@ -218,21 +250,26 @@ async function searchContent(ctx: ToolContext, request: Request) {
   };
 }
 
-function parse(args: {
-  repo: string;
-  ref: string;
-  query: string;
-  kind: string;
-  pathGlob?: string | undefined;
-  limit?: number | undefined;
-  author?: string | undefined;
-  regex?: boolean | undefined;
-  ignoreCase?: boolean | undefined;
-  context?: number | undefined;
-}): Request {
+function parse(
+  maxRegexChars: number,
+  args: {
+    repo: string;
+    ref: string;
+    query: string;
+    kind: string;
+    pathGlob?: string | undefined;
+    limit?: number | undefined;
+    author?: string | undefined;
+    regex?: boolean | undefined;
+    ignoreCase?: boolean | undefined;
+    context?: number | undefined;
+  },
+): Request {
   const repo = checkRepo(args.repo);
   const query = checkQuery(args.query);
   const insensitive = args.ignoreCase === true;
+  if (args.regex === true && query.length > maxRegexChars)
+    throw new GitDenied("bad_regex", `the pattern is longer than ${maxRegexChars} characters`);
   if (args.kind === "content" && (args.pathGlob === undefined || args.pathGlob === ""))
     throw new GitDenied("path_glob_required", "content search needs pathGlob to limit which files are fetched");
   return {
@@ -265,7 +302,7 @@ export const search = defineTool({
     context: z.number().optional(),
   }),
   async run(ctx, args) {
-    const request = parse(args);
+    const request = parse(ctx.limits.regexMaxChars, args);
     checkRevision(request.ref);
     await ctx.repos.ensure(request.repo);
     if (args.kind === "message") return searchMessages(ctx, request);

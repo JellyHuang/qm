@@ -1,5 +1,6 @@
 import { blame } from "./blame.ts";
 import { checkUpdates } from "./check-updates.ts";
+import { diffXlsx } from "./diff-xlsx.ts";
 import { getCommit } from "./get-commit.ts";
 import { getDiff } from "./get-diff.ts";
 import { listCommits } from "./list-commits.ts";
@@ -17,4 +18,5 @@ export const TOOLS: readonly ToolDef[] = [
   blame,
   search,
   checkUpdates,
+  diffXlsx,
 ];

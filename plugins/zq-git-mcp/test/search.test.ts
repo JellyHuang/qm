@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { writeFileSync } from "node:fs";
+import { readdirSync, writeFileSync } from "node:fs";
 import { after, before, describe, test } from "node:test";
+import { sleep } from "../src/async.ts";
 import { dirSize } from "../src/fs-util.ts";
 import { loggingGit } from "./support/fake-git.ts";
 import { ALICE, BOB, buildFixture, commitAll, git, makeRoot, pushAll, type Fixture } from "./support/fixtures.ts";
@@ -20,6 +21,7 @@ before(async () => {
   git(join(fx.remotes, "gameconfig.git"), ["config", "pack.writeBitmaps", "true"]);
   git(join(fx.remotes, "gameconfig.git"), ["repack", "-a", "-d", "-b"]);
   const long = fx.work.server;
+  writeFileSync(join(long, "evil.txt"), `${"a".repeat(60)}b\nsecond line\n`);
   writeFileSync(
     join(long, "long.txt"),
     Array.from({ length: 4000 }, (_, i) => `row ${i + 1} needle ${"z".repeat(60)}`).join("\n") + "\n",
@@ -235,5 +237,74 @@ describe("content search", () => {
     const dump = JSON.stringify(h.audit.rows());
     for (const content of ["zzzzzzzzzz", "中文说明", "padding line"]) assert.equal(dump.includes(content), false);
     assert.ok(h.audit.rows().some((row) => row.tool === "search" && row.result === "ok"));
+  });
+});
+
+describe("regular expression safety", () => {
+  const threads = () => readdirSync("/proc/self/task").length;
+  let guarded: Harness;
+  before(async () => {
+    guarded = await startHarness(
+      testConfig(root, fx.remoteBase, {
+        regexTimeoutMs: 1500,
+        regexMaxChars: 20,
+        clonesDir: join(root, "regex-clones"),
+      }),
+    );
+  });
+  after(async () => {
+    await guarded.stop();
+  });
+
+  test("a catastrophic pattern is stopped by the time limit with partial counts, the worker is gone and the service keeps serving", async () => {
+    const warm = await search(
+      { kind: "content", query: "second", regex: true, pathGlob: "evil.txt" },
+      guarded,
+      "server",
+    );
+    assert.equal(warm.isError, false, JSON.stringify(warm.body));
+    assert.equal((warm.body.matches as Hit[]).length, 1);
+    const baseline = threads();
+    const started = Date.now();
+    const out = await search(
+      { kind: "content", query: "(a+)+$", regex: true, pathGlob: "evil.txt" },
+      guarded,
+      "server",
+    );
+    assert.ok(Date.now() - started < 8000, `took ${Date.now() - started} ms`);
+    assert.equal(out.isError, true);
+    assert.equal((out.body.error as { code: string }).code, "regex_timeout");
+    assert.equal(out.body.searched, 0);
+    assert.equal(out.body.notSearched, 1);
+    assert.equal(out.body.truncated, true);
+    for (let i = 0; i < 40 && threads() > baseline; i++) await sleep(50);
+    assert.equal(threads(), baseline);
+    const after = await search({ kind: "content", query: "second", pathGlob: "evil.txt" }, guarded, "server");
+    assert.equal((after.body.matches as Hit[]).length, 1);
+    assert.equal((await guarded.call("list_repos", {})).isError, false);
+    assert.equal(guarded.audit.rows().filter((row) => row.result === "error").length >= 1, true);
+  });
+
+  test("fixed string search is unaffected by the same text and a long or invalid pattern is refused before any fetch", async () => {
+    const fixed = await search({ kind: "content", query: "(a+)+$", pathGlob: "evil.txt" }, guarded, "server");
+    assert.equal(fixed.isError, false);
+    assert.deepEqual(fixed.body.matches, []);
+    const before = guarded.audit.rows().length;
+    const long = await search(
+      { kind: "content", query: "a".repeat(21), regex: true, pathGlob: "evil.txt" },
+      guarded,
+      "server",
+    );
+    assert.equal((long.body.error as { code: string }).code, "bad_regex");
+    assert.match((long.body.error as { message: string }).message, /longer than 20/);
+    const broken = await search({ kind: "content", query: "(", regex: true, pathGlob: "evil.txt" }, guarded, "server");
+    assert.equal((broken.body.error as { code: string }).code, "bad_regex");
+    assert.deepEqual(
+      guarded.audit
+        .rows()
+        .slice(before)
+        .map((row) => row.result),
+      ["refused:bad_regex", "refused:bad_regex"],
+    );
   });
 });

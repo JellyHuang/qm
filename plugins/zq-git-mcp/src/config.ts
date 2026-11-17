@@ -25,6 +25,11 @@ const ENV_KEYS = {
   ZQ_GIT_MCP_FETCH_NO_PROGRESS_MS: "fetchNoProgressMs",
   ZQ_GIT_MCP_FETCH_FAILURE_TTL_MS: "fetchFailureTtlMs",
   ZQ_GIT_MCP_REFRESH_MS: "refreshMs",
+  ZQ_GIT_MCP_XLSX_TIMEOUT_MS: "xlsxTimeoutMs",
+  ZQ_GIT_MCP_XLSX_MAX_HEAP_MB: "xlsxMaxHeapMb",
+  ZQ_GIT_MCP_XLSX_NO_PROGRESS_MS: "xlsxNoProgressMs",
+  ZQ_GIT_MCP_REGEX_TIMEOUT_MS: "regexTimeoutMs",
+  ZQ_GIT_MCP_REGEX_MAX_CHARS: "regexMaxChars",
   ZQ_GIT_MCP_FETCH_TIMEOUT_MS: "fetchTimeoutMs",
   ZQ_GIT_MCP_GIT_TIMEOUT_MS: "gitTimeoutMs",
 } as const;
@@ -54,6 +59,11 @@ const schema = z
     fetchNoProgressMs: count(1000, 180_000),
     fetchFailureTtlMs: count(0, 60_000),
     refreshMs: count(0, 60_000),
+    xlsxTimeoutMs: count(1000, 15 * 60_000),
+    xlsxMaxHeapMb: count(64, 768),
+    xlsxNoProgressMs: count(100, 180_000),
+    regexTimeoutMs: count(100, 30_000),
+    regexMaxChars: count(1, 500),
     fetchTimeoutMs: count(1000, 30 * 60_000),
     gitTimeoutMs: count(1000, 60_000),
   })
@@ -81,6 +91,11 @@ export interface Config {
   fetchNoProgressMs: number;
   fetchFailureTtlMs: number;
   refreshMs: number;
+  xlsxTimeoutMs: number;
+  xlsxMaxHeapMb: number;
+  xlsxNoProgressMs: number;
+  regexTimeoutMs: number;
+  regexMaxChars: number;
   fetchTimeoutMs: number;
   gitTimeoutMs: number;
 }
@@ -148,6 +163,11 @@ export function loadConfig(
     fetchNoProgressMs: value.fetchNoProgressMs,
     fetchFailureTtlMs: value.fetchFailureTtlMs,
     refreshMs: value.refreshMs,
+    xlsxTimeoutMs: value.xlsxTimeoutMs,
+    xlsxMaxHeapMb: value.xlsxMaxHeapMb,
+    xlsxNoProgressMs: value.xlsxNoProgressMs,
+    regexTimeoutMs: value.regexTimeoutMs,
+    regexMaxChars: value.regexMaxChars,
     fetchTimeoutMs: value.fetchTimeoutMs,
     gitTimeoutMs: value.gitTimeoutMs,
   };

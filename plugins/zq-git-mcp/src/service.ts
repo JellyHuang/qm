@@ -74,7 +74,21 @@ export function createService(config: Config, deps: ServiceDeps = {}): Service {
       });
       const dispatcher = createDispatcher({
         tools: TOOLS,
-        services: { repos, runner, blobs, cache, ledger, tips },
+        services: {
+          repos,
+          runner,
+          blobs,
+          cache,
+          ledger,
+          tips,
+          limits: {
+            xlsxTimeoutMs: config.xlsxTimeoutMs,
+            xlsxNoProgressMs: config.xlsxNoProgressMs,
+            xlsxMaxHeapMb: config.xlsxMaxHeapMb,
+            regexTimeoutMs: config.regexTimeoutMs,
+            regexMaxChars: config.regexMaxChars,
+          },
+        },
         truncateChars: config.truncateChars,
         audit,
       });

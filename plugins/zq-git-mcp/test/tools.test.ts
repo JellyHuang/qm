@@ -51,6 +51,7 @@ describe("tool registry", () => {
     assert.deepEqual(tools.map((tool) => tool.name).sort(), [
       "blame",
       "check_updates",
+      "diff_xlsx",
       "get_commit",
       "get_diff",
       "list_commits",
