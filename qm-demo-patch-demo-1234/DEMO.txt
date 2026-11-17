@@ -1,0 +1,58 @@
+QM demo patch package WP-1234 - how to try it / 演示：怎么试一试
+All names, e-mail addresses and data in this demo are invented. / 演示里的姓名、邮箱和数据全部是虚构的。
+
+================================ ENGLISH ================================
+
+What this package is: a ready-made change (ticket WP-1234, "Adjust skill level 3 cost") made of a text change in config/skill_levels.lua and a modified Excel file data/skill_table.xlsx. QM prepared it; QM pushed nothing. You apply it yourself with apply.sh and the commit is yours. README.txt (generated) explains every option. This file only walks you through the demo.
+
+Demo flow (about two minutes, needs git 2.40 or newer; run it in an empty temporary folder, never inside a real repository):
+  1. Make a throwaway repository that is exactly the base the package was made against:
+       sh make-demo-repo.sh [target-dir]          (default target: ./qm-demo-repo)
+     It creates 3 base commits with fixed dates and invented authors, sets the identity Demo User <demo.user@example.invalid> ONLY inside that throwaway repository, checks that the base commit equals the one in manifest.json, and prints the next commands. It refuses a target directory that is not empty.
+  2. Dry run, nothing is left behind:
+       cd <target-dir>
+       sh <path-to-package>/apply.sh --dry-run
+  3. Apply for real. This makes ONE commit on the branch you are on (main), authored and committed by Demo User, with the trailer "AI-Generated: true":
+       sh <path-to-package>/apply.sh
+     The script prints the original HEAD and the undo line.
+  4. Review:
+       git log -1 --stat
+       git show
+  5. Undo (the commit was never pushed; the script never pushes):
+       git reset --keep <original HEAD printed by apply.sh>
+     Safer variant that does not touch your branch at all: sh <path-to-package>/apply.sh --new-branch (creates the local branch qm/<package id>).
+
+The same on a real repository: unzip the package OUTSIDE the repository, make sure your own git identity is set (git config user.name / user.email), the working tree has no uncommitted changes to tracked files, and the branch is not behind its upstream. Then:
+       sh <path-to-package>/apply.sh --repo /path/to/your/clone --dry-run
+       sh <path-to-package>/apply.sh --repo /path/to/your/clone
+The base commit must exist in your clone (the script never fetches). Review with git log -1 --stat and git show, push yourself when you are happy.
+
+Large files stored with Git LFS are handled by the same script when git-lfs is installed. This demo contains no LFS file.
+
+================================ 中文 ================================
+
+这个包是什么：一个现成的修改（工单 WP-1234，“Adjust skill level 3 cost”），包含 config/skill_levels.lua 的文本修改和被修改的 Excel 文件 data/skill_table.xlsx。由 QM 生成；QM 没有推送任何内容。你自己用 apply.sh 应用，提交归你。README.txt（自动生成）说明了所有选项，本文件只演示流程。
+
+演示流程（约两分钟，需要 git 2.40 或更新版本；请在空的临时文件夹里运行，不要在真实仓库里）：
+  1. 生成一个一次性的演示仓库，内容正好是补丁包所基于的基准：
+       sh make-demo-repo.sh [目标目录]            （默认目录：./qm-demo-repo）
+     脚本用固定日期和虚构作者创建 3 个基准提交，只在这个一次性仓库里设置身份 Demo User <demo.user@example.invalid>，核对基准提交与 manifest.json 一致，并打印后续命令。目标目录不为空时脚本会拒绝运行。
+  2. 试运行，不留任何痕迹：
+       cd <目标目录>
+       sh <补丁包路径>/apply.sh --dry-run
+  3. 正式应用。在当前分支（main）上创建一个提交，作者和提交者都是 Demo User，末尾带有 “AI-Generated: true”：
+       sh <补丁包路径>/apply.sh
+     脚本会打印原来的 HEAD 和撤销命令。
+  4. 检查：
+       git log -1 --stat
+       git show
+  5. 撤销（提交从未推送，脚本也从不推送）：
+       git reset --keep <apply.sh 打印的原 HEAD>
+     更安全的做法，完全不动你的分支：sh <补丁包路径>/apply.sh --new-branch（创建本地分支 qm/<包编号>）。
+
+在真实仓库里同样操作：把补丁包解压到仓库之外，确认已设置你自己的 git 身份（git config user.name / user.email），已跟踪文件没有未提交的修改，分支没有落后于上游。然后：
+       sh <补丁包路径>/apply.sh --repo /你的/克隆目录 --dry-run
+       sh <补丁包路径>/apply.sh --repo /你的/克隆目录
+基准提交必须存在于你的克隆里（脚本不会 fetch）。用 git log -1 --stat 和 git show 检查，满意后自己推送。
+
+用 Git LFS 存放的大文件在安装了 git-lfs 时由同一个脚本处理；本演示不含 LFS 文件。

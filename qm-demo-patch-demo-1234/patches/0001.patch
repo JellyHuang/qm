@@ -1,0 +1,46 @@
+From 1cfea643395bfc6d55babc13bc36eeb6d53e38e1 Mon Sep 17 00:00:00 2001
+From: QM Bot <qm-bot@invalid>
+Date: Mon, 26 Jan 2026 10:00:00 +0000
+Subject: [PATCH] [WP-1234] Adjust skill level 3 cost
+
+Lower the cost of the level 3 skill from 600 to 500 in the Lua config and in the skill table workbook.
+
+Ticket: WP-1234
+AI-Generated: true
+---
+ config/skill_levels.lua |   2 +-
+ data/skill_table.xlsx   | Bin 1696 -> 1696 bytes
+ 2 files changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/config/skill_levels.lua b/config/skill_levels.lua
+index affa4872187cd481dd1af178f4733bb1fac4cfec..44172b9d3e14277af22acfb84399513e319d804a 100644
+--- a/config/skill_levels.lua
++++ b/config/skill_levels.lua
+@@ -14,7 +14,7 @@ skills.level_2 = {
+ 
+ skills.level_3 = {
+   name = "Expert",
+-  cost = 600,
++  cost = 500,
+   cooldown = 6,
+ }
+ 
+diff --git a/data/skill_table.xlsx b/data/skill_table.xlsx
+index 57522cd1bd0a9fda1f32d32063e64247d8c72620..059487f285381d6eb5b09922636617c91ebfd7c2 100644
+GIT binary patch
+delta 292
+zcmV+<0o(qd4WJFM_yYvI@!XG-`~x%rrIRrP7k`pkJ0b4eGXnATWOO#756amVid7C7
+z+RpXLZd>^Je7(JgEReLl)XriHzZhUGZus8$pRhxuY%<!07Is9#17o4vp^;(b2DFpW
+z-_9FJVdeamg~6lj=OLq6ndf)RNM%9r`R-Yg6x_Rg=36L0@a}Nf6p&F1%4%itgFFbX
+zf`8y7G>)h_Bf;6>f_0~X$JBt81{d;AseI=GUFMm0`?z5lH$0q1QE)b%uTdsy-`%LX
+z#YIj%c^;cCz$${(94xQEDgkbK9B9cq)iepOj$S<nt1GWgcrVj{ei1zOG^qzR5p3pQ
+qeFZiN@J$9nzXTq8it?Yx&VC$=Us?PCP_sq_4gmzb@!XG-SO!Sw|BcxI
+
+delta 292
+zcmV+<0o(qd4WJFM_yYvZm(OdH`~x%rp_4HL7k`>sJ0b4eGXn9=WOO#756amVid7C7
+z+RpXL?ppZ#c)7iUEReLl)XriHKNw&mZur6Z@32RtY%<!07WPELJ!7HUqmg0d2DFpW
+zU(OpzVdeaeg~6lj=OLq6ndfU}q_QCReD@?t3hvz@^DPu0cy~N(3&^MiWwo;SP96kT
+zL4R-(8b{Qek>Koj!MgLnLu$ZEgA4h`RK9b8{^pr?hqz%GH$0w3QE)b1u2Cjx-`uFW
+z#YN6Nc^;eofK>#mIapqSRRY}hIM9-Ju4xip9ld%ER##q~@Sdju{UUhkS*IS@M6j8I
+q^%dA8z*iXv{StWUDawB$yZCV|er53sP_sq_4gmzsm(OdHSO!QXT#x7g
+

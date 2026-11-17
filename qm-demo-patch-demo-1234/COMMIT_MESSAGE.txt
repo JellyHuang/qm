@@ -1,6 +1,6 @@
 [WP-1234] Adjust skill level 3 cost
 
-Lower the level 3 cost from 600 to 550, speed up the level 5 cooldown
-to 2.8 and add a level 6 row.
+Lower the cost of the level 3 skill from 600 to 500 in the Lua config and in the skill table workbook.
 
-AI-Generated: QM
+Ticket: WP-1234
+AI-Generated: true
