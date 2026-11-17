@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { AuditHealth } from "../audit.ts";
 import type { TipStore } from "../tip-store.ts";
 import type { BlobMetaLedger } from "../ledger.ts";
 import type { BlobCache } from "../cache.ts";
@@ -40,6 +41,7 @@ export interface ToolContext extends Services {
   caller: string;
   signal: AbortSignal;
   truncateChars: number;
+  auditHealth(): AuditHealth;
   state: { cacheHit: boolean };
   git(repo: GitRepo, args: readonly string[], opts?: GitRunOptions): Promise<GitOutput>;
 }

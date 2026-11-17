@@ -25,6 +25,15 @@ const ENV_KEYS = {
   ZQ_GIT_MCP_FETCH_NO_PROGRESS_MS: "fetchNoProgressMs",
   ZQ_GIT_MCP_FETCH_FAILURE_TTL_MS: "fetchFailureTtlMs",
   ZQ_GIT_MCP_REFRESH_MS: "refreshMs",
+  ZQ_GIT_MCP_AUDIT: "audit",
+  ZQ_GIT_MCP_TIPS: "tips",
+  ZQ_GIT_MCP_BLOB_META: "blobMeta",
+  ZQ_GIT_MCP_DATABASE_URL: "databaseUrl",
+  ZQ_GIT_MCP_TENANT_ID: "tenantId",
+  ZQ_GIT_MCP_AUDIT_ON_FAILURE: "auditOnFailure",
+  ZQ_GIT_MCP_AUDIT_SPOOL_DIR: "auditSpoolDir",
+  ZQ_GIT_MCP_AUDIT_SPOOL_MAX_BYTES: "auditSpoolMaxBytes",
+  ZQ_GIT_MCP_AUDIT_SPOOL_MAX_AGE_MS: "auditSpoolMaxAgeMs",
   ZQ_GIT_MCP_XLSX_TIMEOUT_MS: "xlsxTimeoutMs",
   ZQ_GIT_MCP_XLSX_MAX_HEAP_MB: "xlsxMaxHeapMb",
   ZQ_GIT_MCP_XLSX_NO_PROGRESS_MS: "xlsxNoProgressMs",
@@ -59,6 +68,18 @@ const schema = z
     fetchNoProgressMs: count(1000, 180_000),
     fetchFailureTtlMs: count(0, 60_000),
     refreshMs: count(0, 60_000),
+    audit: z.enum(["memory", "postgres"]).default("memory"),
+    tips: z.enum(["memory", "postgres"]).default("memory"),
+    blobMeta: z.enum(["memory", "postgres"]).default("memory"),
+    databaseUrl: z
+      .string()
+      .regex(/^postgres(ql)?:\/\//, "must be a postgres:// url")
+      .optional(),
+    tenantId: z.uuid().optional(),
+    auditOnFailure: z.enum(["serve", "fail"]).default("serve"),
+    auditSpoolDir: z.string().refine(isAbsolute, "must be an absolute path").optional(),
+    auditSpoolMaxBytes: count(1024, 64 * 1024 * 1024),
+    auditSpoolMaxAgeMs: count(1000, 7 * 24 * 3600 * 1000),
     xlsxTimeoutMs: count(1000, 15 * 60_000),
     xlsxMaxHeapMb: count(64, 768),
     xlsxNoProgressMs: count(100, 180_000),
@@ -68,6 +89,15 @@ const schema = z
     gitTimeoutMs: count(1000, 60_000),
   })
   .superRefine((value, ctx) => {
+    if (
+      (value.audit === "postgres" || value.tips === "postgres" || value.blobMeta === "postgres") &&
+      !value.databaseUrl
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["databaseUrl"],
+        message: "required when audit, tips or blobMeta is postgres",
+      });
     if (sshTarget(value.remoteBase) === undefined) return;
     for (const key of ["sshHostFingerprint", "sshKeyB64"] as const)
       if (!value[key]) ctx.addIssue({ code: "custom", path: [key], message: "required for an ssh remote" });
@@ -91,6 +121,14 @@ export interface Config {
   fetchNoProgressMs: number;
   fetchFailureTtlMs: number;
   refreshMs: number;
+  audit: "memory" | "postgres";
+  tips: "memory" | "postgres";
+  blobMeta: "memory" | "postgres";
+  database?: { url: string; tenantId?: string };
+  auditOnFailure: "serve" | "fail";
+  auditSpoolDir: string;
+  auditSpoolMaxBytes: number;
+  auditSpoolMaxAgeMs: number;
   xlsxTimeoutMs: number;
   xlsxMaxHeapMb: number;
   xlsxNoProgressMs: number;
@@ -163,6 +201,16 @@ export function loadConfig(
     fetchNoProgressMs: value.fetchNoProgressMs,
     fetchFailureTtlMs: value.fetchFailureTtlMs,
     refreshMs: value.refreshMs,
+    audit: value.audit,
+    tips: value.tips,
+    blobMeta: value.blobMeta,
+    ...(value.databaseUrl
+      ? { database: { url: value.databaseUrl, ...(value.tenantId ? { tenantId: value.tenantId } : {}) } }
+      : {}),
+    auditOnFailure: value.auditOnFailure,
+    auditSpoolDir: value.auditSpoolDir ?? join(value.dataDir, "audit-spool"),
+    auditSpoolMaxBytes: value.auditSpoolMaxBytes,
+    auditSpoolMaxAgeMs: value.auditSpoolMaxAgeMs,
     xlsxTimeoutMs: value.xlsxTimeoutMs,
     xlsxMaxHeapMb: value.xlsxMaxHeapMb,
     xlsxNoProgressMs: value.xlsxNoProgressMs,

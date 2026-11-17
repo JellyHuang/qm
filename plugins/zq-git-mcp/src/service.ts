@@ -1,9 +1,10 @@
 import type { AddressInfo } from "node:net";
 import { swallow } from "../../chassis/src/errors.ts";
-import { createMemoryAuditSink, type AuditSink } from "./audit.ts";
+import { createMemoryAuditSink, type AuditSink, type AuditTarget } from "./audit.ts";
+import { createAuditPipeline, describeFailure, type AuditAlarm, type AuditPipeline } from "./audit-pipeline.ts";
 import { createBlobStore } from "./blobs.ts";
 import { assertGitVersion } from "./git-version.ts";
-import { createMemoryBlobMetaLedger } from "./ledger.ts";
+import { createMemoryBlobMetaLedger, type BlobMetaLedger } from "./ledger.ts";
 import { createMemoryTipStore, type TipStore } from "./tip-store.ts";
 import { createBlobCache } from "./cache.ts";
 import type { Config } from "./config.ts";
@@ -25,12 +26,19 @@ export interface ServiceDeps {
   audit?: AuditSink;
   gitBinary?: string;
   tips?: TipStore;
+  auditTarget?: AuditTarget;
+  alarm?: AuditAlarm;
+  log?: (line: string) => void;
+  auditRetry?: { initialMs: number; maxMs: number };
 }
 
 export function createService(config: Config, deps: ServiceDeps = {}): Service {
   const ssh = config.ssh ? createSsh(config.ssh) : undefined;
-  const audit = deps.audit ?? createMemoryAuditSink();
-  const tips = deps.tips ?? createMemoryTipStore();
+  let audit: AuditSink = deps.audit ?? createMemoryAuditSink();
+  let tips: TipStore = deps.tips ?? createMemoryTipStore();
+  let ledger: BlobMetaLedger = createMemoryBlobMetaLedger();
+  let pipeline: AuditPipeline | undefined;
+  let database: { close(): Promise<void> } | undefined;
   const fetches = createLimiter(config.maxFetches);
   const bigFetches = createLimiter(config.maxBigFetches);
   const scratch = createScratch({
@@ -45,6 +53,45 @@ export function createService(config: Config, deps: ServiceDeps = {}): Service {
   return {
     async start() {
       await assertGitVersion(createGitRunner(deps.gitBinary ? { gitBinary: deps.gitBinary } : {}));
+      if (
+        config.database &&
+        (config.audit === "postgres" || config.tips === "postgres" || config.blobMeta === "postgres")
+      ) {
+        const { createDatabase } = await import("./postgres/database.ts");
+        const { createPostgresAuditTarget, createPostgresBlobMetaLedger, createPostgresTipStore } =
+          await import("./postgres/stores.ts");
+        const db = createDatabase(config.database);
+        database = db;
+        await db.assertTables();
+        if (config.tips === "postgres" && !deps.tips) tips = createPostgresTipStore(db);
+        if (config.blobMeta === "postgres")
+          ledger = createPostgresBlobMetaLedger(db, (e) =>
+            (deps.log ?? console.error)(
+              JSON.stringify({
+                level: "error",
+                component: "zq-git-mcp",
+                kind: "blob_meta_write_failed",
+                error: describeFailure(e),
+              }),
+            ),
+          );
+        if (config.audit === "postgres" && !deps.audit && !deps.auditTarget)
+          deps = { ...deps, auditTarget: createPostgresAuditTarget(db) };
+      }
+      if (!deps.audit && deps.auditTarget) {
+        pipeline = createAuditPipeline({
+          target: deps.auditTarget,
+          onFailure: config.auditOnFailure,
+          spoolDir: config.auditSpoolDir,
+          spoolMaxBytes: config.auditSpoolMaxBytes,
+          spoolMaxAgeMs: config.auditSpoolMaxAgeMs,
+          ...(deps.auditRetry ? { retryInitialMs: deps.auditRetry.initialMs, retryMaxMs: deps.auditRetry.maxMs } : {}),
+          ...(deps.alarm ? { alarm: deps.alarm } : {}),
+          ...(deps.log ? { log: deps.log } : {}),
+        });
+        audit = pipeline;
+        await pipeline.start();
+      }
       await ssh?.start();
       const runner = createGitRunner({
         timeoutMs: config.gitTimeoutMs,
@@ -59,7 +106,6 @@ export function createService(config: Config, deps: ServiceDeps = {}): Service {
         refreshMs: config.refreshMs,
         fetchTimeoutMs: config.fetchTimeoutMs,
       });
-      const ledger = createMemoryBlobMetaLedger();
       const blobs = createBlobStore({
         repos,
         runner,
@@ -106,6 +152,7 @@ export function createService(config: Config, deps: ServiceDeps = {}): Service {
     },
     async stop() {
       scratch.stop();
+      await pipeline?.stop();
       const closing = server;
       server = undefined;
       if (closing) {
@@ -114,6 +161,7 @@ export function createService(config: Config, deps: ServiceDeps = {}): Service {
       }
       killLiveGitGroups();
       await ssh?.stop();
+      await database?.close();
     },
   };
 }

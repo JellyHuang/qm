@@ -277,19 +277,19 @@ describe("audit", () => {
     assert.equal(rows.length, 3);
     const [ok, refused, notFound] = rows;
     assert.equal(ok?.result, "ok");
-    assert.equal(ok?.caller, "alice-bot");
+    assert.equal(ok?.principal, "alice-bot");
     assert.equal(ok?.tool, "get_commit");
     assert.equal(ok?.repo, "client");
     assert.equal(ok?.ref, fx.client.first);
     assert.ok((ok?.bytes ?? 0) > 100);
     assert.equal(ok?.truncated, false);
-    assert.equal(ok?.cacheHit, false);
-    assert.ok((ok?.durationMs ?? -1) >= 0);
-    assert.deepEqual(JSON.parse(ok?.args ?? ""), { repo: "client", sha: fx.client.first });
-    assert.equal(refused?.result, "refused:bad_path");
+    assert.equal(ok?.cache_hit, false);
+    assert.ok((ok?.ms ?? -1) >= 0);
+    assert.deepEqual(ok?.args, { repo: "client", sha: fx.client.first });
+    assert.equal(refused?.result, "denied:bad_path");
     assert.equal(refused?.path, "../x");
     assert.equal(refused?.bytes, 0);
-    assert.equal(notFound?.result, "refused:not_found");
+    assert.equal(notFound?.result, "denied:not_found");
     assert.equal(notFound?.ref, "missing");
     const dump = JSON.stringify(rows);
     for (const content of ["body of the first commit", SECRET_MARKER, "add sources"])
@@ -328,7 +328,7 @@ describe("audit", () => {
       }),
     });
     assert.equal(response.status, 200);
-    assert.equal(h.audit.rows().at(-1)?.caller, "unknown");
+    assert.equal(h.audit.rows().at(-1)?.principal, "unknown");
   });
 });
 
@@ -434,5 +434,32 @@ describe("bearer authentication", () => {
     const before = h.audit.rows().length;
     await fetch(h.url, { method: "POST", headers: headers, body: rpc });
     assert.equal(h.audit.rows().length, before);
+  });
+});
+
+describe("caller label headers", () => {
+  const rpc = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: { name: "list_repos", arguments: {} },
+  });
+  const send = (extra: Record<string, string>) =>
+    fetch(h.url, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer test-secret-0123456789",
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        ...extra,
+      },
+      body: rpc,
+    });
+
+  test("the label comes from X-QM-Caller, or from the actor header QM's connector sends, and the first wins", async () => {
+    await send({ "x-qm-actor": "wang.wei" });
+    assert.equal(h.audit.rows().at(-1)?.principal, "wang.wei");
+    await send({ "x-qm-actor": "wang.wei", "x-qm-caller": "zq-poller" });
+    assert.equal(h.audit.rows().at(-1)?.principal, "zq-poller");
   });
 });

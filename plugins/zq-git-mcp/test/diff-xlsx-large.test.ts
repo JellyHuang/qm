@@ -144,8 +144,8 @@ describe("limits and cleanup", () => {
       await request;
       assert.equal(await until(() => readdirSync(scratch).length === 0), true);
       assert.equal(await until(() => threads() <= baseline), true);
-      assert.equal(await until(() => h.audit.rows().some((row) => row.caller === "canceller")), true);
-      assert.equal(h.audit.rows().find((row) => row.caller === "canceller")?.result, "error");
+      assert.equal(await until(() => h.audit.rows().some((row) => row.principal === "canceller")), true);
+      assert.equal(h.audit.rows().find((row) => row.principal === "canceller")?.result, "error");
       assert.equal((await h.call("list_repos", {})).isError, false);
     } finally {
       await h.stop();

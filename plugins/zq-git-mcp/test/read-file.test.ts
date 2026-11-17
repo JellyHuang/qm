@@ -194,7 +194,7 @@ describe("blob cache", () => {
       h.audit
         .rows()
         .slice(mark)
-        .map((row) => row.cacheHit),
+        .map((row) => row.cache_hit),
       [false, true, false],
     );
   });

@@ -10,6 +10,7 @@ import { printable } from "./validate.ts";
 
 const MCP_PATH = "/mcp";
 const CALLER_HEADER = "x-qm-caller";
+const ACTOR_HEADER = "x-qm-actor";
 const MAX_REQUEST_BYTES = 1024 * 1024;
 const MAX_CALLER_LENGTH = 64;
 
@@ -30,7 +31,7 @@ async function serveMcp(dispatcher: Dispatcher, req: IncomingMessage, res: Serve
   res.on("close", () => {
     if (!res.writableFinished) closed.abort(new Error("request closed by the caller"));
   });
-  const caller = callerLabel(req.headers[CALLER_HEADER]);
+  const caller = callerLabel(req.headers[CALLER_HEADER] ?? req.headers[ACTOR_HEADER]);
   const server = new Server({ name: "zq-git-mcp", version: "0.1.0" }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: dispatcher.list() }));
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {

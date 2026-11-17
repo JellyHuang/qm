@@ -106,3 +106,59 @@ test("the ssh target is derived from scp style and ssh urls and is absent for lo
   assert.equal(sshTarget("file:///tmp/x/"), undefined);
   assert.equal(sshTarget("/tmp/x/"), undefined);
 });
+
+test("audit, tips and blob metadata default to memory, a failed audit write defaults to serve and the spool has defaults", () => {
+  const config = loadConfig({ ...BASE, ...SSH });
+  assert.equal(config.audit, "memory");
+  assert.equal(config.tips, "memory");
+  assert.equal(config.blobMeta, "memory");
+  assert.equal(config.database, undefined);
+  assert.equal(config.auditOnFailure, "serve");
+  assert.equal(config.auditSpoolDir, "/srv/zq/audit-spool");
+  assert.equal(config.auditSpoolMaxBytes, 64 * 1024 * 1024);
+  assert.equal(config.auditSpoolMaxAgeMs, 7 * 24 * 3600 * 1000);
+});
+
+test("postgres needs a database url, the url is not echoed and the environment overrides the file", () => {
+  for (const key of ["ZQ_GIT_MCP_AUDIT", "ZQ_GIT_MCP_TIPS", "ZQ_GIT_MCP_BLOB_META"])
+    assert.throws(() => loadConfig({ ...BASE, ...SSH, [key]: "postgres" }), /databaseUrl/);
+  const url = "postgres://svc:hunter2@db.internal:5432/qm";
+  const config = loadConfig({
+    ...BASE,
+    ...SSH,
+    ZQ_GIT_MCP_AUDIT: "postgres",
+    ZQ_GIT_MCP_DATABASE_URL: url,
+    ZQ_GIT_MCP_TENANT_ID: "11111111-2222-4333-8444-555555555555",
+    ZQ_GIT_MCP_AUDIT_ON_FAILURE: "fail",
+  });
+  assert.deepEqual(config.database, { url, tenantId: "11111111-2222-4333-8444-555555555555" });
+  assert.equal(config.audit, "postgres");
+  assert.equal(config.tips, "memory");
+  assert.equal(config.auditOnFailure, "fail");
+  for (const bad of [
+    { ZQ_GIT_MCP_DATABASE_URL: "mysql://x:hunter2@db/qm" },
+    { ZQ_GIT_MCP_TENANT_ID: "not-a-uuid" },
+    { ZQ_GIT_MCP_AUDIT_ON_FAILURE: "ignore" },
+    { ZQ_GIT_MCP_AUDIT: "sqlite" },
+  ])
+    assert.throws(
+      () => loadConfig({ ...BASE, ...SSH, ZQ_GIT_MCP_AUDIT: "postgres", ZQ_GIT_MCP_DATABASE_URL: url, ...bad }),
+      (e) => e instanceof ConfigError && !/hunter2/.test(e.message),
+    );
+  const files: Record<string, string> = {
+    "/etc/zq.json": JSON.stringify({
+      auditOnFailure: "fail",
+      tips: "postgres",
+      databaseUrl: url,
+      remoteBase: "file:///x/",
+      secret: "0123456789abcdef",
+      dataDir: "/srv/a",
+    }),
+  };
+  const merged = loadConfig(
+    { ZQ_GIT_MCP_CONFIG: "/etc/zq.json", ZQ_GIT_MCP_AUDIT_ON_FAILURE: "serve" },
+    (path) => files[path] ?? "",
+  );
+  assert.equal(merged.auditOnFailure, "serve");
+  assert.equal(merged.tips, "postgres");
+});

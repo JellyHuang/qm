@@ -45,7 +45,7 @@ test(
       const body = JSON.parse(value.result.content[0]?.text ?? "{}") as { size?: number; kind?: string };
       assert.notEqual(value.result.isError, true, value.result.content[0]?.text);
       t.diagnostic(
-        `kind=${body.kind} size=${body.size} service rss growth=${Math.round((peak - baseline) / 1048576)} MiB index-pack peak=${Math.round(peakBytes / 1048576)} MiB cacheHit=${audit.rows().at(-1)?.cacheHit}`,
+        `kind=${body.kind} size=${body.size} service rss growth=${Math.round((peak - baseline) / 1048576)} MiB index-pack peak=${Math.round(peakBytes / 1048576)} MiB cacheHit=${audit.rows().at(-1)?.cache_hit}`,
       );
     } finally {
       await service.stop();

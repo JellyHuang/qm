@@ -75,8 +75,8 @@ test("a cancelled request kills the fetch process group, removes its scratch and
   await request;
   assert.equal(await until(() => !alive(sleeper)), true);
   assert.equal(await until(() => readdirSync(scratch).length === 0), true);
-  assert.equal(await until(() => h.audit.rows().some((row) => row.caller === "canceller")), true);
-  const row = h.audit.rows().find((entry) => entry.caller === "canceller");
+  assert.equal(await until(() => h.audit.rows().some((row) => row.principal === "canceller")), true);
+  const row = h.audit.rows().find((entry) => entry.principal === "canceller");
   assert.equal(row?.tool, "read_file");
   assert.equal(row?.result, "error");
 });

@@ -160,7 +160,7 @@ describe("a large blob below half the cache is cached and then served as a hit",
     assert.equal(first.body.sha256, binarySha);
     assert.equal(second.body.sha256, binarySha);
     assert.deepEqual(
-      h.audit.rows().map((row) => row.cacheHit),
+      h.audit.rows().map((row) => row.cache_hit),
       [false, true],
     );
     const cache = (await h.call("list_repos", {})).body.cache as { usedBytes: number; entries: number };

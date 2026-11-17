@@ -3,7 +3,6 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createMemoryAuditSink, type MemoryAuditSink } from "../../src/audit.ts";
 import type { Config } from "../../src/config.ts";
-import type { TipStore } from "../../src/tip-store.ts";
 import { createService, type Service } from "../../src/service.ts";
 
 export const SECRET = "test-secret-0123456789";
@@ -26,6 +25,13 @@ export function testConfig(root: string, remoteBase: string, overrides: Partial<
     fetchNoProgressMs: 180_000,
     fetchFailureTtlMs: 60_000,
     refreshMs: 60_000,
+    audit: "memory",
+    tips: "memory",
+    blobMeta: "memory",
+    auditOnFailure: "serve",
+    auditSpoolDir: join(root, "data", "audit-spool"),
+    auditSpoolMaxBytes: 64 * 1024 * 1024,
+    auditSpoolMaxAgeMs: 7 * 24 * 3600 * 1000,
     xlsxTimeoutMs: 120_000,
     xlsxMaxHeapMb: 768,
     xlsxNoProgressMs: 180_000,
@@ -47,12 +53,11 @@ export interface Harness {
   stop(): Promise<void>;
 }
 
-export async function startHarness(
-  config: Config,
-  options: { gitBinary?: string; tips?: TipStore } = {},
-): Promise<Harness> {
+type ServiceOptions = Omit<NonNullable<Parameters<typeof createService>[1]>, "audit">;
+
+export async function startHarness(config: Config, options: ServiceOptions = {}): Promise<Harness> {
   const audit = createMemoryAuditSink();
-  const service = createService(config, { audit, ...options });
+  const service = createService(config, options.auditTarget ? options : { audit, ...options });
   const { port } = await service.start();
   const url = `http://127.0.0.1:${port}/mcp`;
   const clients: Client[] = [];

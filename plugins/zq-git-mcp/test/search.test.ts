@@ -134,7 +134,7 @@ describe("content search", () => {
     assert.equal(out.body.truncated, false);
     await search({ kind: "content", query: "gamma", pathGlob: "*.txt", ref: ff.c3 });
     assert.equal(blobFetches(), before + 1);
-    assert.equal(h.audit.rows().at(-1)?.cacheHit, true);
+    assert.equal(h.audit.rows().at(-1)?.cache_hit, true);
   });
 
   test("supports regular expressions, ignore case, context lines and non-ASCII content", async () => {
@@ -304,7 +304,7 @@ describe("regular expression safety", () => {
         .rows()
         .slice(before)
         .map((row) => row.result),
-      ["refused:bad_regex", "refused:bad_regex"],
+      ["denied:bad_regex", "denied:bad_regex"],
     );
   });
 });

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { errMessage } from "../../../chassis/src/errors.ts";
 import { GIT_REPOS, GitDenied, checkBranch, checkRepo, type GitRepo } from "../validate.ts";
 import { COMMIT_FORMAT, parseCommitRecord } from "./commit-format.ts";
+import { TOMBSTONE_TIP } from "../tip-store.ts";
 import { defineTool, type ToolContext } from "./types.ts";
 
 const RESERVE_CHARS = 2000;
@@ -115,12 +116,13 @@ function parseAck(value: unknown): AckEntry {
 
 async function applyAcks(ctx: ToolContext, repo: GitRepo, acks: AckEntry[]): Promise<number> {
   let applied = 0;
-  const stored = await ctx.tips.list(repo);
   for (const ack of acks) {
-    if ((stored.get(ack.branch)?.tip ?? null) !== ack.from) continue;
-    if (ack.to === null) await ctx.tips.delete(repo, ack.branch);
-    else await ctx.tips.put(repo, ack.branch, ack.to, Date.now());
-    applied++;
+    const at = Date.now();
+    const done =
+      ack.to === null
+        ? ack.from !== null && (await ctx.tips.markDeleted(repo, ack.branch, ack.from, at))
+        : await ctx.tips.advance(repo, ack.branch, ack.from, ack.to, at);
+    if (done) applied++;
   }
   return applied;
 }
@@ -136,7 +138,7 @@ async function checkOne(ctx: ToolContext, repo: GitRepo, budget: number) {
   const seenAt = Date.now();
   const writes: (() => Promise<void>)[] = [];
   const acks: AckEntry[] = [];
-  const record = (branch: string, tip: string) => writes.push(() => ctx.tips.put(repo, branch, tip, seenAt));
+  const record = (branch: string, tip: string) => writes.push(() => ctx.tips.record(repo, branch, tip, seenAt));
   let result: Record<string, unknown>;
 
   if (stored.size === 0) {
@@ -144,7 +146,7 @@ async function checkOne(ctx: ToolContext, repo: GitRepo, budget: number) {
     result = { repo, status: "first_run", branches: remote.size, updates: [] };
   } else {
     const changed = [...remote].filter(([branch, tip]) => stored.get(branch)?.tip !== tip);
-    const deleted = [...stored].filter(([branch]) => !remote.has(branch));
+    const deleted = [...stored].filter(([branch, entry]) => !remote.has(branch) && entry.tip !== TOMBSTONE_TIP);
     if (changed.length === 0 && deleted.length === 0) {
       result = { repo, status: "unchanged", branches: remote.size, updates: [] };
     } else {
@@ -156,7 +158,8 @@ async function checkOne(ctx: ToolContext, repo: GitRepo, budget: number) {
       const updates: BranchUpdate[] = [];
       let used = 0;
       for (const [branch, newTip] of changed) {
-        const oldTip = stored.get(branch)?.tip;
+        const storedTip = stored.get(branch)?.tip;
+        const oldTip = storedTip === TOMBSTONE_TIP ? undefined : storedTip;
         const described = await describeBranch(ctx, repo, branch, oldTip, newTip);
         const kept: UpdatedCommit[] = [];
         for (const commit of described.commits) {
@@ -166,7 +169,7 @@ async function checkOne(ctx: ToolContext, repo: GitRepo, budget: number) {
         }
         const partial = kept.length < described.commits.length;
         const advanceTo = partial ? (kept.at(-1)?.sha ?? newTip) : newTip;
-        acks.push({ repo, branch, from: oldTip ?? null, to: advanceTo });
+        acks.push({ repo, branch, from: storedTip ?? null, to: advanceTo });
         updates.push({
           branch,
           status: described.status,

@@ -50,19 +50,17 @@ export const readFile = defineTool({
         const size = (await stat(file)).size;
         const head = await sniff(file);
         const binary = head.includes(0);
-        ctx.ledger.record(repo, entry.oid, { size, binary });
+        ctx.ledger.record(repo, entry.oid, { size_bytes: size });
+        ctx.ledger.markBinary(repo, entry.oid, binary);
         const common = { ...where, oid: entry.oid, size };
         const pointer = binary ? undefined : await readLfsPointer(file);
         if (pointer)
           return { ...common, kind: "lfs_pointer", lfsOid: pointer.oid, lfsSize: pointer.size, truncated: false };
         if (binary) {
           if (lineMode) throw new GitDenied("binary_file", "line ranges need a text file; use offset and length");
-          const base = {
-            ...common,
-            kind: "binary",
-            detectedType: detectType(head, path),
-            sha256: await sha256Of(file),
-          };
+          const sha256 = await sha256Of(file);
+          ctx.ledger.record(repo, entry.oid, { size_bytes: size, sha256 });
+          const base = { ...common, kind: "binary", detectedType: detectType(head, path), sha256 };
           if (!byteMode) return { ...base, truncated: false };
           const from = Math.min(offset ?? 0, size);
           const wanted = Math.min(length ?? size - from, size - from);

@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { errMessage, swallow } from "../../chassis/src/errors.ts";
+import { errMessage } from "../../chassis/src/errors.ts";
+import { randomUUID } from "node:crypto";
 import type { AuditResult, AuditSink } from "./audit.ts";
 import { BlobFetchError } from "./blobs.ts";
 import { DiskSpaceLowError } from "./scratch.ts";
@@ -41,7 +42,7 @@ function describeFailure(e: unknown): {
   details?: Record<string, unknown>;
 } {
   if (e instanceof ToolFailure) return { code: e.code, message: e.message, result: "error", details: e.details };
-  if (e instanceof GitDenied) return { code: e.reason, message: e.message, result: `refused:${e.reason}` };
+  if (e instanceof GitDenied) return { code: e.reason, message: e.message, result: `denied:${e.reason}` };
   if (e instanceof BlobFetchError) return { code: "fetch_failed", message: e.message, result: "error" };
   if (e instanceof DiskSpaceLowError) return { code: "disk_space_low", message: e.message, result: "error" };
   return { code: "error", message: errMessage(e), result: "error" };
@@ -94,6 +95,7 @@ export function createDispatcher(options: DispatcherOptions): Dispatcher {
         caller,
         signal,
         truncateChars,
+        auditHealth: () => audit.health(),
         state: { cacheHit: false },
         git: (repo, args, opts) => services.runner.run(services.repos.dir(repo), args, { signal, ...opts }),
       };
@@ -115,19 +117,25 @@ export function createDispatcher(options: DispatcherOptions): Dispatcher {
       const argsJson = JSON.stringify(rawArgs ?? {}) ?? "{}";
       try {
         await audit.record({
+          id: randomUUID(),
           at: started,
-          caller,
+          principal: caller,
           tool: printable(name) ?? "",
           ...targetOf(rawArgs),
-          args: argsJson.slice(0, MAX_ARGS_JSON),
+          args: argsJson.length > MAX_ARGS_JSON ? { clipped: argsJson.slice(0, MAX_ARGS_JSON) } : JSON.parse(argsJson),
           bytes: reply.isError ? 0 : Buffer.byteLength(reply.text),
           truncated,
           result,
-          durationMs: now() - started,
-          cacheHit: ctx.state.cacheHit,
+          ms: now() - started,
+          cache_hit: ctx.state.cacheHit,
         });
-      } catch (e) {
-        swallow("audit record", e);
+      } catch {
+        return {
+          text: JSON.stringify({
+            error: { code: "audit_unavailable", message: "the call could not be recorded and was not served" },
+          }),
+          isError: true,
+        };
       }
       return reply;
     },

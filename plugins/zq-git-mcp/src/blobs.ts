@@ -213,7 +213,7 @@ export function createBlobStore(options: BlobStoreOptions): BlobStore {
       const [oid = "", type = "", size = ""] = line.split(" ");
       if (type !== "blob") throw new Error(`object ${oid} is not a blob in ${repo}`);
       sizes.set(oid, Number(size));
-      ledger.record(repo, oid, { size: Number(size) });
+      ledger.record(repo, oid, { size_bytes: Number(size) });
     }
     for (const oid of present) {
       const size = sizes.get(oid);
@@ -248,7 +248,7 @@ export function createBlobStore(options: BlobStoreOptions): BlobStore {
         fetches.run(async () => {
           const dir = join(job.dir, `batch-${i}`);
           await mkdir(dir, { recursive: true });
-          const small = batch.every((oid) => (ledger.get(repo, oid)?.size ?? Infinity) <= smallBytes);
+          const small = batch.every((oid) => (ledger.get(repo, oid)?.size_bytes ?? Infinity) <= smallBytes);
           const run = () => fetchBatch(repo, batch, dir, job, got);
           await (small ? run() : bigFetches.run(run));
           await rm(join(dir, "git"), { recursive: true, force: true });

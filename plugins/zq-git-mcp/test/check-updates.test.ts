@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 import { after, before, describe, test } from "node:test";
-import { createMemoryTipStore } from "../src/tip-store.ts";
+import { TOMBSTONE_TIP, createMemoryTipStore } from "../src/tip-store.ts";
 import { loggingGit } from "./support/fake-git.ts";
 import { ALICE, BOB, buildFixture, commitAll, git, makeRoot, type Fixture } from "./support/fixtures.ts";
 import { startHarness, testConfig, type Harness } from "./support/harness.ts";
@@ -11,7 +11,6 @@ const { root, cleanup } = makeRoot("zqgit-updates-");
 const logger = loggingGit(root);
 let fx: Fixture;
 let h: Harness;
-const tips = createMemoryTipStore();
 
 before(async () => {
   fx = buildFixture(root);
@@ -230,7 +229,7 @@ describe("changes", () => {
 describe("failures and refusals", () => {
   test("an unreachable remote is a visible per repository error, the stored tips are kept", async () => {
     const store = createMemoryTipStore();
-    await store.put("client", "main", "a".repeat(40), 1);
+    await store.record("client", "main", "a".repeat(40), 1);
     const broken = await startHarness(
       testConfig(root, `file://${root}/missing/`, { clonesDir: join(root, "broken-updates") }),
       {
@@ -252,20 +251,72 @@ describe("failures and refusals", () => {
   test("an unknown repository is refused and the audit holds only the caller label and arguments", async () => {
     const out = await h.call("check_updates", { repo: "qm-test" }, "poller");
     assert.equal((out.body.error as { code: string }).code, "repo_not_allowed");
-    const row = h.audit.rows().find((entry) => entry.caller === "poller");
-    assert.equal(row?.result, "refused:repo_not_allowed");
+    const row = h.audit.rows().find((entry) => entry.principal === "poller");
+    assert.equal(row?.result, "denied:repo_not_allowed");
     const ok = h.audit.rows().find((entry) => entry.tool === "check_updates" && entry.result === "ok");
     assert.ok(ok);
     assert.equal(JSON.stringify(h.audit.rows()).includes("update two"), false);
   });
 });
 
-test("the tip store is per repository and branch", async () => {
-  await tips.put("client", "main", "x".repeat(40), 5);
-  await tips.put("client", "dev", "y".repeat(40), 6);
-  await tips.put("server", "main", "z".repeat(40), 7);
-  assert.deepEqual([...(await tips.list("client")).keys()].sort(), ["dev", "main"]);
-  await tips.delete("client", "dev");
-  assert.deepEqual([...(await tips.list("client")).keys()], ["main"]);
-  assert.equal((await tips.list("server")).get("main")?.tip, "z".repeat(40));
+describe("deleted branches", () => {
+  test("a deleted branch is reported until acknowledged, then never again, and a returning branch is new", async () => {
+    const work = fx.work["zq-ui"];
+    await check({ repo: "zq-ui" });
+    git(work, ["checkout", "-q", "-b", "temp"]);
+    writeFileSync(join(work, "t.txt"), "t\n");
+    commitAll(work, "temp work", ALICE, "2025-05-01T10:00:00Z");
+    push(work, ["temp"]);
+    const added = await check({ repo: "zq-ui" });
+    await check({ repo: "zq-ui", ack: added.ack });
+    git(work, ["checkout", "-q", "main"]);
+    push(work, ["--delete", "temp"]);
+    git(work, ["branch", "-q", "-D", "temp"]);
+    const first = await check({ repo: "zq-ui" });
+    const deleted = first.byName.get("zq-ui")?.updates.find((u) => u.branch === "temp");
+    assert.equal(deleted?.status, "deleted");
+    const again = await check({ repo: "zq-ui" });
+    assert.equal(again.byName.get("zq-ui")?.updates.find((u) => u.branch === "temp")?.status, "deleted");
+    const settled = await check({ repo: "zq-ui", ack: first.ack });
+    assert.equal(settled.byName.get("zq-ui")?.status, "unchanged");
+    const quiet = await check({ repo: "zq-ui" });
+    assert.equal(quiet.byName.get("zq-ui")?.status, "unchanged");
+    assert.equal(quiet.byName.get("zq-ui")?.branches, 1);
+    git(work, ["checkout", "-q", "-b", "temp"]);
+    writeFileSync(join(work, "t2.txt"), "t2\n");
+    const tip = commitAll(work, "temp again", BOB, "2025-05-02T10:00:00Z");
+    push(work, ["temp"]);
+    const back = await check({ repo: "zq-ui" });
+    const returned = back.byName.get("zq-ui")?.updates.find((u) => u.branch === "temp");
+    assert.equal(returned?.status, "new");
+    assert.deepEqual(
+      returned?.commits.map((c) => c.sha),
+      [tip],
+    );
+    assert.deepEqual(
+      back.ack.find((a) => a.branch === "temp"),
+      { repo: "zq-ui", branch: "temp", from: TOMBSTONE_TIP, to: tip },
+    );
+    const replaced = await check({ repo: "zq-ui", ack: back.ack });
+    assert.equal(replaced.byName.get("zq-ui")?.status, "unchanged");
+  });
+});
+
+test("the tip store records once and advances only from the expected tip", async () => {
+  const store = createMemoryTipStore();
+  await store.record("client", "main", "x".repeat(40), 5);
+  await store.record("client", "main", "y".repeat(40), 6);
+  await store.record("server", "main", "z".repeat(40), 7);
+  assert.equal((await store.list("client")).get("main")?.tip, "x".repeat(40));
+  assert.equal(await store.advance("client", "main", "y".repeat(40), "w".repeat(40), 8), false);
+  assert.equal(await store.advance("client", "main", "x".repeat(40), "w".repeat(40), 8), true);
+  assert.equal(await store.advance("client", "dev", null, "d".repeat(40), 9), true);
+  assert.equal(await store.advance("client", "dev", null, "e".repeat(40), 9), false);
+  assert.equal(await store.markDeleted("client", "dev", "e".repeat(40), 10), false);
+  assert.equal(await store.markDeleted("client", "dev", "d".repeat(40), 10), true);
+  assert.equal((await store.list("client")).get("dev")?.tip, TOMBSTONE_TIP);
+  assert.equal(await store.markDeleted("client", "dev", TOMBSTONE_TIP, 11), false);
+  assert.equal(await store.advance("client", "dev", TOMBSTONE_TIP, "f".repeat(40), 12), true);
+  assert.deepEqual([...(await store.list("client")).keys()].sort(), ["dev", "main"]);
+  assert.equal((await store.list("server")).get("main")?.tip, "z".repeat(40));
 });

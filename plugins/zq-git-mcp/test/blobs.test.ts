@@ -439,16 +439,16 @@ describe("memory aware fetch limits", () => {
     const log = join(root, `small-${counter}.log`);
     const s = await setup({ gitBinary: overlapGit(log), maxBigFetches: 1, maxFetches: 4, maxJobs: 6, repo: "zq-ui" });
     const oids = [...new Set(manyOids["zq-ui"] ?? [])].slice(0, 4);
-    for (const oid of oids) s.ledger.record("zq-ui", oid, { size: 20 });
+    for (const oid of oids) s.ledger.record("zq-ui", oid, { size_bytes: 20 });
     await Promise.all(oids.map((oid) => s.blobs.withBlobs("zq-ui", [oid], async (paths) => read(paths, oid))));
     assert.ok(peakOf(log) > 1);
   });
 
   test("sizes learned after a download are remembered", async () => {
     const s = await setup();
-    assert.equal(s.ledger.get("client", fx.client.readmeOid)?.size, undefined);
+    assert.equal(s.ledger.get("client", fx.client.readmeOid)?.size_bytes, undefined);
     await s.blobs.withBlobs("client", [fx.client.readmeOid], async () => 1);
-    assert.equal(s.ledger.get("client", fx.client.readmeOid)?.size, "# client\nchanged\n".length);
+    assert.equal(s.ledger.get("client", fx.client.readmeOid)?.size_bytes, "# client\nchanged\n".length);
   });
 
   test("the temporary repository streams large packs instead of holding them in memory", async (t) => {

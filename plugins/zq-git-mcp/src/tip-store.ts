@@ -1,3 +1,5 @@
+export const TOMBSTONE_TIP = "0".repeat(40);
+
 interface BranchTip {
   tip: string;
   seenAt: number;
@@ -5,8 +7,9 @@ interface BranchTip {
 
 export interface TipStore {
   list(repo: string): Promise<Map<string, BranchTip>>;
-  put(repo: string, branch: string, tip: string, seenAt: number): Promise<void>;
-  delete(repo: string, branch: string): Promise<void>;
+  record(repo: string, branch: string, tip: string, seenAt: number): Promise<void>;
+  advance(repo: string, branch: string, from: string | null, to: string, seenAt: number): Promise<boolean>;
+  markDeleted(repo: string, branch: string, from: string, seenAt: number): Promise<boolean>;
 }
 
 export function createMemoryTipStore(): TipStore {
@@ -22,11 +25,21 @@ export function createMemoryTipStore(): TipStore {
     async list(repo) {
       return new Map(forRepo(repo));
     },
-    async put(repo, branch, tip, seenAt) {
-      forRepo(repo).set(branch, { tip, seenAt });
+    async record(repo, branch, tip, seenAt) {
+      const branches = forRepo(repo);
+      if (!branches.has(branch)) branches.set(branch, { tip, seenAt });
     },
-    async delete(repo, branch) {
-      forRepo(repo).delete(branch);
+    async advance(repo, branch, from, to, seenAt) {
+      const branches = forRepo(repo);
+      if ((branches.get(branch)?.tip ?? null) !== from) return false;
+      branches.set(branch, { tip: to, seenAt });
+      return true;
+    },
+    async markDeleted(repo, branch, from, seenAt) {
+      const branches = forRepo(repo);
+      if (from === TOMBSTONE_TIP || branches.get(branch)?.tip !== from) return false;
+      branches.set(branch, { tip: TOMBSTONE_TIP, seenAt });
+      return true;
     },
   };
 }
