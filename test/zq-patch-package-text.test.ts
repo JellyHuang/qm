@@ -4,7 +4,7 @@ import { chmodSync, existsSync, readFileSync, readdirSync, rmSync } from "node:f
 import { join } from "node:path";
 import { test } from "node:test";
 import { ALLOWED_GIT_SUBCOMMANDS, createGitRunner } from "../src/zq/patch-package/git.ts";
-import { PatchPackageError } from "../src/zq/patch-package/settings.ts";
+import { DEFAULT_TICKET_PATTERN, PatchPackageError, validateTicket } from "../src/zq/patch-package/settings.ts";
 import { buildTextPatchPackage, type GitMcpDiffResult, type TextPatchInput } from "../src/zq/patch-package/text.ts";
 import { git, makeRepo, put, scratchDir, testSettings } from "./support/patch-package-fixture.ts";
 
@@ -26,7 +26,7 @@ function setup(t: Parameters<typeof makeRepo>[0]) {
   const input = (over: Partial<TextPatchInput> = {}): TextPatchInput => ({
     repoDir: fixture.repo,
     baseCommit: fixture.base,
-    ticket: "ZQ-123",
+    ticket: "WP-123",
     subject: "Tune the thing",
     body: "Explain why.",
     change: { kind: "workingDir", dir: fixture.repo },
@@ -90,11 +90,11 @@ test("the commit message carries the ticket and the AI marker exactly once and t
   put(s.repo, "readme.txt", "changed\n");
   const pkg = await buildTextPatchPackage(s.input(), s.options());
   const patch = readFileSync(pkg.files[0]?.path ?? "", "utf8");
-  assert.equal(patch.match(/^Ticket: ZQ-123$/gm)?.length, 1);
+  assert.equal(patch.match(/^Ticket: WP-123$/gm)?.length, 1);
   assert.equal(patch.match(/^AI-Generated: QM$/gm)?.length, 1);
   assert.match(patch, /^From: QM Bot <qm-bot@invalid>$/m);
   assert.match(patch, /^Date: Fri, 2 Jan 2026 03:04:05 \+0000$/m);
-  assert.match(patch, /Subject: \[PATCH\] Tune the thing\n\nExplain why\.\n\nTicket: ZQ-123\nAI-Generated: QM\n---\n/);
+  assert.match(patch, /Subject: \[PATCH\] Tune the thing\n\nExplain why\.\n\nTicket: WP-123\nAI-Generated: QM\n---\n/);
 });
 
 test("the same inputs and date give byte-identical patch files", async (t) => {
@@ -120,7 +120,7 @@ test("the manifest has hashes and refs, no secrets and no absolute temp paths", 
     ticket: string;
   };
   assert.equal(manifest.base.commit, s.base);
-  assert.equal(manifest.ticket, "ZQ-123");
+  assert.equal(manifest.ticket, "WP-123");
   assert.equal(manifest.files[0]?.sha256, pkg.files[0]?.sha256);
   assert.ok(!text.includes(s.out) && !text.includes(s.tmp) && !text.includes(s.repo));
   assert.ok(!/\/tmp\//.test(text));
@@ -182,13 +182,71 @@ test("a truncated diff, a wrong base and unsupported entries are refused with a 
   assert.deepEqual(readdirSync(s.out), []);
 });
 
+test("the default ticket pattern accepts WP-<digits> and a plain number and refuses everything else", () => {
+  const settings = testSettings("/unused", { ticketPattern: DEFAULT_TICKET_PATTERN });
+  for (const ok of ["WP-123", "123", "0", "WP-1", "123456789"]) assert.equal(validateTicket(settings, ok), ok);
+  const bad = [
+    "",
+    "WP-",
+    "wp-123",
+    "12a",
+    "WP-12a",
+    "WP 123",
+    " 123",
+    "123\n",
+    "WP-123\nTicket: 9",
+    "12\u00003",
+    "ZQ-123",
+    "1234567890",
+    "WP-1234567890",
+    "x".repeat(65),
+    undefined,
+    123,
+  ];
+  for (const value of bad)
+    assert.throws(
+      () => validateTicket(settings, value),
+      (e: unknown) => e instanceof PatchPackageError && e.code === "bad_ticket",
+      String(value),
+    );
+});
+
+test("the default ticket pattern accepts WP-<digits> and a plain number and refuses everything else", () => {
+  const settings = testSettings("/unused", { ticketPattern: DEFAULT_TICKET_PATTERN });
+  for (const ok of ["WP-123", "123", "0", "WP-1", "123456789"]) assert.equal(validateTicket(settings, ok), ok);
+  const bad = [
+    "",
+    "WP-",
+    "wp-123",
+    "12a",
+    "WP-12a",
+    "WP 123",
+    " 123",
+    "123\n",
+    "WP-123\nTicket: 9",
+    "12\u00003",
+    "ZQ-123",
+    "1234567890",
+    "WP-1234567890",
+    "x".repeat(65),
+    undefined,
+    123,
+  ];
+  for (const value of bad)
+    assert.throws(
+      () => validateTicket(settings, value),
+      (e: unknown) => e instanceof PatchPackageError && e.code === "bad_ticket",
+      String(value),
+    );
+});
+
 test("the ticket, subject and body are validated", async (t) => {
   const s = setup(t);
   put(s.repo, "readme.txt", "changed\n");
   const build = (over: Partial<TextPatchInput>) => buildTextPatchPackage(s.input(over), s.options());
   await expectError(build({ ticket: "" }), "bad_ticket");
-  await expectError(build({ ticket: "zq-1" }), "bad_ticket", /does not match/);
-  await expectError(build({ ticket: "ZQ-1\nAI-Generated: x" }), "bad_ticket");
+  await expectError(build({ ticket: "wp-1" }), "bad_ticket", /does not match/);
+  await expectError(build({ ticket: "WP-1\nAI-Generated: x" }), "bad_ticket");
   await expectError(build({ subject: "" }), "bad_message");
   await expectError(build({ subject: "x".repeat(73) }), "bad_message", /longer/);
   await expectError(build({ subject: "bad\u0007bell" }), "bad_message", /control/);
@@ -249,7 +307,7 @@ test("temp dirs and the package directory are cleaned up on success and on failu
   assert.ok(existsSync(pkg.dir));
   await expectError(buildTextPatchPackage(s.input(), s.options()), "exists");
   assert.deepEqual(readdirSync(s.tmp), []);
-  assert.deepEqual(readdirSync(s.out), [`ZQ-123-${pkg.resultCommit.slice(0, 12)}`]);
+  assert.deepEqual(readdirSync(s.out), [`WP-123-${pkg.resultCommit.slice(0, 12)}`]);
 
   const failing = await buildTextPatchPackage(
     s.input(),

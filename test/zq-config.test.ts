@@ -80,7 +80,7 @@ test("the zq-git-mcp service address and secret go together and the author rules
 
 test("patch package settings default to a QM identity and a documented ticket pattern and enable nothing", () => {
   const c = zqConfigFromEnv({});
-  assert.equal(c.patchPackage.ticketPattern, "^[A-Z][A-Z0-9]{1,9}-[0-9]{1,9}$");
+  assert.equal(c.patchPackage.ticketPattern, "^(WP-)?[0-9]{1,9}$");
   assert.equal(c.patchPackage.authorName, "QM Bot");
   assert.equal(c.patchPackage.authorEmail, "qm-bot@invalid");
   assert.equal(c.patchPackage.subjectMax, 72);

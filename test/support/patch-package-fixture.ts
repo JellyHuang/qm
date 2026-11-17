@@ -59,7 +59,7 @@ export function makeRepo(t: TestContext, files: Record<string, string | Buffer> 
 
 export function testSettings(outputDir: string, overrides: Partial<PatchPackageSettings> = {}): PatchPackageSettings {
   return {
-    ticketPattern: "^[A-Z][A-Z0-9]{1,9}-[0-9]{1,9}$",
+    ticketPattern: "^(WP-)?[0-9]{1,9}$",
     authorName: "QM Bot",
     authorEmail: "qm-bot@invalid",
     outputDir,

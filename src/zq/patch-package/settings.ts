@@ -10,7 +10,7 @@ export interface PatchPackageSettings {
   bodyMax: number;
 }
 
-export const DEFAULT_TICKET_PATTERN = "^[A-Z][A-Z0-9]{1,9}-[0-9]{1,9}$";
+export const DEFAULT_TICKET_PATTERN = "^(WP-)?[0-9]{1,9}$";
 export const DEFAULT_AUTHOR_NAME = "QM Bot";
 export const DEFAULT_AUTHOR_EMAIL = "qm-bot@invalid";
 export const DEFAULT_SUBJECT_MAX = 72;

@@ -87,16 +87,34 @@ Manifest: `schema`, `kind` (`xlsx`), `ticket` if given, and per workbook `path`,
 
 Parsed in `src/zq/config.ts` as `ZqConfig.patchPackage`. Precedence: the settings object the caller passes to the builder (normally `config.patchPackage`), built from the environment, then the default. Bad values refuse startup.
 
-| Setting                     | Env                       | Default                           |
-| --------------------------- | ------------------------- | --------------------------------- |
-| Ticket id pattern           | `ZQ_PATCH_TICKET_PATTERN` | `^[A-Z][A-Z0-9]{1,9}-[0-9]{1,9}$` |
-| Author and committer name   | `ZQ_PATCH_AUTHOR_NAME`    | `QM Bot`                          |
-| Author and committer email  | `ZQ_PATCH_AUTHOR_EMAIL`   | `qm-bot@invalid`                  |
-| Output directory (absolute) | `ZQ_PATCH_OUTPUT_DIR`     | `<os tmpdir>/qm-patch-packages`   |
-| Subject length, 20 to 200   | `ZQ_PATCH_SUBJECT_MAX`    | 72                                |
-| Body length, 100 to 50000   | `ZQ_PATCH_BODY_MAX`       | 5000                              |
+| Setting                     | Env                       | Default                         |
+| --------------------------- | ------------------------- | ------------------------------- |
+| Ticket id pattern           | `ZQ_PATCH_TICKET_PATTERN` | `^(WP-)?[0-9]{1,9}$`            |
+| Author and committer name   | `ZQ_PATCH_AUTHOR_NAME`    | `QM Bot`                        |
+| Author and committer email  | `ZQ_PATCH_AUTHOR_EMAIL`   | `qm-bot@invalid`                |
+| Output directory (absolute) | `ZQ_PATCH_OUTPUT_DIR`     | `<os tmpdir>/qm-patch-packages` |
+| Subject length, 20 to 200   | `ZQ_PATCH_SUBJECT_MAX`    | 72                              |
+| Body length, 100 to 50000   | `ZQ_PATCH_BODY_MAX`       | 5000                            |
+
+The default ticket pattern accepts an OpenProject work package id written as `WP-<digits>` (for example `WP-123`) or a plain number (`123`), 1 to 9 digits. It is case sensitive: `wp-123` is refused, as are an empty id, `WP-`, `12a`, whitespace, control characters and ids longer than 64 characters. The pattern is a regular expression tested against the whole id and stays configurable through `ZQ_PATCH_TICKET_PATTERN`; an invalid expression refuses startup. The previous Jira-style default (`ABC-123`) is replaced. The PM has not yet named the final ticket format, so this default is provisional. The accepted id is written unchanged into the commit message trailer `Ticket: <id>`, into the manifest, and into the package directory name `<id>-<commit>`.
+
+The default ticket pattern accepts an OpenProject work package id written as `WP-<digits>` (for example `WP-123`) or a plain number (`123`), 1 to 9 digits. It is case sensitive: `wp-123` is refused, as are an empty id, `WP-`, `12a`, whitespace, control characters and ids longer than 64 characters. The pattern is a regular expression tested against the whole id and stays configurable through `ZQ_PATCH_TICKET_PATTERN`; an invalid expression refuses startup. The previous Jira-style default (`ABC-123`) is replaced. The PM has not yet named the final ticket format, so this default is provisional. The accepted id is written unchanged into the commit message trailer `Ticket: <id>`, into the manifest, and into the package directory name `<id>-<commit>`.
 
 The name or the email must contain `QM`, so the identity is recognisable. The committer date is the build time unless `commitDate` is passed, which tests use for byte-identical output.
+
+## Decisions recorded (PM, 2026-11-17)
+
+- The author and committer are `QM Bot <qm-bot@invalid>` (the defaults above).
+- Git LFS pointers, submodules and large binaries are refused. There is no override.
+- The subject is at most 72 characters and the body at most 5000.
+- Delivery channel: Mattermost direct message to the responsible person with the zip attached. This is a decision only; nothing is wired. The design for keeping and delivering packages is in `docs/zq/patch-package-retention.md`.
+
+## Decisions recorded (PM, 2026-11-17)
+
+- The author and committer are `QM Bot <qm-bot@invalid>` (the defaults above).
+- Git LFS pointers, submodules and large binaries are refused. There is no override. Today the code enforces this for LFS pointers and submodules only; refusing large binaries needs a size threshold the PM has not named, so it is decided but not yet implemented (a text patch of any size is still accepted).
+- The subject is at most 72 characters and the body at most 5000.
+- Delivery channel: Mattermost direct message to the responsible person with the zip attached. This is a decision only; nothing is wired. The design for keeping and delivering packages is in `docs/zq/patch-package-retention.md`.
 
 ## Limits and not supported
 

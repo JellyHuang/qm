@@ -82,7 +82,7 @@ async function expectError(promise: Promise<unknown>, code: string, pattern?: Re
 
 test("the package holds the workbook, a diff table and a manifest with hashes and refs", async (t) => {
   const s = setup(t);
-  const pkg = await buildXlsxPackage([{ result: result(), file: s.file }], { settings: s.settings, ticket: "ZQ-9" });
+  const pkg = await buildXlsxPackage([{ result: result(), file: s.file }], { settings: s.settings, ticket: "WP-9" });
   assert.deepEqual(readdirSync(pkg.dir).sort(), ["items.diff.md", "items.xlsx", "manifest.json"]);
   assert.equal(readFileSync(join(pkg.dir, "items.xlsx"), "utf8"), "PK-pretend-workbook");
   const md = readFileSync(join(pkg.dir, "items.diff.md"), "utf8");
@@ -95,7 +95,7 @@ test("the package holds the workbook, a diff table and a manifest with hashes an
   assert.match(md, /^\| Data \| 4 \| {2}\| {2}\| id=4; name=d \| row_added \|$/m);
   assert.match(md, /^\| Data \| \(column\) \| price \| {2}\| new column \| column_added \|$/m);
   assert.match(md, /^\| Data \| \(column\) \| note \| old column \| {2}\| column_removed \|$/m);
-  assert.match(md, /ticket: ZQ-9/);
+  assert.match(md, /ticket: WP-9/);
   assert.doesNotMatch(md, /TABLE CUT/);
 
   const text = readFileSync(pkg.manifestPath, "utf8");
@@ -110,7 +110,7 @@ test("the package holds the workbook, a diff table and a manifest with hashes an
     }[];
   };
   const entry = manifest.workbooks[0];
-  assert.equal(manifest.ticket, "ZQ-9");
+  assert.equal(manifest.ticket, "WP-9");
   assert.equal(entry?.base.commit, "a".repeat(40));
   assert.equal(entry?.head.ref, "main");
   assert.equal(entry?.workbook.bytes, "PK-pretend-workbook".length);
