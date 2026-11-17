@@ -8,7 +8,7 @@ Status: DESIGN APPROVED on 2026-11-17 at design level (the PM answered "follow y
 2. Each person tells QM in chat "my git author name(s) are X (and Y)"; they find them with `git config user.name`. One person can bind several names. Names are unique in practice (same-name people rename, like `justin01`), so there is no disambiguation machinery: a name already bound to someone else is refused at bind time.
 3. The PM keeps an IGNORE LIST of author names, each with a reason (`automation` for pipeline scripts, `external` for people outside the team). Their commits are dropped silently: no notice, no queue row. Self-bind of an ignored name is refused.
 4. Order: explicit person binding > ignore list > bot name rule > external domain list > unmapped queue. Nobody else is dropped; malformed emails go to the queue by name.
-5. Bot rule: a name or email local part containing the whole word "bot" (`ZQBot.compiler`); Abbott, Talbot, Botha do not match. It beats any link to a (departed) person's mailbox.
+5. Bot rule: a name or email local part containing the whole word "bot" (`ExampleBot.compiler`); Abbott, Talbot, Botha do not match. It beats any link to a (departed) person's mailbox.
 6. Generic names (`admin`, `root`, `HOST123\admin`) can only be bound or ignored with an email condition, which is an optional field used for nothing else.
 7. A person can be marked DEPARTED: their commits go to the PM, not to them. A "shared identity" kind was considered and is recommended to be CUT.
 8. The PM gets a digest of unknown names with real name and email, as a DM to a named person only (dry-run for now); she answers in chat and the same tool binds or ignores. Logs and audit keep hashes only.
@@ -26,7 +26,7 @@ Status: DESIGN APPROVED on 2026-11-17 at design level (the PM answered "follow y
 
 ## 2. Scan facts and principles
 
-From the read-only scan of the real repositories (7 repositories, 9178 commits; every value below is invented): one bot author named like `ZQBot.compiler` whose email belongs to a person who left (112 commits); malformed emails (empty local part, no `@`); one email under several names (Chinese and pinyin); `DOMAIN\name`, `user\COMPANY`, `HOST123\admin` forms and case or hyphen differences; author and committer emails differ in 25 commits; one identity with a malformed email that is a pipeline automation (about 6k commits); at least one external person outside the project team.
+From the read-only scan of the real repositories (7 repositories, 9178 commits; every value below is invented): one bot author named like `ExampleBot.compiler` whose email belongs to a person who left (112 commits); malformed emails (empty local part, no `@`); one email under several names (Chinese and pinyin); `DOMAIN\name`, `user\COMPANY`, `HOST123\admin` forms and case or hyphen differences; author and committer emails differ in 25 commits; one identity with a malformed email that is a pipeline automation (about 6k commits); at least one external person outside the project team.
 
 Principles: (1) the key of a person is the git AUTHOR NAME, normalised; (2) email is an optional condition on a row and an attribute shown to the PM, never an identity; (3) author fields only, never the committer; (4) nothing is guessed: no fuzzy name match, no email-local-part-to-name match; (5) every author that is not bound, ignored, a bot or external reaches the PM.
 
@@ -45,7 +45,7 @@ One function (`nameKey`) used by every writer and reader: bind, unbind, ignore, 
 | Chinese name versus pinyin name; simplified versus traditional; accents       | NOT linked or folded                    | Two names of one person are two bindings                                                                                                                                                                                                                                                                                                                                                                       |
 | Length                                                                        | 1 to 100 characters after normalisation | an empty name cannot be bound                                                                                                                                                                                                                                                                                                                                                                                  |
 
-Bot detection uses the name after NFKC, invisible-character removal and whitespace collapse but BEFORE lower-casing, because the camelCase boundary in `ZQBot` is lost by lower-casing.
+Bot detection uses the name after NFKC, invisible-character removal and whitespace collapse but BEFORE lower-casing, because the camelCase boundary in `ExampleBot` is lost by lower-casing.
 
 Email conditions and email attributes are normalised by trim and lower case only. Plus-tag stripping is removed from `normaliseEmail`: no plus addressing was seen at the company, stripping can merge different mailboxes (`team+ann@x`, `team+bob@x`), email is no longer an identity key, and removing code beats a flag with no caller. A condition is compared as an exact string, so it also works for a malformed email such as `@partnerco`; it must be non-empty, at most 254 characters and contain no whitespace.
 
@@ -81,7 +81,7 @@ Why each position:
 
 - 1 first: an explicit statement by a person or the PM about a name is the strongest evidence; it also lets the PM deliberately claim a bot-looking name.
 - 2 second: an ignore is an explicit PM decision about one name. Rows 1 and 2 are mutually exclusive for one name (same id), so their relative order only matters in the data model, not in outcomes; ignore beats the bot, external and fallback rules because it is a named decision and must not depend on pattern luck. An ignored name that also matches the bot pattern is dropped either way; the difference is only the log counter (`ignored` instead of `bot`) and the reason column.
-- 3 bot before external and the fallback: the bot named `ZQBot.compiler` stays a bot although its mailbox belongs to a person who left; no email link can turn it into a person (a binding is keyed by name, so binding the departed person's own name does not match the bot's commits).
+- 3 bot before external and the fallback: the bot named `ExampleBot.compiler` stays a bot although its mailbox belongs to a person who left; no email link can turn it into a person (a binding is keyed by name, so binding the departed person's own name does not match the bot's commits).
 - 4 external after bot: an explicitly configured external domain is dropped only for authors that no one claimed.
 - 5 the Mattermost match is the weakest evidence and only runs for everything left.
 - 6 nothing is silently lost: private emails, malformed emails (`@partnerco`, `bobtest`) and new names reach the PM.
@@ -89,29 +89,29 @@ Why each position:
 
 Examples (invented; `P` are people):
 
-| Commit author name / email                   | Rows and config                                        | Result                                               |
-| -------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------- |
-| `Alice Example` / `alice.example@igg.com`    | `alice example` person P1                              | P1                                                   |
-| `艾丽丝` / `a@personal.example`              | `艾丽丝` person P1                                     | P1 (several names, one person)                       |
-| `ＡＬＩＣＥ  EXAMPLE` / any                  | `alice example` person P1                              | P1 (NFKC, case, whitespace)                          |
-| `ACME\alice.e` / any                         | only `alice.e` bound                                   | unmapped (prefix kept)                               |
-| `justin01` / any                             | `justin01` person P2                                   | P2 (renamed duplicate name)                          |
-| `Justin` / any                               | `justin` bound to P2                                   | P2                                                   |
-| `pipeline-sync` / `@partnerco`               | ignored, reason automation, no condition               | ignored, no notice, no queue row                     |
-| `pipeline-sync` / empty email                | same                                                   | ignored                                              |
-| `pipeline-sync` / `x@elsewhere.example`      | ignored with condition `@partnerco`                    | does not match; unmapped (queued)                    |
-| `Visiting Student` / `vs@univ.example`       | ignored, reason external                               | ignored                                              |
-| `ZQBot.compiler` / the left employee's email | nothing on that name                                   | bot                                                  |
-| `ZQBot.compiler` / any                       | ignored, reason automation                             | ignored (same outcome as bot)                        |
-| `ZQBot.compiler` / any                       | PM binds it to P3 explicitly                           | P3                                                   |
-| `Dana Example` / her email                   | person P4 with `departedAt`                            | person P4 departed, PM notified                      |
-| `Eve` / `@partnerco`                         | `eve` person P5                                        | P5                                                   |
-| `Eve` / `@partnerco`                         | nothing                                                | unmapped (`invalid_email`)                           |
-| `Frank` / `frank@partnerco`                  | `partnerco` external, `frank` unbound                  | external, dropped                                    |
-| `HOST123\admin` / `x@y.example`              | nothing                                                | unmapped; queued under name and email (generic)      |
-| `HOST123\admin` / `x@y.example`              | `host123\admin` person P6 with condition `x@y.example` | P6                                                   |
-| `Gina` / `gina@igg.com`                      | fallback on, Mattermost has this verified email        | P7 (rule 5)                                          |
-| same, fallback off (default)                 |                                                        | unmapped; digest shows the Mattermost user as a hint |
+| Commit author name / email                        | Rows and config                                        | Result                                               |
+| ------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------- |
+| `Alice Example` / `alice.example@example.invalid` | `alice example` person P1                              | P1                                                   |
+| `艾丽丝` / `a@personal.example`                   | `艾丽丝` person P1                                     | P1 (several names, one person)                       |
+| `ＡＬＩＣＥ  EXAMPLE` / any                       | `alice example` person P1                              | P1 (NFKC, case, whitespace)                          |
+| `ACME\alice.e` / any                              | only `alice.e` bound                                   | unmapped (prefix kept)                               |
+| `justin01` / any                                  | `justin01` person P2                                   | P2 (renamed duplicate name)                          |
+| `Justin` / any                                    | `justin` bound to P2                                   | P2                                                   |
+| `pipeline-sync` / `@partnerco`                    | ignored, reason automation, no condition               | ignored, no notice, no queue row                     |
+| `pipeline-sync` / empty email                     | same                                                   | ignored                                              |
+| `pipeline-sync` / `x@elsewhere.example`           | ignored with condition `@partnerco`                    | does not match; unmapped (queued)                    |
+| `Visiting Student` / `vs@univ.example`            | ignored, reason external                               | ignored                                              |
+| `ExampleBot.compiler` / the left employee's email | nothing on that name                                   | bot                                                  |
+| `ExampleBot.compiler` / any                       | ignored, reason automation                             | ignored (same outcome as bot)                        |
+| `ExampleBot.compiler` / any                       | PM binds it to P3 explicitly                           | P3                                                   |
+| `Dana Example` / her email                        | person P4 with `departedAt`                            | person P4 departed, PM notified                      |
+| `Eve` / `@partnerco`                              | `eve` person P5                                        | P5                                                   |
+| `Eve` / `@partnerco`                              | nothing                                                | unmapped (`invalid_email`)                           |
+| `Frank` / `frank@partnerco`                       | `partnerco` external, `frank` unbound                  | external, dropped                                    |
+| `HOST123\admin` / `x@y.example`                   | nothing                                                | unmapped; queued under name and email (generic)      |
+| `HOST123\admin` / `x@y.example`                   | `host123\admin` person P6 with condition `x@y.example` | P6                                                   |
+| `Gina` / `gina@example.invalid`                   | fallback on, Mattermost has this verified email        | P7 (rule 5)                                          |
+| same, fallback off (default)                      |                                                        | unmapped; digest shows the Mattermost user as a hint |
 
 What changes against today's code (exact list):
 
@@ -143,7 +143,7 @@ Names are unique in practice because people with the same name rename on the git
 Bind-time rules, same for self and admin paths, in this order:
 
 1. Normalise; reject empty or longer than 100 characters.
-2. Reject a name the bot rule classes as a bot (`ZQBot.compiler`) for self-binds; an admin may bind it on purpose (audited).
+2. Reject a name the bot rule classes as a bot (`ExampleBot.compiler`) for self-binds; an admin may bind it on purpose (audited).
 3. Reject a generic name unless an email condition is given (people and admins alike); the same for ignoring.
 4. If a row for this name key exists: REFUSE, always (no accept-and-flag, no conditioned second bind). The reply is clear and says what to do: "The git name `<name>` is already bound (or ignored) in QM. If it is not yours, change your git name, for example to `<name>01` (`git config user.name`), and bind that; if you think it is yours, ask the PM, who can review it." It does not name the holder. The holder receives a notice that someone tried to bind their name, and the audit records the attempt (status `refused`). The admin path refuses too, with the holder's identity shown to the admin; the admin resolves it by `unbind_for` first.
 5. Enforce `ZQ_GIT_BIND_MAX_PER_PERSON`.
@@ -157,14 +157,14 @@ The optional email condition is KEPT but is no longer a disambiguation tool. Rec
 
 Rule (PM, 2026-11-17): an author whose name or email local part contains "bot", case-insensitive, is a bot: not queued, no notification; configurable. It is rule 3: after explicit rows, before external and unmapped.
 
-| Option                    | Abbott      | Talbot      | Botha       | Robotham    | ZQBot.compiler | dependabot | Verdict                                                              |
-| ------------------------- | ----------- | ----------- | ----------- | ----------- | -------------- | ---------- | -------------------------------------------------------------------- |
-| A. plain substring        | bot (wrong) | bot (wrong) | bot (wrong) | bot (wrong) | bot            | bot        | rejected: real people would vanish                                   |
-| B. start or end of string | no          | bot (wrong) | bot (wrong) | no          | bot            | bot        | rejected                                                             |
-| C. whole-word token       | no          | no          | no          | no          | bot            | not bot    | recommended                                                          |
-| D. regex list             | depends     |             |             |             |                |            | rejected: unsafe patterns, backtracking per commit, hard to validate |
+| Option                    | Abbott      | Talbot      | Botha       | Robotham    | ExampleBot.compiler | dependabot | Verdict                                                              |
+| ------------------------- | ----------- | ----------- | ----------- | ----------- | ------------------- | ---------- | -------------------------------------------------------------------- |
+| A. plain substring        | bot (wrong) | bot (wrong) | bot (wrong) | bot (wrong) | bot                 | bot        | rejected: real people would vanish                                   |
+| B. start or end of string | no          | bot (wrong) | bot (wrong) | no          | bot                 | bot        | rejected                                                             |
+| C. whole-word token       | no          | no          | no          | no          | bot                 | not bot    | recommended                                                          |
+| D. regex list             | depends     |             |             |             |                     |            | rejected: unsafe patterns, backtracking per commit, hard to validate |
 
-Recommendation C. Tokenise the name and the local part of a usable email: split on every non-alphanumeric character (`. _ - space [ ] ( ) + \` and so on), split letters from digits, split camelCase including an acronym run before a capitalised word (`ZQBot` becomes `ZQ`, `Bot`); lower-case; bot if any token equals a configured token. The domain is never examined. Known limit: a fused word (`dependabot`, `ZQBOT`) is one token and is not matched; it fails safe by reaching the queue, and the scan's real fused names go into `ZQ_GIT_BOT_NAMES` or the tokens (or the ignore list).
+Recommendation C. Tokenise the name and the local part of a usable email: split on every non-alphanumeric character (`. _ - space [ ] ( ) + \` and so on), split letters from digits, split camelCase including an acronym run before a capitalised word (`ExampleBot` becomes `ZQ`, `Bot`); lower-case; bot if any token equals a configured token. The domain is never examined. Known limit: a fused word (`dependabot`, `EXAMPLEBOT`) is one token and is not matched; it fails safe by reaching the queue, and the scan's real fused names go into `ZQ_GIT_BOT_NAMES` or the tokens (or the ignore list).
 
 Configuration: `ZQ_GIT_BOT_TOKENS`, default `bot`; unset means the default, the empty string means no token rule; each token `^[a-z0-9]{2,32}$`, at most 50, otherwise a startup error naming the setting and item. `ZQ_GIT_BOT_NAMES` (exact, compared normalised) is unchanged.
 
@@ -172,23 +172,23 @@ Difference from the ignore list: the bot rule is a pattern and a config list (de
 
 Bot test table (default tokens; "unmapped" means an unbound author with a normal email):
 
-| Case                                 | Name or local part                                                       | Expected                                |
-| ------------------------------------ | ------------------------------------------------------------------------ | --------------------------------------- |
-| ZQBot.compiler                       | `ZQBot.compiler`                                                         | bot                                     |
-| jenkins-bot                          | `jenkins-bot`                                                            | bot                                     |
-| bot-deploy                           | `bot-deploy`                                                             | bot                                     |
-| build.bot@igg.com                    | local part `build.bot`                                                   | bot                                     |
-| Abbott, Talbot, Botha, Robotham, Bob | each                                                                     | unmapped                                |
-| uppercase BOT                        | `BOT`                                                                    | bot                                     |
-| bound bot-looking name               | admin binds `ZQBot.compiler` to P2                                       | person P2 (explicit row beats the rule) |
-| bot with a departed person's email   | name `ZQBot.compiler`, departed Dana bound by her own name, Dana's email | bot                                     |
-| empty token list                     | `ZQ_GIT_BOT_TOKENS=`, `ZQBot.compiler`                                   | unmapped                                |
-| bracket form / digit boundary        | `renovate[bot]` / `build2bot`                                            | bot / bot                               |
-| fused                                | `dependabot`, `ZQBOT`                                                    | unmapped (documented limit)             |
-| exact list                           | `ZQ_GIT_BOT_NAMES=dependabot`, author `Dependabot`                       | bot                                     |
-| domain ignored                       | `ann@bot.example.com`                                                    | unmapped                                |
-| bad token                            | `ZQ_GIT_BOT_TOKENS=bo.t`                                                 | startup error                           |
-| scan fixtures                        | the real author names of the scan as invented values of the same shape   | added later, one row each               |
+| Case                                 | Name or local part                                                            | Expected                                |
+| ------------------------------------ | ----------------------------------------------------------------------------- | --------------------------------------- |
+| ExampleBot.compiler                  | `ExampleBot.compiler`                                                         | bot                                     |
+| jenkins-bot                          | `jenkins-bot`                                                                 | bot                                     |
+| bot-deploy                           | `bot-deploy`                                                                  | bot                                     |
+| build.bot@example.invalid            | local part `build.bot`                                                        | bot                                     |
+| Abbott, Talbot, Botha, Robotham, Bob | each                                                                          | unmapped                                |
+| uppercase BOT                        | `BOT`                                                                         | bot                                     |
+| bound bot-looking name               | admin binds `ExampleBot.compiler` to P2                                       | person P2 (explicit row beats the rule) |
+| bot with a departed person's email   | name `ExampleBot.compiler`, departed Dana bound by her own name, Dana's email | bot                                     |
+| empty token list                     | `ZQ_GIT_BOT_TOKENS=`, `ExampleBot.compiler`                                   | unmapped                                |
+| bracket form / digit boundary        | `renovate[bot]` / `build2bot`                                                 | bot / bot                               |
+| fused                                | `dependabot`, `EXAMPLEBOT`                                                    | unmapped (documented limit)             |
+| exact list                           | `ZQ_GIT_BOT_NAMES=dependabot`, author `Dependabot`                            | bot                                     |
+| domain ignored                       | `ann@bot.example.com`                                                         | unmapped                                |
+| bad token                            | `ZQ_GIT_BOT_TOKENS=bo.t`                                                      | startup error                           |
+| scan fixtures                        | the real author names of the scan as invented values of the same shape        | added later, one row each               |
 
 ## 8. The ignore list: automation and external authors
 
@@ -267,7 +267,7 @@ Asking the PM "who is this?". Trigger: open queue rows not yet asked. Target: `Z
 
 ```
 New git authors QM cannot place (3):
-1. "Alice Example"  emails: alice.example@igg.com, a@personal.example  7 commits  e.g. client@a1b2c3d   Mattermost hint: user aexample has the first email
+1. "Alice Example"  emails: alice.example@example.invalid, a@personal.example  7 commits  e.g. client@a1b2c3d   Mattermost hint: user aexample has the first email
 2. "HOST123\admin"  email: x@y.example  2 commits  e.g. server@9f8e7d6   generic name: needs an email condition
 3. "Eve"  email: @partnerco (not a valid email)  352 commits
 Reply e.g. "Alice Example and 艾丽丝 are Alice", "ignore 3 as automation" or "ignore 2 as external".
@@ -299,7 +299,7 @@ All environment variables parsed in `src/zq/config.ts`. Design approved on 2026-
 | `ZQ_GIT_ASK_MAX_ITEMS`             | 20                                                  | entries per digest                                                                 |                                                                            |                                                                                                  | integer 1 to 100                                             |
 | `ZQ_GIT_ASK_REASK_DAYS`            | 0 (never)                                           | re-ask an open entry after N days                                                  |                                                                            |                                                                                                  | integer 0 to 3650                                            |
 
-No setting holds the ignore list and none takes a seed file: the ignore list is audited data in the alias table, edited at run time by the PM (a configuration list would need a deploy per change, would not carry a reason or audit, and would put names in deployment config). Removed or not carried over: `ZQ_GIT_DOMAIN_ALIASES` (retired-domain email retry; email is no longer a key); `ZQ_GIT_COMPANY_DOMAINS` (`igg.com`) is not needed because mapping no longer depends on the email domain (`igg.com` stays in examples; add it back if the PM wants digest ordering by it). Unchanged: `ZQ_GIT_AUTHOR_MAPPING`, `ZQ_GIT_IGNORED_REOPEN_DAYS`, `ZQ_GIT_UNMAPPED_RETENTION_DAYS`, `ZQ_GIT_POLL*`.
+No setting holds the ignore list and none takes a seed file: the ignore list is audited data in the alias table, edited at run time by the PM (a configuration list would need a deploy per change, would not carry a reason or audit, and would put names in deployment config). Removed or not carried over: `ZQ_GIT_DOMAIN_ALIASES` (retired-domain email retry; email is no longer a key); `ZQ_GIT_COMPANY_DOMAINS` (`example.invalid`) is not needed because mapping no longer depends on the email domain (`example.invalid` stays in examples; add it back if the PM wants digest ordering by it). Unchanged: `ZQ_GIT_AUTHOR_MAPPING`, `ZQ_GIT_IGNORED_REOPEN_DAYS`, `ZQ_GIT_UNMAPPED_RETENTION_DAYS`, `ZQ_GIT_POLL*`.
 
 An environment that sets nothing new: mapping is by bound names only, bots by the `bot` token, no tool, no digest. An environment that already sets `ZQ_GIT_AUTHOR_MAPPING=1` changes behaviour on upgrade (the Mattermost match no longer maps); none exists today.
 
@@ -354,7 +354,7 @@ Uniqueness and constraints enforced in code, on top of the primary key: a self b
 | dropped                                                                                                                                                                                   |                                          | none                                                                                                                     |
 
 OLD row (invented): id `nobody@corp.example`, json `{ "email": "nobody@corp.example", "name": "Nobody", "reason": "no_match", "candidates": [], "status": "open", "firstSeenAt": 1763000000000, "lastSeenAt": 1763000900000, "count": 3, "exampleRepo": "client", "exampleSha": "c1", "recentShas": ["c1", "c2", "s1"] }`.
-NEW row (invented): id `alice example`, json `{ "nameKey": "alice example", "name": "Alice Example", "emails": ["alice.example@igg.com", "a@personal.example"], "reason": "no_match", "candidates": [], "status": "open", "firstSeenAt": 1763000000000, "lastSeenAt": 1763000900000, "count": 7, "exampleRepo": "client", "exampleSha": "a1b2c3d", "recentShas": ["a1b2c3d"], "askedAt": 1763003600000 }`.
+NEW row (invented): id `alice example`, json `{ "nameKey": "alice example", "name": "Alice Example", "emails": ["alice.example@example.invalid", "a@personal.example"], "reason": "no_match", "candidates": [], "status": "open", "firstSeenAt": 1763000000000, "lastSeenAt": 1763000900000, "count": 7, "exampleRepo": "client", "exampleSha": "a1b2c3d", "recentShas": ["a1b2c3d"], "askedAt": 1763003600000 }`.
 
 The queue status `ignored` of the existing code (a silenced row that keeps counting) is not used by this design: the PM's "ignore" answer registers an ignore-list row and closes the queue row as `resolved`, so ignored authors produce no queue row at all, as required. The status stays in the code untouched; removing it is a later simplification.
 
@@ -482,7 +482,7 @@ Shared identity: no tests, the kind is cut (section 9).
 
 Decided on 2026-11-17 by the PM ("follow your recommendations") for the 19 numbered decisions below, at DESIGN LEVEL only. The approval does not implement anything, does not create `zq_git_author_aliases` or `zq_git_unmapped_authors`, and does not enable `ZQ_GIT_AUTHOR_MAPPING`, `ZQ_GIT_AUTHOR_BIND` or `ZQ_GIT_ASK` in any environment: creating the tables by a DBA and enabling any switch in any environment need the PM's separate explicit consent plus a rollback plan. None of the 19 decisions below is among the two undecided items of the patch package design (its decisions 5 and 7); no decision here depends on them.
 
-Already decided and applied earlier: company domain `igg.com` (examples only); xiaoxiao is a Mattermost bot, not an author; bot and external domain lists come from the scan and stay configuration; people are keyed by author name and unique names are assumed; email is only an optional condition; the Mattermost match is off by default and never authoritative; the PM message shows the real name and email, goes only to the named PM by DM, never a channel, logs and audit keep hashes; a claim on a held name is refused and the holder is notified; the order is person binding, ignore list, bot, external, unmapped; departed people notify the PM; ignored authors (automation and external) produce no notice and no queue row; seed data is supplied by the PM at deployment time and never enters the repository.
+Already decided and applied earlier: the company domain is deployment data (examples use `example.invalid`); the Mattermost bot account is not a git author; bot and external domain lists come from the scan and stay configuration; people are keyed by author name and unique names are assumed; email is only an optional condition; the Mattermost match is off by default and never authoritative; the PM message shows the real name and email, goes only to the named PM by DM, never a channel, logs and audit keep hashes; a claim on a held name is refused and the holder is notified; the order is person binding, ignore list, bot, external, unmapped; departed people notify the PM; ignored authors (automation and external) produce no notice and no queue row; seed data is supplied by the PM at deployment time and never enters the repository.
 
 | #   | Decision                                                                         | Outcome                                                                                                                                                                                               |
 | --- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
