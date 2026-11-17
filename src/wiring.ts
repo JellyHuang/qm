@@ -1,4 +1,5 @@
 import { setZqChildren } from "./zq/children.ts";
+import { zqStartupWarnings } from "./zq/config.ts";
 import { createZqRuntime, type ZqIdentityAdmin, type ZqRuntime } from "./zq/runtime.ts";
 import { setLogOutboundTools } from "./agent/diagnostics.ts";
 import { createOaClient } from "./integrations/openagents/client.ts";
@@ -2654,6 +2655,7 @@ export function buildApp(
       })
     : undefined;
   setOpenAgentsService(openAgents);
+  for (const warning of zqStartupWarnings(config.zq, { mattermost: Boolean(mattermost) })) console.warn(warning);
   zq =
     mattermost &&
     (config.zq.scanner.enabled ||

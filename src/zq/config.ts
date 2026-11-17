@@ -114,7 +114,10 @@ function owners(raw: string | undefined): Record<string, string> {
   );
 }
 
-export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
+export function zqConfigFromEnv(
+  env: NodeJS.ProcessEnv,
+  surfaces: { mattermost: boolean } = { mattermost: true },
+): ZqConfig {
   const cron = env.ZQ_SCANNER_CRON?.trim() || DEFAULT_CRON;
   const timezone = env.ZQ_SCANNER_TZ?.trim() || DEFAULT_TIMEZONE;
   try {
@@ -152,6 +155,10 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   if (jenkinsRerun && !jenkinsPoll) throw new Error("ZQ_JENKINS_RERUN needs ZQ_JENKINS_POLL");
   if (jenkinsNotify && !(jenkinsPoll && notifyChannel))
     throw new Error("ZQ_JENKINS_NOTIFY needs ZQ_JENKINS_POLL and ZQ_JENKINS_NOTIFY_CHANNEL");
+  if (jenkinsNotify && !surfaces.mattermost)
+    throw new Error(
+      "ZQ_JENKINS_NOTIFY needs a Mattermost connection (MATTERMOST_URL, MATTERMOST_BOT_TOKEN and MATTERMOST_TEAM)",
+    );
   const jenkinsJobs = jobNames("ZQ_JENKINS_JOBS", env.ZQ_JENKINS_JOBS, JENKINS_JOBS);
   const rerunJobs = jobNames(
     "ZQ_JENKINS_RERUN_JOBS",
@@ -229,4 +236,12 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
 
 export function loadZqContract(path: string): ZqContract {
   return parseContract(JSON.parse(readFileSync(path, "utf8")));
+}
+
+export function zqStartupWarnings(config: ZqConfig, surfaces: { mattermost: boolean }): string[] {
+  return config.jenkins.poll.enabled && !surfaces.mattermost
+    ? [
+        "[zq jenkins] ZQ_JENKINS_POLL=1 but no Mattermost connection is configured: the Jenkins poller is NOT running (no polling, no audit rows, no dry-run). Configure Mattermost or unset ZQ_JENKINS_POLL",
+      ]
+    : [];
 }

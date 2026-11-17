@@ -8,7 +8,8 @@ import {
   type JenkinsBuildRecord,
   type JenkinsNotice,
 } from "../src/zq/jenkins/store.ts";
-import { zqConfigFromEnv } from "../src/zq/config.ts";
+import { zqConfigFromEnv, zqStartupWarnings } from "../src/zq/config.ts";
+import { loadConfig } from "../src/config.ts";
 import { createZqRuntime, type ZqChat } from "../src/zq/runtime.ts";
 import { FAKE_SECRET, FAKE_USER, startFakeJenkins } from "./support/fake-jenkins.ts";
 import { tenantMap } from "./support/tenant-map.ts";
@@ -195,4 +196,43 @@ tenantTest("the audit table is pruned of rows older than 90 days and nothing els
   assert.deepEqual(calls, []);
   assert.equal(await store.pruneAudit(), 1_000_000_000_000 - 90 * 86_400_000);
   assert.deepEqual(calls, [["at", 1_000_000_000_000 - 90 * 86_400_000]]);
+});
+
+test("polling without a Mattermost connection warns that the poller is not running", () => {
+  const withoutChat = zqConfigFromEnv(polling, { mattermost: false });
+  assert.deepEqual(zqStartupWarnings(withoutChat, { mattermost: false }), [
+    "[zq jenkins] ZQ_JENKINS_POLL=1 but no Mattermost connection is configured: the Jenkins poller is NOT running (no polling, no audit rows, no dry-run). Configure Mattermost or unset ZQ_JENKINS_POLL",
+  ]);
+});
+
+test("polling with a Mattermost connection, and every switch off, are silent", () => {
+  assert.deepEqual(zqStartupWarnings(zqConfigFromEnv(polling), { mattermost: true }), []);
+  assert.deepEqual(zqStartupWarnings(zqConfigFromEnv({}, { mattermost: false }), { mattermost: false }), []);
+});
+
+test("live notification refuses to start without Mattermost or without a channel", () => {
+  const notify = { ...polling, ZQ_JENKINS_NOTIFY: "1", ZQ_JENKINS_NOTIFY_CHANNEL: "chan1" };
+  assert.throws(
+    () => zqConfigFromEnv(notify, { mattermost: false }),
+    /ZQ_JENKINS_NOTIFY needs a Mattermost connection \(MATTERMOST_URL, MATTERMOST_BOT_TOKEN and MATTERMOST_TEAM\)/,
+  );
+  assert.equal(zqConfigFromEnv(notify, { mattermost: true }).jenkins.notify.live, true);
+  assert.throws(
+    () => zqConfigFromEnv({ ...polling, ZQ_JENKINS_NOTIFY: "1" }, { mattermost: true }),
+    /ZQ_JENKINS_NOTIFY needs ZQ_JENKINS_POLL and ZQ_JENKINS_NOTIFY_CHANNEL/,
+  );
+});
+
+test("loadConfig reads Mattermost availability from the Mattermost environment", () => {
+  const base = { ...polling, ZQ_JENKINS_NOTIFY: "1", ZQ_JENKINS_NOTIFY_CHANNEL: "chan1" };
+  assert.throws(() => loadConfig(base), /ZQ_JENKINS_NOTIFY needs a Mattermost connection/);
+  const config = loadConfig({
+    ...base,
+    MATTERMOST_URL: "https://mm.example.test",
+    MATTERMOST_BOT_TOKEN: "tok",
+    MATTERMOST_TEAM: "t",
+    PUBLIC_WEB_URL: "https://qm.example.test",
+    CORE_SIGNING_SECRET: "s".repeat(40),
+  });
+  assert.equal(config.zq.jenkins.notify.live, true);
 });

@@ -420,6 +420,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const publicApiUrl = env.PUBLIC_API_URL ?? env.AGENT_API_URL;
   const publicUrl = env.PUBLIC_WEB_URL || publicApiUrl;
   const deploy = deploySettings(env, publicUrl);
+  const mattermost = mattermostConfigFromEnv(env, {
+    ...(publicUrl ? { publicUrl } : {}),
+    ...(env.CORE_SIGNING_SECRET ? { signingSecret: env.CORE_SIGNING_SECRET } : {}),
+  });
   const missingSecrets = validateCoreSecretEnv(env);
   if (missingSecrets.length) {
     const described = missingSecrets.map((name) => {
@@ -627,14 +631,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
           },
         }
       : {}),
-    ...(() => {
-      const mattermost = mattermostConfigFromEnv(env, {
-        ...(publicUrl ? { publicUrl } : {}),
-        ...(env.CORE_SIGNING_SECRET ? { signingSecret: env.CORE_SIGNING_SECRET } : {}),
-      });
-      return mattermost ? { mattermost } : {};
-    })(),
-    zq: zqConfigFromEnv(env),
+    ...(mattermost ? { mattermost } : {}),
+    zq: zqConfigFromEnv(env, { mattermost: Boolean(mattermost) }),
     ...(env.QM_LOG_OUTBOUND_TOOLS === "1" ? { logOutboundTools: true } : {}),
     ...(/^[0-9a-f]{7,40}$/.test(env.QM_BUILD_COMMIT?.trim() ?? "") ? { buildCommit: env.QM_BUILD_COMMIT!.trim() } : {}),
     ...(env.QM_BUILD_TIME?.trim() && !Number.isNaN(Date.parse(env.QM_BUILD_TIME.trim()))

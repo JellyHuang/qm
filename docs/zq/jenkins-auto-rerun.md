@@ -78,7 +78,9 @@ Three independent switches, all off:
 
 1. `ZQ_JENKINS_POLL=1` starts the poller. Without `ZQ_JENKINS_RERUN`, it only observes, records and audits (dry-run).
 2. `ZQ_JENKINS_RERUN=1` allows the real rerun POST. It needs `ZQ_JENKINS_POLL=1`.
-3. `ZQ_JENKINS_NOTIFY=1` allows real channel posts. It needs `ZQ_JENKINS_POLL=1` and `ZQ_JENKINS_NOTIFY_CHANNEL`.
+3. `ZQ_JENKINS_NOTIFY=1` allows real channel posts. It needs `ZQ_JENKINS_POLL=1`, `ZQ_JENKINS_NOTIFY_CHANNEL` and a Mattermost connection (`MATTERMOST_URL`, `MATTERMOST_BOT_TOKEN`, `MATTERMOST_TEAM`); without one QM refuses to start.
+
+The poller is built only when the Mattermost surface exists (the zq runtime needs it), so `ZQ_JENKINS_POLL=1` without a Mattermost connection runs nothing, not even the dry-run. QM logs one warning at startup saying so.
 
 With default configuration nothing polls, nothing is requested and nothing is sent (tested). Rollback: unset `ZQ_JENKINS_RERUN` (reruns stop at the next restart), or unset `ZQ_JENKINS_POLL` (everything stops). Rows stay as the record. No table exists until the PM approves the DDL in Tables: with `ZQ_JENKINS_POLL` off the three maps are never built, so nothing is created.
 
