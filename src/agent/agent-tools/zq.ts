@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import { errMessage } from "../../util/errors.ts";
 import { text, type ToolKit } from "./kit.ts";
 
-const DESCRIPTION = `Ask for execution orders (child work packages) to be added to a feature in OpenProject. It does not create anything: it checks the request with OpenProject (preview), then sends the requester a Mattermost card. Only the requester's own click on that card creates the orders, with the requester's own OpenProject login, and the card expires after 15 minutes.
+const DESCRIPTION = `Ask for execution orders (child work packages) to be added to a feature, or to an optimization order (优化单) that several people share, in OpenProject. It does not create anything: it checks the request with OpenProject (preview), then sends the requester a Mattermost card. Only the requester's own click on that card creates the orders, with the requester's own OpenProject login, and the card expires after 15 minutes.
 Give the feature's current lock_version (read it from the feature first). Every order needs a type_key, a subject and a description: that person's own scope of work. Say why in reason.
 If OpenProject refuses the request, its error code is returned: pass it on to the user as it is.`;
 
@@ -14,7 +14,7 @@ export function zqTools(kit: ToolKit) {
     label: "zq_add_child_orders",
     description: DESCRIPTION,
     parameters: Type.Object({
-      feature_id: Type.Number({ description: "The feature work package id." }),
+      feature_id: Type.Number({ description: "The feature (or optimization order) work package id." }),
       lock_version: Type.Number({ description: "The feature's current lockVersion." }),
       reason: Type.String({ minLength: 1, description: "Why the orders are needed." }),
       source_ref: Type.Optional(Type.String({ description: "Where the request came from, e.g. a thread link." })),

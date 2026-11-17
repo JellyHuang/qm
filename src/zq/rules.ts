@@ -73,6 +73,8 @@ export type RuleId =
   | "task-overdue"
   | "task-overdue-escalation"
   | "task-unassigned"
+  | "optimization-unassigned"
+  | "optimization-children-done"
   | "production-missing-planned-end"
   | "blocking-bug-open"
   | "delay-notice"
@@ -134,6 +136,77 @@ const FIELD_LABEL: Record<PersonField, string> = {
   regressionOwner: "回归确认人",
 };
 
+function unassignedDispatch(
+  children: readonly WorkView[],
+  contract: ZqContract,
+): Array<{ to: Target; list: WorkView[] }> {
+  const dispatch = new Map<string, { to: Target; list: WorkView[] }>();
+  for (const c of children.filter((c) => active(c) && c.statusKey === contract.stageRoles.taskUnassigned)) {
+    const owner = contract.typeOwners[c.typeKey];
+    const person = owner?.kind === "taskField" ? c[owner.field] : undefined;
+    const to: Target | undefined =
+      owner?.kind === "duty" ? { kind: "duty", duty: owner.duty } : person && { kind: "user", user: person };
+    if (!to) continue;
+    const key = to.kind === "duty" ? `duty:${to.duty}` : `user:${to.kind === "user" ? to.user.id : ""}`;
+    dispatch.set(key, { to, list: [...(dispatch.get(key)?.list ?? []), c] });
+  }
+  return [...dispatch.values()];
+}
+
+function evaluateOptimization(facts: FeatureFacts, contract: ZqContract, opts: RuleOptions): RuleAction[] {
+  const { feature, children } = facts;
+  const done = contract.stageRoles.taskDone;
+  if (!active(feature) || feature.statusKey === done) return [];
+  const at = (rule: RuleId, to: Target[], text: string, subject: WorkView = feature): RuleAction => ({
+    rule,
+    subjectId: `wp:${subject.id}`,
+    subjectTitle: subject.subject,
+    to,
+    text,
+  });
+  const planner: Target[] = [{ kind: "field", field: "responsiblePlanner" }];
+  const live = children.filter(active);
+  const out: RuleAction[] = [];
+  if (!live.length && !feature.assignee && feature.statusKey === contract.stageRoles.taskUnassigned)
+    out.push(
+      at(
+        "optimization-unassigned",
+        planner,
+        `优化单${where(feature)}还没有指派。请写明优化内容并指派:一个人处理就直接指派给他,多人处理请按专业增加子单。`,
+      ),
+    );
+  for (const { to, list } of unassignedDispatch(children, contract))
+    out.push(
+      at(
+        "task-unassigned",
+        [to],
+        `优化单${where(feature)}有 ${list.length} 张子单还没有指定执行人:${list.map(where).join("、")}。请指派。`,
+      ),
+    );
+  for (const c of live.length ? live : [feature]) {
+    if (!isOpen(contract, c) || !c.assignee || c.dueAt === undefined || opts.now <= c.dueAt) continue;
+    const days = Math.floor((opts.now - c.dueAt) / DAY);
+    out.push(
+      at(
+        "task-overdue",
+        [{ kind: "user", user: c.assignee }],
+        `${where(c)}已超过计划结束时间 ${days} 天。请说明进度、风险和阻塞。`,
+        c,
+      ),
+    );
+  }
+  if (live.length && live.every((c) => c.statusKey === done))
+    out.push({
+      ...at(
+        "optimization-children-done",
+        planner,
+        `优化单${where(feature)}的 ${live.length} 张子单都已完成。请确认效果后关闭这张优化单。`,
+      ),
+      once: true,
+    });
+  return out;
+}
+
 function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOptions): RuleAction[] {
   const { feature, children } = facts;
   if (feature.typeKey !== contract.featureType || !active(feature)) return [];
@@ -176,18 +249,7 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
       );
   }
 
-  const pending = children.filter((c) => active(c) && c.statusKey === r.taskUnassigned);
-  const dispatch = new Map<string, { to: Target; list: WorkView[] }>();
-  for (const c of pending) {
-    const owner = contract.typeOwners[c.typeKey];
-    const person = owner?.kind === "taskField" ? c[owner.field] : undefined;
-    const to: Target | undefined =
-      owner?.kind === "duty" ? { kind: "duty", duty: owner.duty } : person && { kind: "user", user: person };
-    if (!to) continue;
-    const key = to.kind === "duty" ? `duty:${to.duty}` : `user:${to.kind === "user" ? to.user.id : ""}`;
-    dispatch.set(key, { to, list: [...(dispatch.get(key)?.list ?? []), c] });
-  }
-  for (const { to, list } of dispatch.values())
+  for (const { to, list } of unassignedDispatch(children, contract))
     out.push(
       at(
         "task-unassigned",
@@ -332,7 +394,10 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
 }
 
 export function evaluateRules(facts: FeatureFacts, contract: ZqContract, opts: RuleOptions): RuleAction[] {
-  const actions = evaluateStage(facts, contract, opts);
+  const actions =
+    contract.optimizationType !== undefined && facts.feature.typeKey === contract.optimizationType
+      ? evaluateOptimization(facts, contract, opts)
+      : evaluateStage(facts, contract, opts);
   const { feature } = facts;
   const unset = new Set<PersonField>();
   for (const action of actions)
@@ -347,7 +412,7 @@ export function evaluateRules(facts: FeatureFacts, contract: ZqContract, opts: R
       subjectId: `wp:${feature.id}:${field}`,
       subjectTitle: feature.subject,
       to: opts.unsetDuties.map((duty): Target => ({ kind: "duty", duty })),
-      text: `功能「${feature.subject}」(#${feature.id})在「${label(contract, feature.statusKey)}」需要${FIELD_LABEL[field]},但还没有设置。请设置。`,
+      text: `${feature.typeKey === contract.optimizationType ? "优化单" : "功能"}「${feature.subject}」(#${feature.id})在「${label(contract, feature.statusKey)}」需要${FIELD_LABEL[field]},但还没有设置。请设置。`,
     })),
   ].filter((a) => a.rule === "responsibility-not-set" || a.to.length > 0);
 }

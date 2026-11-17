@@ -271,7 +271,14 @@ export function createMcpOpReader(opts: { call: OpCall; contract: ZqContract; se
           return [];
         }
       });
-      const features = found.filter((w) => w.typeKey === contract.featureType);
+      const featureIds = new Set(found.filter((w) => w.typeKey === contract.featureType).map((w) => w.id));
+      const features = found.filter(
+        (w) =>
+          w.typeKey === contract.featureType ||
+          (contract.optimizationType !== undefined &&
+            w.typeKey === contract.optimizationType &&
+            !featureIds.has(w.parentId ?? -1)),
+      );
       const isBug = (w: WorkView) => w.typeKey === contract.bugType;
       const facts = await mapLimited(features, async (feature) => {
         const under = found.filter((w) => w.parentId === feature.id);

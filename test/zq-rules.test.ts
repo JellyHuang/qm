@@ -334,3 +334,56 @@ test("a feature that is not marked delayed gets no delay notice, and a mark with
   assert.equal(undated[0]!.subjectId, "wp:1:delay:unknown");
   assert.doesNotMatch(undated[0]!.text, /undefined|NaN/);
 });
+
+const optimization = (over: Partial<WorkView> = {}): WorkView =>
+  work(60, {
+    typeKey: "optimization",
+    statusKey: "execution.unassigned",
+    projectId: "p1",
+    responsiblePlanner: ALICE,
+    ...over,
+  });
+
+test("an optimization order with nobody assigned asks its planner; one handled by a single person asks nobody", () => {
+  const unassigned = rules({ feature: optimization(), children: [] });
+  assert.deepEqual(ids(unassigned), ["optimization-unassigned"]);
+  assert.match(unassigned[0]!.text, /优化单「单60」\(#60\)还没有指派/);
+  assert.deepEqual(unassigned[0]!.to, [{ kind: "field", field: "responsiblePlanner" }]);
+  assert.deepEqual(
+    rules({ feature: optimization({ assignee: BOB, statusKey: "execution.waiting" }), children: [] }),
+    [],
+  );
+});
+
+test("an optimization order has no plan-date rules, but a late single assignee or child order is chased", () => {
+  const single = optimization({ assignee: BOB, statusKey: "execution.active" });
+  assert.deepEqual(rules({ feature: single, children: [] }), []);
+  const late = rules({ feature: { ...single, dueAt: NOW - 3 * DAY }, children: [] });
+  assert.deepEqual(ids(late), ["task-overdue"]);
+  assert.equal(late[0]!.subjectId, "wp:60");
+  const childLate = work(61, { parentId: 60, assignee: ALICE, dueAt: NOW - DAY });
+  assert.deepEqual(ids(rules({ feature: optimization({ statusKey: "execution.active" }), children: [childLate] })), [
+    "task-overdue",
+  ]);
+});
+
+test("child orders without an executor go to the type's lead, and finished children ask the planner once to close the order", () => {
+  const open = work(61, { parentId: 60, typeKey: "backend", statusKey: "execution.unassigned" });
+  const dispatched = rules({ feature: optimization(), children: [open] });
+  assert.deepEqual(ids(dispatched), ["task-unassigned"]);
+  assert.deepEqual(dispatched[0]!.to, [{ kind: "duty", duty: "server_lead" }]);
+  assert.match(dispatched[0]!.text, /优化单「单60」/);
+  const finished = [61, 62].map((id) => work(id, { parentId: 60, statusKey: "execution.done", assignee: BOB }));
+  const done = rules({ feature: optimization({ statusKey: "execution.active" }), children: finished });
+  assert.deepEqual(ids(done), ["optimization-children-done"]);
+  assert.equal(done[0]!.once, true);
+  assert.deepEqual(rules({ feature: optimization({ statusKey: "execution.done" }), children: finished }), []);
+});
+
+test("without an optimization type in the contract the order is just another ticket", () => {
+  const plain = parseContract({
+    ...JSON.parse(readFileSync(new URL("./fixtures/zq-contract-keys.json", import.meta.url), "utf8")),
+    optimizationType: undefined,
+  });
+  assert.deepEqual(rules({ feature: optimization(), children: [] }, plain), []);
+});

@@ -1,6 +1,7 @@
 {
   "version": "0.4",
   "featureType": "feature",
+  "optimizationType": "optimization",
   "typeDuties": {
     "planning": "planning_lead",
     "acceptance": "planning_lead",

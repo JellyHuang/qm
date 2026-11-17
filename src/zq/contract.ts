@@ -40,6 +40,7 @@ export interface ZqContract {
   featureType: string;
   typeOwners: Readonly<Record<string, TypeOwner>>;
   bugType?: string;
+  optimizationType?: string;
   artResource: (typeKey: string) => boolean;
   autoAdvanceStages: readonly string[];
   stages: {
@@ -192,6 +193,9 @@ export function parseContract(value: unknown): ZqContract {
     featureType: text(value["featureType"], "featureType"),
     typeOwners,
     ...(value["bugType"] === undefined ? {} : { bugType: text(value["bugType"], "bugType") }),
+    ...(value["optimizationType"] === undefined
+      ? {}
+      : { optimizationType: text(value["optimizationType"], "optimizationType") }),
     artResource: artResourceOf(value),
     autoAdvanceStages: autoAdvance,
     stages: { feature, task, bug },

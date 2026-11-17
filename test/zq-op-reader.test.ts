@@ -382,3 +382,28 @@ test("a cursor the server refuses surfaces as an error with the lower-cased code
     (e: unknown) => e instanceof OpError && e.code === "cursor_scope_changed",
   );
 });
+
+test("an optimization order with no feature parent is read like a feature, one under a feature stays that feature's child", async () => {
+  const unassigned = { stage_key: "execution.unassigned", status_key: "execution.unassigned" };
+  const rows = [
+    wp({ id: 1 }),
+    wp({ id: 60, type_key: "optimization", ...unassigned }),
+    wp({ id: 61, type_key: "optimization", parent_id: 1, ...unassigned }),
+    wp({ id: 62, type_key: "optimization", ...unassigned }),
+    wp({ id: 63, type_key: "backend", parent_id: 62, ...unassigned }),
+  ];
+  const f = fake({
+    openproject_zq_list_work_packages: () => ({ next_offset: null, results: rows }),
+    openproject_zq_check_exit: () => ({ ready: false, blockers: [] }),
+    openproject_zq_meetings_for_feature: () => ({ next_offset: null, results: [] }),
+  });
+  const { facts } = await createMcpOpReader({ call: f.call, contract }).features(PERSON);
+  assert.deepEqual(
+    facts.map((x) => [x.feature.id, x.children.map((c) => c.id)]),
+    [
+      [1, [61]],
+      [60, []],
+      [62, [63]],
+    ],
+  );
+});

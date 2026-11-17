@@ -86,10 +86,12 @@ function harness() {
     feature: view(1, { typeKey: "feature", statusKey: "feature.planning_unassigned", pm: PM }),
     children: [] as WorkView[],
     bugs: [] as WorkView[],
+    extra: [] as FeatureFacts[],
   };
   const holders: Record<string, OpUserRef[]> = { producer: [PRODUCER], pm: [PM] };
   const facts = (): FeatureFacts[] => [
     { feature: world.feature, children: world.children, bugs: world.bugs, meetings: [] },
+    ...world.extra,
     {
       feature: view(900, { typeKey: "feature", statusKey: "feature.planning_unassigned", projectId: "prod" }),
       children: [],
@@ -210,6 +212,30 @@ test("role-play acceptance script: create, assign, develop, hand in, QA, finish,
   h.world.feature = { ...h.world.feature, statusKey: "feature.done" };
   const done = await h.step(10);
   assert.match(done.posts.map((p) => p.text).join("\n"), /已完成|阶段 .* → 已完成/);
+
+  const optimization = (id: number, over: Partial<WorkView>) =>
+    view(id, { typeKey: "optimization", statusKey: "execution.unassigned", responsiblePlanner: PLANNER, ...over });
+  h.world.extra = [{ feature: optimization(80, {}), children: [], meetings: [] }];
+  const unassigned = await h.step(10);
+  assert.ok(
+    unassigned.sent.some((m) => m.text.startsWith(label("策划", "策划小A")) && m.text.includes("优化单「单80」")),
+    "an optimization order nobody is assigned to goes to its planner",
+  );
+  h.world.extra = [
+    {
+      feature: optimization(81, { statusKey: "execution.active" }),
+      children: [
+        view(82, { parentId: 81, assignee: DEV, statusKey: "execution.done" }),
+        view(83, { parentId: 81, assignee: DEV2, typeKey: "frontend", statusKey: "execution.done" }),
+      ],
+      meetings: [],
+    },
+  ];
+  const finished = await h.step(10);
+  assert.ok(
+    finished.sent.some((m) => m.text.startsWith(label("策划", "策划小A")) && m.text.includes("子单都已完成")),
+    "finished child orders ask the planner to close the optimization order",
+  );
 
   const children = createZqChildren({
     map: testMap<ZqChildDraft>(),

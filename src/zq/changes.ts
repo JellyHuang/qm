@@ -25,6 +25,7 @@ export interface ZqChangeLine {
   status: "pending" | "sent";
   fallbackMmUserId?: string;
   aboutOpUserId?: string;
+  noun?: string;
 }
 
 export interface FeedEvent {
@@ -115,6 +116,8 @@ export function createZqChanges(opts: {
 }): ZqChanges {
   const now = opts.now ?? (() => Date.now());
   const key = (id: number) => `wp:${id}`;
+  const nounOf = (w: WorkView, c: ZqContract) => (w.typeKey === c.optimizationType ? "优化单" : "功能");
+  const nounField = (w: WorkView, c: ZqContract) => (nounOf(w, c) === "功能" ? {} : { noun: nounOf(w, c) });
   const aboutOf = (id: string | undefined) => (id ? { aboutOpUserId: id } : {});
 
   function changesOf(
@@ -132,7 +135,7 @@ export function createZqChanges(opts: {
       text,
       ...about,
     });
-    const ref = `${isFeature ? "功能 " : `执行单「${w.subject}」`}[#${w.id}](${ctx.link(w.id)})`;
+    const ref = `${isFeature ? `${nounOf(w, contract)} ` : `执行单「${w.subject}」`}[#${w.id}](${ctx.link(w.id)})`;
     const label = (stage: string) => contract.stages.feature[stage] ?? contract.stages.task[stage] ?? stage;
     const out: Pending[] = [];
     if (prev.stage !== w.statusKey) {
@@ -230,6 +233,7 @@ export function createZqChanges(opts: {
         id: string;
         featureId: number;
         featureTitle: string;
+        noun?: string;
         text: string;
         at: number;
         aboutOpUserId?: string;
@@ -255,9 +259,10 @@ export function createZqChanges(opts: {
           id: e.id,
           featureId: e.featureId,
           featureTitle: fact.feature.subject,
+          ...nounField(fact.feature, contract),
           at: e.at,
           ...aboutOf(isFeature ? fact.feature.responsiblePlanner?.id : child!.assignee?.id),
-          text: `${isFeature ? "功能 " : `执行单「${subject}」`}[#${e.ticketId}](${ctx.link(e.ticketId)}) ${parts.join(";")}${by}`,
+          text: `${isFeature ? `${nounOf(fact.feature, contract)} ` : `执行单「${subject}」`}[#${e.ticketId}](${ctx.link(e.ticketId)}) ${parts.join(";")}${by}`,
         });
       }
       for (const [batchId, group] of batches) {
@@ -267,6 +272,7 @@ export function createZqChanges(opts: {
           id: `batch:${batchId}`,
           featureId: fact.feature.id,
           featureTitle: fact.feature.subject,
+          ...nounField(fact.feature, contract),
           at: group[0]!.at,
           ...aboutOf(fact.feature.responsiblePlanner?.id),
           text: `随总单${state},影响 ${group.length} 张执行单:${group.map((e) => `#${e.ticketId}`).join("、")}`,
@@ -279,6 +285,7 @@ export function createZqChanges(opts: {
           id: l.id,
           featureId: l.featureId,
           featureTitle: l.featureTitle,
+          ...(l.noun ? { noun: l.noun } : {}),
           text: l.text,
           createdAt: l.at,
           status: "pending",
@@ -340,6 +347,7 @@ export function createZqChanges(opts: {
           id: p.key,
           featureId,
           featureTitle: feature.subject,
+          ...nounField(feature, contract),
           text: p.text,
           createdAt: now(),
           status: "pending",
@@ -381,7 +389,7 @@ export function createZqChanges(opts: {
           const bullets = await Promise.all(
             batch.map(async (l) => `- ${transport.lineLabel ? `${await transport.lineLabel(l)} ` : ""}${l.text}`),
           );
-          const text = `功能「${title}」(#${featureId}) 有 ${batch.length} 项变化:\n${bullets.join("\n")}`;
+          const text = `${lines[0]!.noun ?? "功能"}「${title}」(#${featureId}) 有 ${batch.length} 项变化:\n${bullets.join("\n")}`;
           try {
             if (channelId) await transport.channel(channelId, text);
             else await transport.dm(dmTo!, text);

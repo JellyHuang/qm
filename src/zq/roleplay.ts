@@ -64,6 +64,8 @@ export function createRoleplay(opts: {
       const user = fact.feature[field];
       if (user) out.push([user, role]);
     }
+    if (fact.feature.typeKey === opts.contract?.optimizationType && fact.feature.assignee)
+      out.push([fact.feature.assignee, "优化单执行人"]);
     for (const child of fact.children) {
       if (!child.assignee) continue;
       const owner = opts.contract?.typeOwners[child.typeKey];
