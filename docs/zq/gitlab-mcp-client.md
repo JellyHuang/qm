@@ -37,7 +37,7 @@ When the server is registered with `attestActor` (catalog, shared bearer), the c
 
 ## Authors
 
-`AuthorResolver.resolve({ email, name })` answers `person` (with the Mattermost user), `unmapped`, `bot` or `external`. `classifyAuthor` applies the rules, which are data from configuration: a bot is an author whose name or the part of the email before the `@` is listed in `ZQ_GIT_BOT_NAMES` (for example `ZQBot.compiler`); an external author has an email domain equal to, or under, a domain listed in `ZQ_GIT_EXTERNAL_DOMAINS` (for example `@yizhu`). Bots and external authors never reach the mapper. `createAuthorResolver({ rules, map })` asks `map` only for the rest; without `map`, and for `unmappedAuthors`, every other author is `unmapped`. Nothing contacts anyone automatically; an unmapped author goes to the PM, as the design says.
+`AuthorResolver.resolve({ email, name })` answers `person`, `unmapped`, `ambiguous`, `bot` or `external`. The rules, the people source, the alias table, the unmapped queue and the notification sink are described in `author-mapping.md`. Nothing contacts anyone automatically.
 
 ## Settings
 
@@ -47,6 +47,7 @@ When the server is registered with `attestActor` (catalog, shared bearer), the c
 | `ZQ_GIT_MCP_SECRET`       | unset   | The shared bearer secret; never logged, never put in an error                               |
 | `ZQ_GIT_EXTERNAL_DOMAINS` | empty   | Comma list of non-company email domains (`@yizhu`, `partner.example`); subdomains match too |
 | `ZQ_GIT_BOT_NAMES`        | empty   | Comma list of bot author names or email local parts (`ZQBot.compiler`)                      |
+| `ZQ_GIT_DOMAIN_ALIASES`   | empty   | Comma list of `old.example=corp.example` domain aliases for author mapping                  |
 
 They are parsed into `ZqConfig.gitMcp` and `ZqConfig.gitAuthors` and read by nothing in production yet. Environment variables are the only source.
 
