@@ -62,3 +62,9 @@ Requires git 2.44 or newer and node 24 or newer.
 | `ZQ_GIT_MCP_IT_DIAG_BASE_BLOB`, `_HEAD_BLOB`        | Alternative: two full or short blob ids (a short id needs `_PATH`)                                                                                       |
 
 Through the wrapper: `ZQ_MCP_IT_MODE=diag ZQ_MCP_IT_DIAG_REPO=gameconfig ZQ_MCP_IT_DIAG_PAIRS=<path>:<base>:<head>[,...] scripts/zq-git-mcp-real-it.sh`.
+
+## Pair formats, errors and the override mode
+
+`ZQ_GIT_MCP_IT_DIAG_PAIRS` entries are explicit: `ref:<path>:<baseRef>:<headRef>` (commits or refs) and `blob:<path>:<baseOid>:<headOid>` (blob ids of 7 to 40 hex digits; a short id is resolved from the history of the path). The old `<path>:<a>:<b>` form means `ref`. A value that is a commit given as a blob id is named: "is a commit, not a blob id: use the ref form". A failing diagnostic prints a `{"suite":"xlsx-diag","type":"error"}` line, and the wrapper prints the last 40 lines of the run output with the key removed.
+
+`ZQ_GIT_MCP_IT_OVERRIDE_PATH`, `_BASE_REF`, `_HEAD_REF` (optional `_REPO`, default `gameconfig`, and `_KEY_COLUMNS`, comma separated letters or names) run `diff_xlsx` with the defaults, read `suggestedKeyColumns` of every sheet with key ambiguity, rerun with `overrides` for that sheet (the suggestion, then the suggestion plus one more of the first six columns, at most six attempts) and print one line per default sheet and attempt with `ambiguousKeys` before and after, `changedCells`, `rowsAdded`, `rowsRemoved` and the key letters used, never a value. Against a local fixture (`ZQ_GIT_MCP_IT_BASE_URL`) the test fails if a sheet stays ambiguous. Wrapper: `ZQ_MCP_IT_MODE=override ZQ_MCP_IT_OVERRIDE_PATH=<path> ZQ_MCP_IT_OVERRIDE_BASE_REF=<ref> ZQ_MCP_IT_OVERRIDE_HEAD_REF=<ref> scripts/zq-git-mcp-real-it.sh`.

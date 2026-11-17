@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { ALICE, BOB, buildFixture, commitAll, git, makeRoot, type Fixture } from "./support/fixtures.ts";
 import { startHarness, testConfig, type Harness } from "./support/harness.ts";
+import { parseDiagPairs } from "./support/diag-pairs.ts";
+import { searchKeyOverrides } from "./support/override-search.ts";
 import { buildXlsx, type Cell, type SheetSpec, type WorkbookSpec } from "./support/xlsx-builder.ts";
 
 const { root, cleanup } = makeRoot("zqgit-xlsx-structure-");
@@ -130,6 +132,11 @@ before(async () => {
       ]),
     ),
   );
+  const grid = (tag: string): Cell[][] => [
+    ["group", "x", "code", "x"],
+    ...Array.from({ length: 9 }, (_, i): Cell[] => [`g${i % 4}`, `a${i}`, `c${i}`, `${tag}${i}`]),
+  ];
+  scenario("abtest_like", book({}, sheet("AB", grid("v"))), book({}, sheet("AB", grid("w"))));
   scenario(
     "secrets",
     book(
@@ -363,5 +370,77 @@ describe("structure only diagnostics", () => {
     assert.ok(lines.some((line) => line.type === "sheet" && line.side === "base"));
     const titles = JSON.stringify(await diagnose("title_rows"));
     assert.doesNotMatch(titles, /ZQSECRET/);
+  });
+});
+
+describe("diagnostic pair formats", () => {
+  test("explicit ref and blob entries and the old three part form are told apart", () => {
+    assert.deepEqual(parseDiagPairs("ref:a/b.xlsx:c1:c2,blob:a/b.xlsx:aa11bb2:cc33dd4,a/b.xlsx:c3:c4", "main"), [
+      { path: "a/b.xlsx", baseRef: "c1", headRef: "c2" },
+      { path: "a/b.xlsx", baseBlob: "aa11bb2", headBlob: "cc33dd4", ref: "main" },
+      { path: "a/b.xlsx", baseRef: "c3", headRef: "c4" },
+    ]);
+    assert.deepEqual(parseDiagPairs(""), []);
+    assert.throws(() => parseDiagPairs("ref:a.xlsx:only-one"), /ref:<path>:<base>:<head> or blob:/);
+  });
+
+  test("a commit id given as a blob id is named as a commit, short or full", async () => {
+    const s = scenarios.get("plain");
+    assert.ok(s);
+    await assert.rejects(
+      h.service.diagnoseXlsx({ repo: "gameconfig", path: s.path, baseBlob: s.base.slice(0, 10), headBlob: s.headBlob }),
+      /is a commit.*ref:<path>:<base>:<head>/,
+    );
+    await assert.rejects(
+      h.service.diagnoseXlsx({ repo: "gameconfig", path: s.path, baseBlob: s.base, headBlob: s.headBlob }),
+      /is a commit.*ref:<path>:<base>:<head>/,
+    );
+    const lines = await h.service.diagnoseXlsx({ repo: "gameconfig", path: s.path, baseRef: s.base, headRef: s.head });
+    assert.ok(lines.some((line) => line.type === "sheet"));
+  });
+});
+
+describe("trying the suggested key columns as overrides", () => {
+  const run = (name: string, explicit?: string[]) => {
+    const s = scenarios.get(name);
+    assert.ok(s, name);
+    return searchKeyOverrides(
+      async (args) => (await h.call("diff_xlsx", args)).body,
+      { repo: "gameconfig", path: s.path, base: s.base, head: s.head },
+      explicit,
+    );
+  };
+
+  test("an ambiguous sheet is resolved by its suggestion and a duplicate header does not count as a key problem", async () => {
+    const { defaults, runs } = await run("abtest_like");
+    assert.equal(defaults[0]?.ambiguousKeys, 8);
+    assert.ok((defaults[0]?.ambiguous ?? 0) > (defaults[0]?.ambiguousKeys ?? 0));
+    assert.deepEqual(defaults[0]?.suggestedKeyColumns, ["B"]);
+    assert.deepEqual(
+      runs.map((entry) => [entry.keyColumns, entry.ambiguousAfter, entry.unique, entry.changedCells]),
+      [[["B"], 0, true, 9]],
+    );
+  });
+
+  test("a suggestion is resolved on the other ambiguous fixtures too and a sheet with no ambiguity makes no attempt", async () => {
+    for (const name of ["weak_first_column", "renamed_key_header"]) {
+      const { runs } = await run(name);
+      assert.ok(runs.length >= 1 && runs.at(-1)?.unique === true, name);
+    }
+    assert.deepEqual((await run("plain")).runs, []);
+  });
+
+  test("an explicit key list is tried on its own and a failing one is reported without values", async () => {
+    const good = await run("abtest_like", ["C"]);
+    assert.deepEqual(
+      good.runs.map((entry) => entry.unique),
+      [true],
+    );
+    const bad = await run("abtest_like", ["A"]);
+    assert.deepEqual(
+      bad.runs.map((entry) => [entry.keyColumns, entry.unique]),
+      [[["A"], false]],
+    );
+    assert.doesNotMatch(JSON.stringify(bad), /g0|a1|c1/);
   });
 });

@@ -1,6 +1,7 @@
 import type { BlobStore } from "./blobs.ts";
 import type { Repos } from "./repos.ts";
 import type { GitRunner } from "./runner.ts";
+import { resolveRev } from "./tools/commit-format.ts";
 import { parseRawDiff } from "./tools/raw-diff.ts";
 import { lookupEntry, resolveCommit } from "./tools/tree.ts";
 import type { ToolLimits } from "./tools/types.ts";
@@ -33,7 +34,17 @@ async function blobFromPrefix(
   path: string | undefined,
   value: string,
 ): Promise<string> {
-  if (/^[0-9a-f]{40}$/.test(value)) return value;
+  const commitHint =
+    "this value is a commit, not a blob id: use the ref form ref:<path>:<base>:<head> or take the blob id from `git ls-tree <ref> <path>`";
+  if (/^[0-9a-f]{40}$/.test(value)) {
+    const type = await reader.git(repo, ["cat-file", "-t", value]).then(
+      (out) => out.stdout.toString("utf8").trim(),
+      () => "blob",
+    );
+    if (type === "commit" || type === "tree")
+      throw new GitDenied("not_a_blob", `${value.slice(0, 12)} is a ${type}; ${commitHint}`);
+    return value;
+  }
   if (!HEX.test(value)) throw new GitDenied("bad_oid", "an object id is 7 to 40 lowercase hex digits");
   if (path === undefined)
     throw new GitDenied(
@@ -58,6 +69,14 @@ async function blobFromPrefix(
       [change.oldOid, change.newOid].filter((oid): oid is string => !!oid && oid.startsWith(value)),
     ),
   );
+  if (
+    oids.size === 0 &&
+    (await resolveRev(reader, repo, `${value}^{commit}`).then(
+      () => true,
+      () => false,
+    ))
+  )
+    throw new GitDenied("not_found", `${value} matches no blob of ${path} but is a commit; ${commitHint}`);
   if (oids.size !== 1)
     throw new GitDenied(
       "not_found",

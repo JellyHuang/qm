@@ -5,7 +5,9 @@ import { join, sep } from "node:path";
 import { after, before, describe, test } from "node:test";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { loadConfig } from "../src/config.ts";
+import { parseDiagPairs, type DiagPair } from "./support/diag-pairs.ts";
 import { startHarness, SECRET, type Harness } from "./support/harness.ts";
+import { searchKeyOverrides } from "./support/override-search.ts";
 
 const MB = 1024 * 1024;
 const env = process.env;
@@ -31,31 +33,13 @@ const PSD_PATH_HINT = env.ZQ_GIT_MCP_IT_PSD_PATH;
 const PAIRS = number("ZQ_GIT_MCP_IT_XLSX_PAIRS", 6);
 const DIAG_REPO = env.ZQ_GIT_MCP_IT_DIAG_REPO ?? "";
 const diagMode = DIAG_REPO !== "";
-
-interface DiagPair {
-  path?: string;
-  baseRef?: string;
-  headRef?: string;
-  baseBlob?: string;
-  headBlob?: string;
-  ref?: string;
-}
+const OVERRIDE_PATH = env.ZQ_GIT_MCP_IT_OVERRIDE_PATH ?? "";
+const overrideMode = OVERRIDE_PATH !== "";
+const onlyOneMode = diagMode || overrideMode;
 
 function diagPairsFromEnv(): DiagPair[] {
   const ref = env.ZQ_GIT_MCP_IT_DIAG_REF;
-  const listed = (env.ZQ_GIT_MCP_IT_DIAG_PAIRS ?? "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .map((entry): DiagPair => {
-      const [path, baseBlob, headBlob] = entry.split(":");
-      return {
-        ...(path ? { path } : {}),
-        ...(baseBlob ? { baseBlob } : {}),
-        ...(headBlob ? { headBlob } : {}),
-        ...(ref ? { ref } : {}),
-      };
-    });
+  const listed = parseDiagPairs(env.ZQ_GIT_MCP_IT_DIAG_PAIRS ?? "", ref);
   const single: DiagPair = {
     ...(env.ZQ_GIT_MCP_IT_DIAG_PATH ? { path: env.ZQ_GIT_MCP_IT_DIAG_PATH } : {}),
     ...(env.ZQ_GIT_MCP_IT_DIAG_BASE_REF ? { baseRef: env.ZQ_GIT_MCP_IT_DIAG_BASE_REF } : {}),
@@ -353,7 +337,7 @@ describe("zq-git-mcp against a real server", { skip, timeout: TEST_TIMEOUT_MS },
 
   test(
     "diff_xlsx on gameconfig workbooks of different sizes stays within the memory bound",
-    { skip: diagMode ? "diagnostic mode" : false, timeout: TEST_TIMEOUT_MS },
+    { skip: onlyOneMode ? "diagnostic or override mode" : false, timeout: TEST_TIMEOUT_MS },
     async () => {
       const all = (await listPaths("gameconfig", "designer_config/"))
         .filter((path) => path.startsWith("designer_config/") && /\.xlsx$/i.test(path))
@@ -423,7 +407,18 @@ describe("zq-git-mcp against a real server", { skip, timeout: TEST_TIMEOUT_MS },
     async () => {
       assert.ok(diagPairs.length > 0, "no diagnostic pair given");
       for (const pair of diagPairs) {
-        const lines = await harness.service.diagnoseXlsx({ repo: DIAG_REPO, ...pair });
+        let lines: Record<string, unknown>[];
+        try {
+          lines = await harness.service.diagnoseXlsx({ repo: DIAG_REPO, ...pair });
+        } catch (e) {
+          emit({
+            suite: "xlsx-diag",
+            type: "error",
+            path: pair.path ?? null,
+            message: e instanceof Error ? e.message : String(e),
+          });
+          throw e;
+        }
         for (const line of lines) emit({ suite: "xlsx-diag", path: pair.path ?? null, ...line });
         assert.ok(
           lines.some((line) => line.type === "compare" || line.type === "sheet"),
@@ -435,7 +430,7 @@ describe("zq-git-mcp against a real server", { skip, timeout: TEST_TIMEOUT_MS },
 
   test(
     "a very large zq-ui PSD is read by range without growing the service memory",
-    { skip: diagMode ? "diagnostic mode" : false, timeout: TEST_TIMEOUT_MS },
+    { skip: onlyOneMode ? "diagnostic or override mode" : false, timeout: TEST_TIMEOUT_MS },
     async () => {
       const listed = (await listPaths("zq-ui", ".psd")).filter((path) => /\.psd$/i.test(path));
       const candidates = [
@@ -486,6 +481,52 @@ describe("zq-git-mcp against a real server", { skip, timeout: TEST_TIMEOUT_MS },
         candidatesRead: results.length,
         downloadedMB: round(downloadedBytes / MB),
       });
+    },
+  );
+
+  test(
+    "key columns suggested for an ambiguous workbook are tried as overrides and only structure is printed",
+    { skip: overrideMode ? false : "set ZQ_GIT_MCP_IT_OVERRIDE_PATH", timeout: TEST_TIMEOUT_MS },
+    async () => {
+      const baseRef = env.ZQ_GIT_MCP_IT_OVERRIDE_BASE_REF;
+      const headRef = env.ZQ_GIT_MCP_IT_OVERRIDE_HEAD_REF;
+      assert.ok(baseRef && headRef, "set ZQ_GIT_MCP_IT_OVERRIDE_BASE_REF and ZQ_GIT_MCP_IT_OVERRIDE_HEAD_REF");
+      const explicit = (env.ZQ_GIT_MCP_IT_OVERRIDE_KEY_COLUMNS ?? "")
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      const { defaults, runs } = await searchKeyOverrides(
+        (args) => call("diff_xlsx", args),
+        { repo: env.ZQ_GIT_MCP_IT_OVERRIDE_REPO ?? "gameconfig", path: OVERRIDE_PATH, base: baseRef, head: headRef },
+        explicit.length > 0 ? explicit : undefined,
+      );
+      for (const sheet of defaults)
+        emit({
+          suite: "xlsx-override",
+          type: "default",
+          path: OVERRIDE_PATH,
+          sheet: sheet.sheet,
+          status: sheet.status,
+          ambiguousKeys: sheet.ambiguousKeys,
+          ambiguous: sheet.ambiguous,
+          changedCells: sheet.changedCells,
+          suggestedKeyColumns: sheet.suggestedKeyColumns ?? null,
+        });
+      for (const run of runs) emit({ suite: "xlsx-override", type: "attempt", path: OVERRIDE_PATH, ...run });
+      const ambiguous = defaults.filter((sheet) => sheet.status === "both" && sheet.ambiguousKeys > 0);
+      emit({
+        suite: "xlsx-override",
+        type: "result",
+        path: OVERRIDE_PATH,
+        ambiguousSheets: ambiguous.length,
+        resolved: ambiguous.filter((sheet) => runs.some((run) => run.sheet === sheet.sheet && run.unique)).length,
+      });
+      if (baseUrl)
+        for (const sheet of ambiguous)
+          assert.ok(
+            runs.some((run) => run.sheet === sheet.sheet && run.unique),
+            `no key resolved the ambiguity of ${sheet.sheet}`,
+          );
     },
   );
 

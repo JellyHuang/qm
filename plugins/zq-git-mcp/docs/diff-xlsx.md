@@ -11,6 +11,8 @@ Per sheet: `baseHeaderRow` and `headHeaderRow` (`null` only when that side has n
 - `override`: `overrides.<sheet>.headerRow`.
 - `none`: the sheet has no row with content, or the sheet is not in that workbook.
 
+`ambiguousKeys` counts only the key problems (duplicate keys, empty keys, key columns that differ between the sides); `ambiguous` also counts duplicate headers.
+
 When the default key is empty or duplicated, or the key column differs between the sides, the differences are `ambiguous` and the summary adds `suggestedKeyColumns`: column letters of the first single column, or else the first pair of the first six shared columns, that is non-empty and unique on both sides. Pass them back as `overrides.<sheet>.keyColumns` (letters are accepted, and a letter override compares the same column even when its header text changed).
 
 ## What caused a null header row or a removed sheet

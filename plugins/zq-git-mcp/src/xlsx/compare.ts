@@ -22,6 +22,7 @@ export interface SheetSummary {
   columnsAdded: number;
   columnsRemoved: number;
   ambiguous: number;
+  ambiguousKeys: number;
   mergeChanged: number;
   hiddenChanged: number;
 }
@@ -100,6 +101,7 @@ export function compareSheets(
       columnsAdded: 0,
       columnsRemoved: 0,
       ambiguous: 0,
+      ambiguousKeys: 0,
       mergeChanged: 0,
       hiddenChanged: 0,
     };
@@ -171,6 +173,7 @@ export function compareSheets(
 
     if (b.keyId !== h.keyId) {
       summary.ambiguous++;
+      summary.ambiguousKeys++;
       add(sheetIdx, GROUP.ambiguity, "(key)", 0, "ambiguous", b.keyNames.join(", "), h.keyNames.join(", "), {
         reason: "key_columns_differ",
       });
@@ -187,6 +190,7 @@ export function compareSheets(
     for (const dupe of dupes) {
       markBad.run(dupe.key);
       summary.ambiguous++;
+      summary.ambiguousKeys++;
       const rowsText = dupe.rows.split(",").slice(0, LISTED_ROWS).join(",");
       add(
         sheetIdx,
@@ -205,6 +209,7 @@ export function compareSheets(
         .all(name, side) as { rownum: number }[];
       if (empty.length === 0) continue;
       summary.ambiguous++;
+      summary.ambiguousKeys++;
       const rowsText = empty
         .slice(0, LISTED_ROWS)
         .map((r) => r.rownum)
