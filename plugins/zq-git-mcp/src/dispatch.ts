@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { errMessage, swallow } from "../../chassis/src/errors.ts";
 import type { AuditResult, AuditSink } from "./audit.ts";
+import { BlobFetchError } from "./blobs.ts";
 import { DiskSpaceLowError } from "./scratch.ts";
 import type { ToolContext, ToolDef, Services } from "./tools/types.ts";
 import { fitToChars } from "./truncate.ts";
@@ -35,6 +36,7 @@ const ENVELOPE_RESERVE = 160;
 
 function describeFailure(e: unknown): { code: string; message: string; result: AuditResult } {
   if (e instanceof GitDenied) return { code: e.reason, message: e.message, result: `refused:${e.reason}` };
+  if (e instanceof BlobFetchError) return { code: "fetch_failed", message: e.message, result: "error" };
   if (e instanceof DiskSpaceLowError) return { code: "disk_space_low", message: e.message, result: "error" };
   return { code: "error", message: errMessage(e), result: "error" };
 }

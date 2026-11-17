@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +7,8 @@ import { join } from "node:path";
 export interface SshOptions {
   target: string;
   keyB64: string;
-  hostKey: string;
+  hostFingerprint: string;
+  scan?: (host: string) => Promise<string>;
   binary?: string;
   tmpRoot?: string;
   warmTimeoutMs?: number;
@@ -18,6 +20,31 @@ export interface Ssh {
   warm(): Promise<void>;
   stop(): Promise<void>;
   dir(): string;
+}
+
+function fingerprintOf(keyBase64: string): string {
+  return `SHA256:${createHash("sha256").update(Buffer.from(keyBase64, "base64")).digest("base64").replace(/=+$/, "")}`;
+}
+
+function pinnedHostKeys(scanned: string, fingerprint: string): string[] {
+  return scanned
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => {
+      const [, , key = ""] = line.split(/\s+/);
+      return !line.startsWith("#") && key !== "" && fingerprintOf(key) === fingerprint;
+    });
+}
+
+function scanWithSshKeyscan(host: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "ssh-keyscan",
+      ["-T", "15", host],
+      { timeout: 30_000, env: { PATH: "/usr/local/bin:/usr/bin:/bin" } },
+      (error, stdout) => (error ? reject(error) : resolve(stdout)),
+    );
+  });
 }
 
 function quote(value: string): string {
@@ -71,11 +98,14 @@ export function createSsh(options: SshOptions): Ssh {
 
   return {
     async start() {
+      const host = options.target.split("@").pop() ?? options.target;
+      const pinned = pinnedHostKeys(await (options.scan ?? scanWithSshKeyscan)(host), options.hostFingerprint);
+      if (pinned.length === 0) throw new Error(`no host key offered by ${host} matches the pinned fingerprint`);
       dir = await mkdtemp(join(options.tmpRoot ?? tmpdir(), "zqgit-ssh-"));
       keyFile = join(dir, "key");
       const key = Buffer.from(options.keyB64, "base64").toString("utf8");
       await writeFile(keyFile, key.endsWith("\n") ? key : `${key}\n`, { mode: 0o600 });
-      await writeFile(join(dir, "known_hosts"), `${options.hostKey.trim()}\n`, { mode: 0o600 });
+      await writeFile(join(dir, "known_hosts"), `${pinned.join("\n")}\n`, { mode: 0o600 });
     },
     command: () => ["ssh", ...optionArgs()].map((part, i) => (i === 0 ? part : quote(part))).join(" "),
     warm: () => run([...optionArgs(), options.target], options.warmTimeoutMs ?? 30_000),

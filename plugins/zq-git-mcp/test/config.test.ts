@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ConfigError, DEFAULT_REMOTE_BASE, loadConfig, sshTarget } from "../src/config.ts";
 
-const SSH = { GITLAB_QM_READONLY_SSH_KEY_B64: "a2V5", ZQ_GIT_MCP_SSH_HOST_KEY: "lab.example ssh-ed25519 AAAA" };
+const FINGERPRINT = "SHA256:DkCVY8DnWnZqf8eTvxgHTj5IRFmOtYj3IMgVy4PiTCQ";
+const SSH = { GITLAB_QM_READONLY_SSH_KEY_B64: "a2V5", ZQ_GIT_MCP_SSH_HOST_FINGERPRINT: FINGERPRINT };
 const BASE = { ZQ_GIT_MCP_SECRET: "0123456789abcdef", ZQ_GIT_MCP_DATA_DIR: "/srv/zq" };
 
 test("a complete environment loads with the documented defaults", () => {
@@ -11,7 +12,7 @@ test("a complete environment loads with the documented defaults", () => {
   assert.deepEqual(config.ssh, {
     target: "git@lab.skyunion.net",
     keyB64: "a2V5",
-    hostKey: "lab.example ssh-ed25519 AAAA",
+    hostFingerprint: FINGERPRINT,
   });
   assert.equal(config.clonesDir, "/srv/zq/clones");
   assert.equal(config.scratchDir, "/srv/zq/scratch");
@@ -23,12 +24,21 @@ test("a complete environment loads with the documented defaults", () => {
   assert.equal(config.maxFetches, 4);
   assert.equal(config.maxHeavyJobs, 2);
   assert.equal(config.port, 8765);
+  assert.equal(config.maxBigFetches, 2);
+  assert.equal(config.fetchNoProgressMs, 120_000);
+  assert.equal(config.fetchFailureTtlMs, 60_000);
+  assert.equal(config.fetchTimeoutMs, 30 * 60_000);
+});
+
+test("a host key fingerprint must be a SHA256 fingerprint, never a key or accept-new setting", () => {
+  for (const bad of ["accept-new", "lab.example ssh-ed25519 AAAA", "SHA256:short", "MD5:aa:bb"])
+    assert.throws(() => loadConfig({ ...BASE, ...SSH, ZQ_GIT_MCP_SSH_HOST_FINGERPRINT: bad }), /fingerprint/);
 });
 
 test("each required value fails fast and the message names it without echoing secrets", () => {
   assert.throws(() => loadConfig({ ...SSH, ZQ_GIT_MCP_DATA_DIR: "/srv/zq" }), /secret/);
   assert.throws(() => loadConfig({ ...SSH, ZQ_GIT_MCP_SECRET: "0123456789abcdef" }), /dataDir/);
-  assert.throws(() => loadConfig({ ...BASE, GITLAB_QM_READONLY_SSH_KEY_B64: "a2V5" }), /sshHostKey/);
+  assert.throws(() => loadConfig({ ...BASE, GITLAB_QM_READONLY_SSH_KEY_B64: "a2V5" }), /sshHostFingerprint/);
   assert.throws(() => loadConfig({ ...BASE, ZQ_GIT_MCP_SSH_HOST_KEY: "lab ssh-ed25519 AAAA" }), /sshKeyB64/);
   assert.throws(() => loadConfig({ ...BASE, ...SSH, ZQ_GIT_MCP_DATA_DIR: "relative/dir" }), /absolute/);
   assert.throws(

@@ -2,6 +2,8 @@ import type { AddressInfo } from "node:net";
 import { swallow } from "../../chassis/src/errors.ts";
 import { createMemoryAuditSink, type AuditSink } from "./audit.ts";
 import { createBlobStore } from "./blobs.ts";
+import { assertGitVersion } from "./git-version.ts";
+import { createMemorySizeLedger } from "./ledger.ts";
 import { createBlobCache } from "./cache.ts";
 import type { Config } from "./config.ts";
 import { createDispatcher } from "./dispatch.ts";
@@ -27,6 +29,7 @@ export function createService(config: Config, deps: ServiceDeps = {}): Service {
   const ssh = config.ssh ? createSsh(config.ssh) : undefined;
   const audit = deps.audit ?? createMemoryAuditSink();
   const fetches = createLimiter(config.maxFetches);
+  const bigFetches = createLimiter(config.maxBigFetches);
   const scratch = createScratch({
     dir: config.scratchDir,
     capBytes: config.scratchCapBytes,
@@ -38,6 +41,7 @@ export function createService(config: Config, deps: ServiceDeps = {}): Service {
 
   return {
     async start() {
+      await assertGitVersion(createGitRunner(deps.gitBinary ? { gitBinary: deps.gitBinary } : {}));
       await ssh?.start();
       const runner = createGitRunner({
         timeoutMs: config.gitTimeoutMs,
@@ -58,7 +62,11 @@ export function createService(config: Config, deps: ServiceDeps = {}): Service {
         scratch,
         cache,
         fetches,
+        bigFetches,
+        ledger: createMemorySizeLedger(),
         fetchTimeoutMs: config.fetchTimeoutMs,
+        noProgressMs: config.fetchNoProgressMs,
+        failureTtlMs: config.fetchFailureTtlMs,
       });
       const dispatcher = createDispatcher({
         tools: TOOLS,

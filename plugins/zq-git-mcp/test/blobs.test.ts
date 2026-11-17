@@ -1,16 +1,20 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { after, before, describe, test } from "node:test";
+import { randomBytes } from "node:crypto";
 import { join } from "node:path";
-import { createBlobStore, type BlobStore } from "../src/blobs.ts";
+import { BlobFetchError, createBlobStore, type BlobStore } from "../src/blobs.ts";
 import { createBlobCache, type BlobCache } from "../src/cache.ts";
 import { dirSize } from "../src/fs-util.ts";
+import { createMemorySizeLedger } from "../src/ledger.ts";
 import { createLimiter } from "../src/limiter.ts";
 import { createRepos, type Repos } from "../src/repos.ts";
 import { createGitRunner } from "../src/runner.ts";
 import { createScratch } from "../src/scratch.ts";
 import { fakeGit, loggingGit } from "./support/fake-git.ts";
+import { withIndexPackPeak } from "./support/rss.ts";
 import { BIG_BYTES, buildFixture, commitAll, makeRoot, pushAll, git, type Fixture } from "./support/fixtures.ts";
 
 const { root, cleanup } = makeRoot("zqgit-blobs-");
@@ -19,6 +23,8 @@ let counter = 0;
 const REAL_GIT = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
 
 const manyOids: Record<string, string[]> = {};
+const HUGE_MB = 128;
+let hugeOid = "";
 
 before(() => {
   fx = buildFixture(root);
@@ -35,10 +41,18 @@ before(() => {
       .filter((line) => /\tf\d+\.txt$/.test(line))
       .map((line) => line.split(/\s+/)[2] ?? "");
   }
+  const huge = fx.work.jenkinstasks;
+  const piece = randomBytes(1024 * 1024);
+  const parts = Array.from({ length: HUGE_MB }, (_, i) => Buffer.concat([piece.subarray(i + 1), randomBytes(i + 1)]));
+  writeFileSync(join(huge, "huge.bin"), Buffer.concat(parts));
+  commitAll(huge, "huge blob");
+  pushAll(huge);
+  hugeOid = git(huge, ["rev-parse", "HEAD:huge.bin"]);
 });
 after(cleanup);
 
 interface Setup {
+  ledger: ReturnType<typeof createMemorySizeLedger>;
   blobs: BlobStore;
   repos: Repos;
   cache: BlobCache;
@@ -54,12 +68,16 @@ async function setup(
     maxFetches?: number;
     maxJobs?: number;
     gitBinary?: string;
-    repo?: "client" | "gameconfig" | "zq-ui";
+    repo?: "client" | "gameconfig" | "zq-ui" | "jenkinstasks" | "clientcode";
+    maxBigFetches?: number;
+    noProgressMs?: number;
+    failureTtlMs?: number;
+    now?: () => number;
   } = {},
 ): Promise<Setup> {
   const n = counter++;
   const logger = loggingGit(root);
-  const runner = createGitRunner({ gitBinary: options.gitBinary ?? logger.bin, timeoutMs: 30_000 });
+  const runner = createGitRunner({ gitBinary: options.gitBinary ?? logger.bin, timeoutMs: 120_000 });
   const fetches = createLimiter(options.maxFetches ?? 4);
   const clones = join(root, `clones-${n}`);
   const scratchDir = join(root, `scratch-${n}`);
@@ -81,8 +99,23 @@ async function setup(
     pollMs: 10,
   });
   await repos.ensure(options.repo ?? "client");
-  const blobs = createBlobStore({ repos, runner, scratch, cache, fetches, fetchTimeoutMs: 30_000 });
+  const ledger = createMemorySizeLedger();
+  const blobs = createBlobStore({
+    repos,
+    runner,
+    scratch,
+    cache,
+    fetches,
+    bigFetches: createLimiter(options.maxBigFetches ?? 2),
+    ledger,
+    fetchTimeoutMs: 120_000,
+    noProgressMs: options.noProgressMs ?? 120_000,
+    failureTtlMs: options.failureTtlMs ?? 60_000,
+    progressPollMs: 20,
+    ...(options.now ? { now: options.now } : {}),
+  });
   return {
+    ledger,
     blobs,
     repos,
     cache,
@@ -273,5 +306,218 @@ describe("the lazy fetch guard", () => {
     const out = await runner.run(bare, ["ls-tree", "-l", "main"], { remote: true });
     assert.match(out.stdout.toString(), /README\.md/);
     assert.ok((await dirSize(bare)) > size);
+  });
+});
+
+describe("fetch failures", () => {
+  const MISSING = `${"0".repeat(39)}1`;
+
+  test("a failed fetch names the repository and object, is remembered briefly and is not retried in a storm", async () => {
+    let clock = 1_000_000;
+    const s = await setup({ failureTtlMs: 60_000, now: () => clock });
+    const fail = (oid: string) =>
+      assert.rejects(
+        s.blobs.withBlobs("client", [oid], async () => "never"),
+        (e) => {
+          assert.ok(e instanceof BlobFetchError);
+          assert.match(e.message, new RegExp(`fetch failed for client ${oid.slice(0, 10)}: .*exited with`));
+          return true;
+        },
+      );
+    await fail(MISSING);
+    assert.equal(s.fetchCalls().length, 1);
+    for (let i = 0; i < 5; i++)
+      await assert.rejects(
+        s.blobs.withBlobs("client", [MISSING], async () => "never"),
+        /failed recently, not retried yet/,
+      );
+    assert.equal(s.fetchCalls().length, 1);
+    assert.equal(
+      await s.blobs.withBlobs("client", [fx.client.readmeOid], async (paths) => read(paths, fx.client.readmeOid)),
+      "# client\nchanged\n",
+    );
+    clock += 61_000;
+    await fail(MISSING);
+    assert.equal(s.fetchCalls().length, 3);
+    assert.deepEqual(readdirSync(s.scratchDir), []);
+  });
+
+  test("every explicit fetch is a plain object id fetch and never asks for an unfiltered or refetch mode", async () => {
+    const s = await setup();
+    await s.blobs.withBlobs("client", [fx.client.readmeOid], async () => 1);
+    assert.equal(s.fetchCalls().length, 1);
+    for (const call of s.fetchCalls()) {
+      assert.deepEqual(call.slice(call.indexOf("fetch") - 2, call.indexOf("origin") + 1), [
+        "-c",
+        "fetch.negotiationAlgorithm=noop",
+        "fetch",
+        "--no-tags",
+        "--no-write-fetch-head",
+        "--quiet",
+        "origin",
+      ]);
+      assert.equal(
+        call.some((arg) => /filter|refetch|unshallow|depth/.test(arg)),
+        false,
+      );
+    }
+  });
+
+  test("a bitmap packed server still sends a blob the client already has a commit for, thanks to noop negotiation", async () => {
+    const bare = join(fx.remotes, "clientcode.git");
+    git(bare, ["config", "pack.writeBitmaps", "true"]);
+    git(bare, ["repack", "-a", "-d", "-b"]);
+    const oid = git(fx.work.clientcode, ["rev-parse", "HEAD:README.md"]);
+    const s = await setup({ repo: "clientcode" });
+    const plain = join(root, `bitmap-${counter++}.git`);
+    const runner = createGitRunner({ timeoutMs: 60_000 });
+    await runner.run(undefined, ["init", "--bare", "--quiet", plain]);
+    for (const [key, value] of [
+      ["remote.origin.url", s.repos.url("clientcode")],
+      ["remote.origin.promisor", "true"],
+    ] as const)
+      await runner.run(plain, ["config", key, value]);
+    await mkdir(join(plain, "objects", "info"), { recursive: true });
+    await writeFile(join(plain, "objects", "info", "alternates"), `${join(s.repos.dir("clientcode"), "objects")}\n`);
+    const fetchPlain = ["fetch", "--no-tags", "--no-write-fetch-head", "origin", oid];
+    await assert.rejects(runner.run(plain, fetchPlain, { remote: true }), /did not send all necessary objects/);
+    const text = await s.blobs.withBlobs("clientcode", [oid], async (paths) => read(paths, oid));
+    assert.equal(text, "# clientcode\n");
+    await runner.run(plain, ["-c", "fetch.negotiationAlgorithm=noop", ...fetchPlain], { remote: true });
+  });
+
+  test("a fetch that stops making progress is killed by the watchdog and reported", async () => {
+    const hang = fakeGit(root, `case " $* " in *" fetch "*) sleep 30;; esac\nexec ${REAL_GIT} "$@"`);
+    const s = await setup({ gitBinary: hang, noProgressMs: 400 });
+    const started = Date.now();
+    await assert.rejects(
+      s.blobs.withBlobs("client", [fx.client.readmeOid], async () => "never"),
+      /fetch failed for client .*no progress/,
+    );
+    assert.ok(Date.now() - started < 8000);
+    assert.deepEqual(readdirSync(s.scratchDir), []);
+  });
+
+  test("a fetch that keeps writing is not stopped by the watchdog", async () => {
+    const slow = fakeGit(
+      root,
+      `case " $* " in *" fetch "*) d=\${3#--git-dir=}; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do echo x >> $d/progress; sleep 0.1; done;; esac\nexec ${REAL_GIT} "$@"`,
+    );
+    const s = await setup({ gitBinary: slow, noProgressMs: 500 });
+    const text = await s.blobs.withBlobs("client", [fx.client.readmeOid], async (paths) =>
+      read(paths, fx.client.readmeOid),
+    );
+    assert.equal(text, "# client\nchanged\n");
+  });
+});
+
+describe("memory aware fetch limits", () => {
+  const overlapGit = (log: string) =>
+    fakeGit(
+      root,
+      `case " $* " in *" fetch "*) case " $* " in *" --prune "*) ;; *) echo "s" >> ${log}; sleep 0.3; echo "e" >> ${log};; esac;; esac\nexec ${REAL_GIT} "$@"`,
+    );
+  const peakOf = (log: string) => {
+    let running = 0;
+    let peak = 0;
+    for (const line of readFileSync(log, "utf8").split("\n").filter(Boolean)) {
+      running += line === "s" ? 1 : -1;
+      peak = Math.max(peak, running);
+    }
+    return peak;
+  };
+
+  test("fetches of blobs not known to be small run one at a time when the big fetch limit is one", async () => {
+    const log = join(root, `big-${counter}.log`);
+    const s = await setup({ gitBinary: overlapGit(log), maxBigFetches: 1, maxFetches: 4, maxJobs: 6, repo: "zq-ui" });
+    const oids = [...new Set(manyOids["zq-ui"] ?? [])].slice(0, 4);
+    await Promise.all(oids.map((oid) => s.blobs.withBlobs("zq-ui", [oid], async (paths) => read(paths, oid))));
+    assert.equal(peakOf(log), 1);
+  });
+
+  test("fetches of blobs already learned to be small are not held back by the big fetch limit", async () => {
+    const log = join(root, `small-${counter}.log`);
+    const s = await setup({ gitBinary: overlapGit(log), maxBigFetches: 1, maxFetches: 4, maxJobs: 6, repo: "zq-ui" });
+    const oids = [...new Set(manyOids["zq-ui"] ?? [])].slice(0, 4);
+    for (const oid of oids) s.ledger.record("zq-ui", oid, 20);
+    await Promise.all(oids.map((oid) => s.blobs.withBlobs("zq-ui", [oid], async (paths) => read(paths, oid))));
+    assert.ok(peakOf(log) > 1);
+  });
+
+  test("sizes learned after a download are remembered", async () => {
+    const s = await setup();
+    assert.equal(s.ledger.size("client", fx.client.readmeOid), undefined);
+    await s.blobs.withBlobs("client", [fx.client.readmeOid], async () => 1);
+    assert.equal(s.ledger.size("client", fx.client.readmeOid), "# client\nchanged\n".length);
+  });
+
+  test("the temporary repository streams large packs instead of holding them in memory", async (t) => {
+    const s = await setup({ repo: "jenkinstasks", cacheCap: 1024 * 1024 * 1024 });
+    const size = HUGE_MB * 1024 * 1024;
+    const withSetting = await withIndexPackPeak(() =>
+      s.blobs.withBlobs("jenkinstasks", [hugeOid], async (paths) => readFileSync(paths.get(hugeOid) ?? "").length),
+    );
+    assert.equal(withSetting.value, size);
+    const plain = join(root, `plain-${counter++}.git`);
+    const runner = createGitRunner({ timeoutMs: 120_000 });
+    await runner.run(undefined, ["init", "--bare", "--quiet", plain]);
+    for (const [key, value] of [
+      ["remote.origin.url", s.repos.url("jenkinstasks")],
+      ["remote.origin.promisor", "true"],
+      ["fetch.unpackLimit", "1"],
+      ["transfer.unpackLimit", "1"],
+    ] as const)
+      await runner.run(plain, ["config", key, value]);
+    const without = await withIndexPackPeak(() =>
+      runner.run(plain, ["fetch", "--no-tags", "--no-write-fetch-head", "--quiet", "origin", hugeOid], {
+        remote: true,
+        timeoutMs: 120_000,
+      }),
+    );
+    t.diagnostic(
+      `index-pack peak RSS for a ${HUGE_MB} MiB blob: ${Math.round(withSetting.peakBytes / 1048576)} MiB with core.bigFileThreshold=1m, ${Math.round(without.peakBytes / 1048576)} MiB without`,
+    );
+    assert.ok(withSetting.peakBytes < size / 4);
+    assert.ok(without.peakBytes > withSetting.peakBytes * 2);
+  });
+});
+
+describe("temporary repository helper", () => {
+  test("runs a command with lazy fetch allowed and counts the lazy fetches it caused", async () => {
+    const s = await setup();
+    const bare = s.repos.dir("client");
+    const size = await dirSize(bare);
+    const rootCommit = git(fx.work.client, ["rev-list", "--max-parents=0", fx.client.second]);
+    const rootReadme = git(fx.work.client, ["rev-parse", `${rootCommit}:README.md`]);
+    const blame = ["blame", "--porcelain", fx.client.second, "--", "README.md"];
+    const partial = await s.blobs.withTempRepo("client", async (temp) => {
+      const threshold = await temp.git(["config", "--get", "core.bigFileThreshold"]);
+      assert.equal(threshold.stdout.toString().trim(), "1m");
+      const negotiation = await temp.git(["config", "--get", "fetch.negotiationAlgorithm"]);
+      assert.equal(negotiation.stdout.toString().trim(), "noop");
+      await temp.fetch([fx.client.readmeOid]);
+      const out = await temp.git(blame);
+      return { text: out.stdout.toString(), lazy: await temp.lazyFetches() };
+    });
+    assert.match(partial.text, new RegExp(`^${fx.client.second} `, "m"));
+    assert.equal(partial.lazy, 1);
+    const prefetched = await s.blobs.withTempRepo("client", async (temp) => {
+      await temp.fetch([fx.client.readmeOid, rootReadme]);
+      const out = await temp.git(blame);
+      return { text: out.stdout.toString(), lazy: await temp.lazyFetches() };
+    });
+    assert.equal(prefetched.text, partial.text);
+    assert.equal(prefetched.lazy, 0);
+    assert.equal(await dirSize(bare), size);
+    assert.deepEqual(readdirSync(s.scratchDir), []);
+  });
+
+  test("the same command in the bare clone fails instead of fetching lazily", async () => {
+    const s = await setup();
+    const runner = createGitRunner({ timeoutMs: 20_000 });
+    await assert.rejects(
+      runner.run(s.repos.dir("client"), ["blame", "--porcelain", fx.client.second, "--", "README.md"]),
+      /exited with \d+/,
+    );
   });
 });

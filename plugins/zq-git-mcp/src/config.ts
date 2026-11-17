@@ -11,7 +11,7 @@ const ENV_KEYS = {
   ZQ_GIT_MCP_DATA_DIR: "dataDir",
   ZQ_GIT_MCP_PORT: "port",
   ZQ_GIT_MCP_REMOTE_BASE: "remoteBase",
-  ZQ_GIT_MCP_SSH_HOST_KEY: "sshHostKey",
+  ZQ_GIT_MCP_SSH_HOST_FINGERPRINT: "sshHostFingerprint",
   GITLAB_QM_READONLY_SSH_KEY_B64: "sshKeyB64",
   ZQ_GIT_MCP_SCRATCH_DIR: "scratchDir",
   ZQ_GIT_MCP_CACHE_DIR: "cacheDir",
@@ -21,6 +21,9 @@ const ENV_KEYS = {
   ZQ_GIT_MCP_CACHE_CAP_BYTES: "cacheCapBytes",
   ZQ_GIT_MCP_MAX_FETCHES: "maxFetches",
   ZQ_GIT_MCP_MAX_HEAVY_JOBS: "maxHeavyJobs",
+  ZQ_GIT_MCP_MAX_BIG_FETCHES: "maxBigFetches",
+  ZQ_GIT_MCP_FETCH_NO_PROGRESS_MS: "fetchNoProgressMs",
+  ZQ_GIT_MCP_FETCH_FAILURE_TTL_MS: "fetchFailureTtlMs",
   ZQ_GIT_MCP_REFRESH_MS: "refreshMs",
   ZQ_GIT_MCP_FETCH_TIMEOUT_MS: "fetchTimeoutMs",
   ZQ_GIT_MCP_GIT_TIMEOUT_MS: "gitTimeoutMs",
@@ -34,7 +37,10 @@ const schema = z
     dataDir: z.string().refine(isAbsolute, "must be an absolute path"),
     port: z.coerce.number().int().min(0).max(65535).default(8765),
     remoteBase: z.string().min(1).default(DEFAULT_REMOTE_BASE),
-    sshHostKey: z.string().min(1).optional(),
+    sshHostFingerprint: z
+      .string()
+      .regex(/^SHA256:[A-Za-z0-9+/]{43}$/, "expected a SHA256:<base64> host key fingerprint")
+      .optional(),
     sshKeyB64: z.string().min(1).optional(),
     scratchDir: z.string().refine(isAbsolute, "must be an absolute path").optional(),
     cacheDir: z.string().refine(isAbsolute, "must be an absolute path").optional(),
@@ -44,13 +50,16 @@ const schema = z
     cacheCapBytes: count(1, 2 * GIB),
     maxFetches: count(1, 4),
     maxHeavyJobs: count(1, 2),
+    maxBigFetches: count(1, 2),
+    fetchNoProgressMs: count(1000, 120_000),
+    fetchFailureTtlMs: count(0, 60_000),
     refreshMs: count(0, 60_000),
     fetchTimeoutMs: count(1000, 30 * 60_000),
     gitTimeoutMs: count(1000, 60_000),
   })
   .superRefine((value, ctx) => {
     if (sshTarget(value.remoteBase) === undefined) return;
-    for (const key of ["sshHostKey", "sshKeyB64"] as const)
+    for (const key of ["sshHostFingerprint", "sshKeyB64"] as const)
       if (!value[key]) ctx.addIssue({ code: "custom", path: [key], message: "required for an ssh remote" });
   });
 
@@ -58,7 +67,7 @@ export interface Config {
   secret: string;
   port: number;
   remoteBase: string;
-  ssh?: { target: string; keyB64: string; hostKey: string };
+  ssh?: { target: string; keyB64: string; hostFingerprint: string };
   clonesDir: string;
   scratchDir: string;
   cacheDir: string;
@@ -68,6 +77,9 @@ export interface Config {
   cacheCapBytes: number;
   maxFetches: number;
   maxHeavyJobs: number;
+  maxBigFetches: number;
+  fetchNoProgressMs: number;
+  fetchFailureTtlMs: number;
   refreshMs: number;
   fetchTimeoutMs: number;
   gitTimeoutMs: number;
@@ -120,8 +132,8 @@ export function loadConfig(
     secret: value.secret,
     port: value.port,
     remoteBase: value.remoteBase,
-    ...(target && value.sshKeyB64 && value.sshHostKey
-      ? { ssh: { target, keyB64: value.sshKeyB64, hostKey: value.sshHostKey } }
+    ...(target && value.sshKeyB64 && value.sshHostFingerprint
+      ? { ssh: { target, keyB64: value.sshKeyB64, hostFingerprint: value.sshHostFingerprint } }
       : {}),
     clonesDir: join(value.dataDir, "clones"),
     scratchDir: value.scratchDir ?? join(value.dataDir, "scratch"),
@@ -132,6 +144,9 @@ export function loadConfig(
     cacheCapBytes: value.cacheCapBytes,
     maxFetches: value.maxFetches,
     maxHeavyJobs: value.maxHeavyJobs,
+    maxBigFetches: value.maxBigFetches,
+    fetchNoProgressMs: value.fetchNoProgressMs,
+    fetchFailureTtlMs: value.fetchFailureTtlMs,
     refreshMs: value.refreshMs,
     fetchTimeoutMs: value.fetchTimeoutMs,
     gitTimeoutMs: value.gitTimeoutMs,

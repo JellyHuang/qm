@@ -23,6 +23,7 @@ export interface GitRunOptions {
   signal?: AbortSignal;
   sink?: Writable;
   input?: string;
+  trace?: string;
 }
 
 export interface GitRunner {
@@ -46,7 +47,7 @@ export function killLiveGitGroups(): void {
   }
 }
 
-function cleanEnv(remote: boolean, sshCommand: string | undefined): NodeJS.ProcessEnv {
+function cleanEnv(remote: boolean, sshCommand: string | undefined, trace: string | undefined): NodeJS.ProcessEnv {
   return {
     PATH: SAFE_PATH,
     LC_ALL: "C",
@@ -58,6 +59,7 @@ function cleanEnv(remote: boolean, sshCommand: string | undefined): NodeJS.Proce
     GIT_OPTIONAL_LOCKS: "0",
     ...(remote ? {} : { GIT_NO_LAZY_FETCH: "1" }),
     ...(remote && sshCommand ? { GIT_SSH_COMMAND: sshCommand } : {}),
+    ...(trace ? { GIT_TRACE: trace } : {}),
   };
 }
 
@@ -78,7 +80,7 @@ export function createGitRunner(options: GitRunnerOptions = {}): GitRunner {
           bin,
           ["-c", "core.quotepath=false", ...(gitDir === undefined ? [] : [`--git-dir=${gitDir}`]), ...args],
           {
-            env: cleanEnv(opts.remote === true, options.sshCommand),
+            env: cleanEnv(opts.remote === true, options.sshCommand, opts.trace),
             shell: false,
             detached: true,
             stdio: ["pipe", "pipe", "pipe"],
@@ -125,7 +127,11 @@ export function createGitRunner(options: GitRunnerOptions = {}): GitRunner {
               const stdout = Buffer.concat(chunks);
               if (cutBytes > 0) return resolve({ stdout, bytes: total, truncated: true, cutBytes });
               if (code !== 0)
-                return reject(new Error(`git ${args[0] ?? ""} exited with ${code}: ${stderr.toString("utf8").trim()}`));
+                return reject(
+                  new Error(
+                    `git ${args.find((arg, i) => !arg.startsWith("-") && args[i - 1] !== "-c") ?? ""} exited with ${code}: ${stderr.toString("utf8").trim()}`,
+                  ),
+                );
               resolve({ stdout, bytes: total, truncated: false, cutBytes: 0 });
             });
           if (!sink || timedOut || code !== 0) {
