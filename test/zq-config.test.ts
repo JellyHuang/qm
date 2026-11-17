@@ -57,29 +57,3 @@ test("who hears about an empty responsibility field is configured and never chos
     /ZQ_UNSET_RESPONSIBILITY_DUTIES must list duty keys/,
   );
 });
-
-test("repository monitoring is off by default and takes only allowlisted repositories", () => {
-  const { limits, ...off } = zqConfigFromEnv({}).git;
-  assert.deepEqual(off, { enabled: false, remotes: {}, fetchTimeoutMs: 30 * 60_000 });
-  assert.equal(limits.callsPerMinute, 30);
-  const on = zqConfigFromEnv({
-    ZQ_GIT_READONLY: "1",
-    ZQ_GIT_DIR: "/srv/clones",
-    ZQ_GIT_KNOWN_HOSTS: "/srv/known_hosts",
-    ZQ_GIT_REMOTES: JSON.stringify({ server: "host.example.test:g/server.git", "zq-ui": "/tmp/zq-ui" }),
-  });
-  const { limits: _limits, ...onGit } = on.git;
-  assert.deepEqual(onGit, {
-    enabled: true,
-    dir: "/srv/clones",
-    knownHosts: "/srv/known_hosts",
-    remotes: { server: "host.example.test:g/server.git", "zq-ui": "/tmp/zq-ui" },
-    fetchTimeoutMs: 30 * 60_000,
-  });
-  assert.throws(() => zqConfigFromEnv({ ZQ_GIT_READONLY: "1" }), /ZQ_GIT_DIR/);
-  assert.throws(() => zqConfigFromEnv({ ZQ_GIT_REMOTES: '{"other":"x"}' }), /allowlist: other/);
-  assert.throws(() => zqConfigFromEnv({ ZQ_GIT_REMOTES: '{"server":"--upload-pack=x"}' }), /URL for server/);
-  assert.throws(() => zqConfigFromEnv({ ZQ_GIT_REMOTES: '{"server":3}' }), /URL for server/);
-  assert.throws(() => zqConfigFromEnv({ ZQ_GIT_REMOTES: "[]" }), /JSON object/);
-  assert.throws(() => zqConfigFromEnv({ ZQ_GIT_REMOTES: "nope" }), /JSON object/);
-});

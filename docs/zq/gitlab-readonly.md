@@ -1,6 +1,6 @@
 # GitLab commit monitoring, read-only (phase 1 design)
 
-Status: design. Implemented in milestones; each milestone is switched off by default.
+Status: superseded. The in-process module this document describes (the six `git_*` agent tools, `ZQ_GIT_*` settings, per-minute limits, `scripts/zq-git-verify.ts`) was removed from the QM core; the read-only service in `plugins/zq-git-mcp` replaces it, see `gitlab-mcp-v1.md`.
 
 ## Scope
 

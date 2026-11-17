@@ -4,11 +4,6 @@ import type { Sweeper } from "../util/sweeper.ts";
 import type { ZqConfig } from "./config.ts";
 import { createZqChildren, type ZqChildDraft, type ZqChildren } from "./children.ts";
 import { createZqChanges, type ZqChangeCursor, type ZqChangeLine, type ZqSnapshot } from "./changes.ts";
-import { createAuthorResolver, type AuthorResolver } from "./git/authors.ts";
-import { createGitAudit, type GitAuditRow } from "./git/audit.ts";
-import { createGitLimits } from "./git/limits.ts";
-import { createGitReadonly, type GitReadonly } from "./git/readonly.ts";
-import { createGitRunner, keyFileFrom } from "./git/runner.ts";
 import { createZqIdentityMap, type ZqIdentityLink, type ZqIdentityMap } from "./identity-map.ts";
 import { loadZqContract } from "./config.ts";
 import { checkConfiguredDuties, type ZqContract } from "./contract.ts";
@@ -21,7 +16,6 @@ import type { ScanPerson, ZqFeatureRef } from "./scanner.ts";
 import { createZqService, type ZqRunState } from "./service.ts";
 
 const TICK_MS = 60_000;
-export const GIT_KEY_SLUG = "gitlab-qm-readonly-key";
 const OPENPROJECT_SERVER = "openproject";
 
 export interface ZqChat {
@@ -52,8 +46,6 @@ export interface ZqRuntime {
   start(): void;
   stop(): Promise<void>;
   children?: Pick<ZqChildren, "propose">;
-  git?: GitReadonly;
-  commitAuthors?: AuthorResolver;
   decide(op: "report" | "link" | "children", id: string, approve: boolean, clickerMmUserId: string): Promise<string>;
   connectorConnected(provider: string, principalId: string): Promise<void>;
 }
@@ -71,7 +63,6 @@ export function createZqRuntime(deps: {
   leaderLease: LeaderLease;
   createSweeper: (work: () => unknown, intervalMs: number, opts?: { label?: string }) => Sweeper;
   contract?: ZqContract;
-  readKey?: () => Promise<string>;
   now?: () => number;
 }): ZqRuntime {
   const { config, chat } = deps;
@@ -187,28 +178,6 @@ export function createZqRuntime(deps: {
         })
       : undefined;
 
-  const git = config.git.enabled ? buildGit() : undefined;
-
-  function buildGit(): GitReadonly {
-    const { dir, knownHosts, remotes, limits, fetchTimeoutMs } = config.git;
-    if (!dir) throw new Error("ZQ_GIT_READONLY needs ZQ_GIT_DIR (the bare clone directory)");
-    if (!deps.readKey) throw new Error("ZQ_GIT_READONLY needs access to the keychain key");
-    const now = deps.now ?? Date.now;
-    const audit = createGitAudit({ map: deps.map<GitAuditRow>("zq_git_audit"), now });
-    return createGitReadonly({
-      config: { dir, remotes, fetchTimeoutMs },
-      runner: createGitRunner({ withKeyFile: keyFileFrom(deps.readKey), ...(knownHosts ? { knownHosts } : {}) }),
-      audit,
-      limits: createGitLimits({ config: limits, bytesSince: audit.bytesSince, now }),
-      now,
-    });
-  }
-
-  const commitAuthors =
-    git && chat.mmUserIdsOfEmail
-      ? createAuthorResolver({ mmUserIdsOfEmail: chat.mmUserIdsOfEmail.bind(chat) })
-      : undefined;
-
   const sweeper = deps.createSweeper(
     () =>
       deps.leaderLease.hold("zq:scanner", async () => {
@@ -221,8 +190,6 @@ export function createZqRuntime(deps: {
   return {
     identityAdmin: identity,
     ...(children ? { children } : {}),
-    ...(git ? { git } : {}),
-    ...(commitAuthors ? { commitAuthors } : {}),
     start() {
       if (config.scanner.enabled || config.reports.enabled) sweeper.start();
     },

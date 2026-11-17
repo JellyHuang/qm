@@ -1,8 +1,5 @@
 import { readFileSync } from "node:fs";
 import { Cron } from "croner";
-import { GIT_FETCH_TIMEOUT_MS } from "./git/runner.ts";
-import { DEFAULT_GIT_LIMITS, type GitLimitsConfig } from "./git/limits.ts";
-import { isGitRepo } from "./git/validate.ts";
 import { JENKINS_JOBS } from "./jenkins/client.ts";
 import { parseContract, type Duty, type ZqContract } from "./contract.ts";
 
@@ -21,14 +18,6 @@ export interface ZqConfig {
   unsetResponsibilityDuties: readonly Duty[];
   reports: { enabled: boolean; dailyCron?: string; weeklyCron?: string };
   jenkins: { url?: string; rerun: boolean; jobs: readonly string[]; rerunJobs: readonly string[]; hourlyCap: number };
-  git: {
-    enabled: boolean;
-    dir?: string;
-    remotes: Record<string, string>;
-    knownHosts?: string;
-    fetchTimeoutMs: number;
-    limits: GitLimitsConfig;
-  };
 }
 
 const DEFAULT_CRON = "*/5 * * * *";
@@ -36,8 +25,6 @@ const DEFAULT_TIMEZONE = "Asia/Shanghai";
 const DEFAULT_DAILY_CEILING = 200;
 const DEFAULT_ESCALATION_DAYS = 2;
 const WEDNESDAY = 3;
-const MAX_GIT_DAILY_BYTES = 10 * 1024 ** 3;
-const MAX_GIT_FETCH_TIMEOUT_MS = 24 * 60 * 60_000;
 
 const on = (value: string | undefined) => value?.trim() === "1";
 
@@ -76,26 +63,6 @@ function jobNames(name: string, raw: string | undefined, fallback: readonly stri
   return list;
 }
 
-function gitRemotes(raw: string | undefined): Record<string, string> {
-  if (!raw?.trim()) return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    throw new Error("ZQ_GIT_REMOTES must be a JSON object of repository name to URL", { cause: e });
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
-    throw new Error("ZQ_GIT_REMOTES must be a JSON object of repository name to URL");
-  const remotes: Record<string, string> = {};
-  for (const [name, url] of Object.entries(parsed)) {
-    if (!isGitRepo(name)) throw new Error(`ZQ_GIT_REMOTES names a repository outside the allowlist: ${name}`);
-    if (typeof url !== "string" || !url.trim() || url.startsWith("-"))
-      throw new Error(`ZQ_GIT_REMOTES needs a URL for ${name}`);
-    remotes[name] = url.trim();
-  }
-  return remotes;
-}
-
 export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   const cron = env.ZQ_SCANNER_CRON?.trim() || DEFAULT_CRON;
   const timezone = env.ZQ_SCANNER_TZ?.trim() || DEFAULT_TIMEZONE;
@@ -116,10 +83,6 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   if (opBaseUrl && !/^https?:\/\//.test(opBaseUrl)) throw new Error("ZQ_OP_BASE_URL must be an http(s) URL");
   const scannerEnabled = on(env.ZQ_SCANNER);
   if (scannerEnabled && !contractFile) throw new Error("ZQ_SCANNER needs ZQ_CONTRACT_FILE (the contract key table)");
-  const gitDir = env.ZQ_GIT_DIR?.trim();
-  const gitKnownHosts = env.ZQ_GIT_KNOWN_HOSTS?.trim();
-  const gitEnabled = on(env.ZQ_GIT_READONLY);
-  if (gitEnabled && !gitDir) throw new Error("ZQ_GIT_READONLY needs ZQ_GIT_DIR (the bare clone directory)");
   const jenkinsUrl = env.ZQ_JENKINS_URL?.trim().replace(/\/+$/, "");
   if (jenkinsUrl && !/^https?:\/\//.test(jenkinsUrl)) throw new Error("ZQ_JENKINS_URL must be an http(s) URL");
   const jenkinsRerun = on(env.ZQ_JENKINS_RERUN);
@@ -162,42 +125,6 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
       jobs: jenkinsJobs,
       rerunJobs,
       hourlyCap: integer("ZQ_JENKINS_RERUN_HOURLY_CAP", env.ZQ_JENKINS_RERUN_HOURLY_CAP, 3, 1, 100),
-    },
-    git: {
-      enabled: gitEnabled,
-      remotes: gitRemotes(env.ZQ_GIT_REMOTES),
-      fetchTimeoutMs: integer(
-        "ZQ_GIT_FETCH_TIMEOUT_MS",
-        env.ZQ_GIT_FETCH_TIMEOUT_MS,
-        GIT_FETCH_TIMEOUT_MS,
-        1000,
-        MAX_GIT_FETCH_TIMEOUT_MS,
-      ),
-      limits: {
-        callsPerMinute: integer(
-          "ZQ_GIT_CALLS_PER_MINUTE",
-          env.ZQ_GIT_CALLS_PER_MINUTE,
-          DEFAULT_GIT_LIMITS.callsPerMinute,
-          1,
-          10_000,
-        ),
-        globalCallsPerMinute: integer(
-          "ZQ_GIT_GLOBAL_CALLS_PER_MINUTE",
-          env.ZQ_GIT_GLOBAL_CALLS_PER_MINUTE,
-          DEFAULT_GIT_LIMITS.globalCallsPerMinute,
-          1,
-          100_000,
-        ),
-        dailyBytes: integer(
-          "ZQ_GIT_DAILY_BYTES",
-          env.ZQ_GIT_DAILY_BYTES,
-          DEFAULT_GIT_LIMITS.dailyBytes,
-          1,
-          MAX_GIT_DAILY_BYTES,
-        ),
-      },
-      ...(gitDir ? { dir: gitDir } : {}),
-      ...(gitKnownHosts ? { knownHosts: gitKnownHosts } : {}),
     },
   };
 }
