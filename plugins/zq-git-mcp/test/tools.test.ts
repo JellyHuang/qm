@@ -50,11 +50,13 @@ describe("tool registry", () => {
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map((tool) => tool.name).sort(), [
       "blame",
+      "check_updates",
       "get_commit",
       "get_diff",
       "list_commits",
       "list_repos",
       "read_file",
+      "search",
     ]);
     for (const tool of tools) {
       assert.doesNotMatch(tool.name, /write|push|commit_create|delete|merge|archive|clone/);

@@ -107,6 +107,29 @@ describe("a blob larger than half the cache is streamed through scratch and neve
     assert.deepEqual(readdirSync(join(root, "transient", "scratch")), []);
   });
 
+  test("a content search streams a multi-hundred-MB file and finds the one matching line", async () => {
+    const { value, growth } = await withIndexPackPeak(() =>
+      peakRss(() =>
+        h.call("search", {
+          repo: "server",
+          ref: "main",
+          kind: "content",
+          query: "^1200000 ",
+          regex: true,
+          pathGlob: "big.txt",
+        }),
+      ),
+    ).then((outer) => ({ value: outer.value.value, growth: outer.value.growth }));
+    assert.equal(value.isError, false, JSON.stringify(value.body).slice(0, 300));
+    assert.deepEqual(
+      (value.body.matches as { line: number; text: string }[]).map((m) => [m.line, m.text]),
+      [[1_200_000, line(1_200_000).slice(0, 500)]],
+    );
+    assert.equal(value.body.searched, 1);
+    assert.ok(growth < 160 * 1024 * 1024, `rss grew by ${Math.round(growth / 1048576)} MiB`);
+    assert.deepEqual(readdirSync(join(root, "transient", "scratch")), []);
+  });
+
   test("a large binary is hashed by streaming and a byte range from the middle is exact", async () => {
     const offset = 100 * 1024 * 1024 + 7;
     const { value, peakBytes } = await withIndexPackPeak(() =>

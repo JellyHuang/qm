@@ -3,6 +3,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createMemoryAuditSink, type MemoryAuditSink } from "../../src/audit.ts";
 import type { Config } from "../../src/config.ts";
+import type { TipStore } from "../../src/tip-store.ts";
 import { createService, type Service } from "../../src/service.ts";
 
 export const SECRET = "test-secret-0123456789";
@@ -41,7 +42,10 @@ export interface Harness {
   stop(): Promise<void>;
 }
 
-export async function startHarness(config: Config, options: { gitBinary?: string } = {}): Promise<Harness> {
+export async function startHarness(
+  config: Config,
+  options: { gitBinary?: string; tips?: TipStore } = {},
+): Promise<Harness> {
   const audit = createMemoryAuditSink();
   const service = createService(config, { audit, ...options });
   const { port } = await service.start();

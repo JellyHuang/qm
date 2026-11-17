@@ -25,6 +25,8 @@ const MAX_AUTHOR_LENGTH = 200;
 export const MAX_COMMITS = 10_000;
 const MAX_LINE_NUMBER = 1_000_000_000;
 const MAX_PATTERNS = 1000;
+const MAX_QUERY_LENGTH = 500;
+const MAX_CONTEXT = 5;
 
 const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/+@-]*$/;
 const REVISION = /^[A-Za-z0-9][A-Za-z0-9._/+@^~-]*$/;
@@ -129,7 +131,7 @@ export function checkPathPatterns(value: unknown): string[] {
   return value.map(checkPath);
 }
 
-export function globToRegExp(pattern: string): RegExp {
+export function globToRegExp(pattern: string, flags = ""): RegExp {
   let body = "";
   for (let i = 0; i < pattern.length; i++) {
     const c = pattern[i] ?? "";
@@ -140,5 +142,27 @@ export function globToRegExp(pattern: string): RegExp {
     else if (c === "?") body += "[^/]";
     else body += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
   }
-  return new RegExp(`^${body}$`);
+  return new RegExp(`^${body}$`, flags);
+}
+
+export function checkQuery(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > MAX_QUERY_LENGTH)
+    throw new GitDenied("bad_query", `length must be 1 through ${MAX_QUERY_LENGTH}`);
+  if (HAS_CONTROL.test(value)) throw new GitDenied("bad_query", "control characters");
+  return value;
+}
+
+export function checkContext(value: unknown): number {
+  if (value === undefined) return 0;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > MAX_CONTEXT)
+    throw new GitDenied("bad_number", `context is 0 through ${MAX_CONTEXT}`);
+  return value;
+}
+
+export function checkRegex(value: string, ignoreCase: boolean): RegExp {
+  try {
+    return new RegExp(value, ignoreCase ? "i" : "");
+  } catch {
+    throw new GitDenied("bad_regex", "the pattern is not a valid regular expression");
+  }
 }

@@ -18,7 +18,8 @@ interface RepoInfo {
 export interface Repos {
   url(repo: GitRepo): string;
   dir(repo: GitRepo): string;
-  ensure(repo: GitRepo): Promise<void>;
+  ensure(repo: GitRepo, options?: { force?: boolean }): Promise<void>;
+  heads(repo: GitRepo): Promise<Map<string, string>>;
   list(): Promise<RepoInfo[]>;
 }
 
@@ -93,12 +94,12 @@ export function createRepos(options: ReposOptions): Repos {
     if (branch) await runner.run(git, ["symbolic-ref", "HEAD", `refs/heads/${branch}`]);
   }
 
-  async function refresh(repo: GitRepo): Promise<void> {
+  async function refresh(repo: GitRepo, force: boolean): Promise<void> {
     await mkdir(clonesDir, { recursive: true });
     if (!(await exists(dir(repo)))) await clone(repo);
     else {
       const last = await lastFetch(repo);
-      if (last !== undefined && now() - last < refreshMs) return;
+      if (!force && last !== undefined && now() - last < refreshMs) return;
       await update(repo);
     }
     await markFetched(repo);
@@ -107,10 +108,27 @@ export function createRepos(options: ReposOptions): Repos {
   return {
     url,
     dir,
-    ensure(repo) {
-      const pending = inflight.get(repo) ?? fetches.run(() => refresh(repo)).finally(() => inflight.delete(repo));
+    ensure(repo, options = {}) {
+      const force = options.force === true;
+      const pending =
+        (force ? undefined : inflight.get(repo)) ??
+        fetches.run(() => refresh(repo, force)).finally(() => inflight.delete(repo));
       inflight.set(repo, pending);
       return pending;
+    },
+    async heads(repo) {
+      const out = await fetches.run(() =>
+        runner.run(undefined, ["ls-remote", "--heads", url(repo)], {
+          remote: true,
+          timeoutMs: Math.min(fetchTimeoutMs, 120_000),
+        }),
+      );
+      const tips = new Map<string, string>();
+      for (const line of out.stdout.toString("utf8").split("\n")) {
+        const match = /^([0-9a-f]{40,64})\trefs\/heads\/(.+)$/.exec(line);
+        if (match) tips.set(match[2] ?? "", match[1] ?? "");
+      }
+      return tips;
     },
     async list() {
       return Promise.all(

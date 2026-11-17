@@ -4,6 +4,7 @@ import { createMemoryAuditSink, type AuditSink } from "./audit.ts";
 import { createBlobStore } from "./blobs.ts";
 import { assertGitVersion } from "./git-version.ts";
 import { createMemoryBlobMetaLedger } from "./ledger.ts";
+import { createMemoryTipStore, type TipStore } from "./tip-store.ts";
 import { createBlobCache } from "./cache.ts";
 import type { Config } from "./config.ts";
 import { createDispatcher } from "./dispatch.ts";
@@ -23,11 +24,13 @@ export interface Service {
 export interface ServiceDeps {
   audit?: AuditSink;
   gitBinary?: string;
+  tips?: TipStore;
 }
 
 export function createService(config: Config, deps: ServiceDeps = {}): Service {
   const ssh = config.ssh ? createSsh(config.ssh) : undefined;
   const audit = deps.audit ?? createMemoryAuditSink();
+  const tips = deps.tips ?? createMemoryTipStore();
   const fetches = createLimiter(config.maxFetches);
   const bigFetches = createLimiter(config.maxBigFetches);
   const scratch = createScratch({
@@ -71,7 +74,7 @@ export function createService(config: Config, deps: ServiceDeps = {}): Service {
       });
       const dispatcher = createDispatcher({
         tools: TOOLS,
-        services: { repos, runner, blobs, cache, ledger },
+        services: { repos, runner, blobs, cache, ledger, tips },
         truncateChars: config.truncateChars,
         audit,
       });

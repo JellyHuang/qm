@@ -21,3 +21,23 @@ export async function lookupEntry(ctx: ToolContext, repo: GitRepo, commit: strin
   if (!match || match[4] !== path) throw new GitDenied("not_found", "no such path at that ref");
   return { mode: match[1] ?? "", type: match[2] as TreeEntry["type"], oid: match[3] ?? "", path };
 }
+
+export async function listTree(
+  ctx: ToolContext,
+  repo: GitRepo,
+  commit: string,
+): Promise<{ entries: TreeEntry[]; truncated: boolean }> {
+  const out = await ctx.git(repo, ["ls-tree", "-r", "-z", "--end-of-options", commit]);
+  const entries: TreeEntry[] = [];
+  for (const record of out.stdout.toString("utf8").split("\0")) {
+    const match = ENTRY.exec(record);
+    if (match)
+      entries.push({
+        mode: match[1] ?? "",
+        type: match[2] as TreeEntry["type"],
+        oid: match[3] ?? "",
+        path: match[4] ?? "",
+      });
+  }
+  return { entries, truncated: out.truncated };
+}

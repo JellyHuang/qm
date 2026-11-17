@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { TipStore } from "../tip-store.ts";
 import type { BlobMetaLedger } from "../ledger.ts";
 import type { BlobCache } from "../cache.ts";
 import type { BlobStore } from "../blobs.ts";
@@ -12,6 +13,7 @@ export interface Services {
   blobs: BlobStore;
   cache: BlobCache;
   ledger: BlobMetaLedger;
+  tips: TipStore;
 }
 
 export interface ToolContext extends Services {
