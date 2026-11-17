@@ -115,6 +115,8 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   if (Boolean(gitMcpUrl) !== Boolean(gitMcpSecret)) throw new Error("ZQ_GIT_MCP_URL and ZQ_GIT_MCP_SECRET go together");
   const gitPoll = on(env.ZQ_GIT_POLL);
   if (gitPoll && !gitMcpUrl) throw new Error("ZQ_GIT_POLL needs ZQ_GIT_MCP_URL and ZQ_GIT_MCP_SECRET");
+  const gitAuthorMapping = on(env.ZQ_GIT_AUTHOR_MAPPING);
+  if (gitAuthorMapping && !gitPoll) throw new Error("ZQ_GIT_AUTHOR_MAPPING needs ZQ_GIT_POLL=1");
   const gitPollSeconds = integer(
     "ZQ_GIT_POLL_SECONDS",
     env.ZQ_GIT_POLL_SECONDS,
@@ -164,7 +166,7 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
       externalDomains: names(env.ZQ_GIT_EXTERNAL_DOMAINS),
       botNames: names(env.ZQ_GIT_BOT_NAMES),
       domainAliases: domainAliases("ZQ_GIT_DOMAIN_ALIASES", env.ZQ_GIT_DOMAIN_ALIASES),
-      mapping: on(env.ZQ_GIT_AUTHOR_MAPPING),
+      mapping: gitAuthorMapping,
       ignoredReopenDays: integer("ZQ_GIT_IGNORED_REOPEN_DAYS", env.ZQ_GIT_IGNORED_REOPEN_DAYS, 0, 0, 3650),
       queueRetentionDays: integer("ZQ_GIT_UNMAPPED_RETENTION_DAYS", env.ZQ_GIT_UNMAPPED_RETENTION_DAYS, 180, 1, 3650),
     },

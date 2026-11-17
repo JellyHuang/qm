@@ -8,7 +8,7 @@ const batch = (repo: string, branch: string, ...shas: string[]): CommitBatch => 
   repo,
   branch,
   status: "updated",
-  commits: shas.map(fakeCommit),
+  commits: shas.map((sha) => fakeCommit(sha)),
 });
 
 function inner(failures = 0) {

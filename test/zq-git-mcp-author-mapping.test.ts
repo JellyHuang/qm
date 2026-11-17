@@ -24,7 +24,14 @@ const directory = createMemoryPeopleDirectory([
   { emails: ["shared@corp.example"], person: li },
 ]);
 
+const POLL = {
+  ZQ_GIT_MCP_URL: "http://127.0.0.1:8765/mcp",
+  ZQ_GIT_MCP_SECRET: "a-shared-secret-0123456789",
+  ZQ_GIT_POLL: "1",
+};
+
 const config = zqConfigFromEnv({
+  ...POLL,
   ZQ_GIT_BOT_NAMES: "ZQBot.compiler",
   ZQ_GIT_EXTERNAL_DOMAINS: "@yizhu",
   ZQ_GIT_AUTHOR_MAPPING: "1",
@@ -282,7 +289,7 @@ test("with the switch off nothing instantiates a map and no mapper exists", () =
   assert.equal(mapping, undefined);
   assert.deepEqual(asked, []);
   assert.equal(zqConfigFromEnv({ ZQ_GIT_AUTHOR_MAPPING: "0" }).gitAuthors.mapping, false);
-  assert.equal(zqConfigFromEnv({ ZQ_GIT_AUTHOR_MAPPING: "1" }).gitAuthors.mapping, true);
+  assert.equal(zqConfigFromEnv({ ...POLL, ZQ_GIT_AUTHOR_MAPPING: "1" }).gitAuthors.mapping, true);
 });
 
 test("with the switch on exactly the two author tables are requested", () => {

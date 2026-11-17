@@ -13,11 +13,16 @@ export interface FakeRequest {
   ack: AckEntry[];
 }
 
-export function fakeCommit(sha: string): UpdatedCommit {
+export interface FakeAuthor {
+  name: string;
+  email: string;
+}
+
+export function fakeCommit(sha: string, author: FakeAuthor = { name: "A", email: "a@corp.example" }): UpdatedCommit {
   return {
     sha,
-    authorName: "A",
-    authorEmail: "a@corp.example",
+    authorName: author.name,
+    authorEmail: author.email,
     date: "2025-01-01T00:00:00Z",
     subject: sha,
     branch: "main",
@@ -27,6 +32,7 @@ export function fakeCommit(sha: string): UpdatedCommit {
 export function createFakeGitMcp() {
   const history = new Map<string, string[]>();
   const tips = new Map<string, string>();
+  const authors = new Map<string, FakeAuthor>();
   const requests: FakeRequest[] = [];
   const state = { down: false, drift: false, gate: undefined as undefined | Promise<void> };
 
@@ -45,7 +51,7 @@ export function createFakeGitMcp() {
         repos.push({ repo, status: "first_run", branches: 1 });
       } else if (tip === head) repos.push({ repo, status: "unchanged", branches: 1 });
       else {
-        const commits = shas.slice(shas.indexOf(tip as string) + 1).map(fakeCommit);
+        const commits = shas.slice(shas.indexOf(tip as string) + 1).map((sha) => fakeCommit(sha, authors.get(sha)));
         repos.push({
           repo,
           status: "changed",
@@ -77,6 +83,9 @@ export function createFakeGitMcp() {
     requests,
     polls: () => requests.filter((r) => r.kind === "check_updates"),
     storedTip: (repo: string) => tips.get(repo),
+    authoredBy(author: FakeAuthor, ...shas: string[]) {
+      for (const sha of shas) authors.set(sha, author);
+    },
     push(repo: string, ...shas: string[]) {
       history.set(repo, [...(history.get(repo) ?? []), ...shas]);
     },

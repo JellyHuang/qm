@@ -1,9 +1,12 @@
+import type { DurableMap } from "../../persistence/durable-map.ts";
 import type { LeaderLease } from "../../persistence/leader-lease.ts";
 import { errMessage } from "../../util/errors.ts";
 import type { Sweeper } from "../../util/sweeper.ts";
 import type { ZqConfig } from "../config.ts";
 import { createGitMcpClient, type GitMcpClient } from "./client.ts";
+import { createAuthorMapping, type AuthorNotificationSink } from "./author-mapping.ts";
 import { GitMcpContractError } from "./contract.ts";
+import type { PeopleDirectory } from "./people.ts";
 import { createGitCommitPoller, type CommitBatch, type PollError } from "./poller.ts";
 import { dedupeBySha, type CommitSink } from "./sink.ts";
 
@@ -46,6 +49,9 @@ export function createGitMcpRuntime(deps: {
   createSweeper: (work: () => unknown, intervalMs: number, opts?: { label?: string; immediate?: boolean }) => Sweeper;
   createClient?: (options: { url: string; secret: string }) => GitMcpClient;
   sink?: CommitSink;
+  people?: PeopleDirectory;
+  authorSink?: AuthorNotificationSink;
+  map?: <T>(table: string) => DurableMap<T>;
   log?: GitMcpLog;
   now?: () => number;
 }): GitMcpRuntime | undefined {
@@ -54,15 +60,37 @@ export function createGitMcpRuntime(deps: {
   const log = deps.log ?? { info: console.log, error: console.error };
   const now = deps.now ?? Date.now;
   const client = (deps.createClient ?? createGitMcpClient)(gitMcp);
-  const sink = dedupeBySha(
-    deps.sink ?? {
-      async record(batches) {
-        for (const batch of batches)
-          log.info(`[zq git poll] ${batch.repo}/${batch.branch}: ${batch.commits.length} commits (${batch.status})`);
-      },
+  const counting: CommitSink = deps.sink ?? {
+    async record(batches) {
+      for (const batch of batches)
+        log.info(`[zq git poll] ${batch.repo}/${batch.branch}: ${batch.commits.length} commits (${batch.status})`);
     },
+  };
+  const mapping = deps.config.gitAuthors.mapping ? authorMapping() : undefined;
+  const sink = dedupeBySha(
+    mapping
+      ? {
+          async record(batches) {
+            await counting.record(batches);
+            await mapping.mapper.handle([...batches]);
+          },
+        }
+      : counting,
     DEDUPE_CAPACITY,
   );
+  function authorMapping() {
+    if (!deps.people)
+      throw new Error("ZQ_GIT_AUTHOR_MAPPING needs Mattermost: without its directory no author can be mapped");
+    if (!deps.map) throw new Error("ZQ_GIT_AUTHOR_MAPPING needs a durable store for its two tables");
+    return createAuthorMapping({
+      config: deps.config.gitAuthors,
+      directory: deps.people,
+      map: deps.map,
+      ...(deps.authorSink ? { sink: deps.authorSink } : {}),
+      now,
+      log: (line) => log.info(`[zq git poll] ${line}`),
+    });
+  }
   const status: GitPollStatus = { lastPollAt: null, lastResult: null, consecutiveFailures: 0, pendingAck: 0 };
   const lastLogged = new Map<string, { at: number; suppressed: number }>();
   let tick = { errors: [] as PollError[], baselines: 0, lastBatch: 0 };

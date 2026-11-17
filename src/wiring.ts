@@ -1,4 +1,5 @@
 import { setZqChildren } from "./zq/children.ts";
+import { createMattermostPeopleDirectory } from "./zq/git-mcp/people.ts";
 import { createGitMcpRuntime } from "./zq/git-mcp/runtime.ts";
 import { createZqRuntime, type ZqIdentityAdmin, type ZqRuntime } from "./zq/runtime.ts";
 import { setLogOutboundTools } from "./agent/diagnostics.ts";
@@ -2684,7 +2685,13 @@ export function buildApp(
         })
       : null;
   setZqChildren(zq?.children);
-  const gitMcpPoll = createGitMcpRuntime({ config: config.zq, leaderLease, createSweeper });
+  const gitMcpPoll = createGitMcpRuntime({
+    config: config.zq,
+    leaderLease,
+    createSweeper,
+    map: (table) => artifactMap(table),
+    ...(mattermost ? { people: createMattermostPeopleDirectory((email) => mattermost!.mmUserIdsOfEmail(email)) } : {}),
+  });
   setLogOutboundTools(config.logOutboundTools === true);
   const webhookDelivery = createDeliveryRelay(deliveries, {
     type: "webhook",

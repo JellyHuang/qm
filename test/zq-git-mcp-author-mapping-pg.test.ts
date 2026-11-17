@@ -6,6 +6,12 @@ import { createMemoryPeopleDirectory } from "../src/zq/git-mcp/people.ts";
 import { tenantTest as test } from "./support/tenant-test.ts";
 import { testMap } from "./support/test-database.ts";
 
+const POLL = {
+  ZQ_GIT_MCP_URL: "http://127.0.0.1:8765/mcp",
+  ZQ_GIT_MCP_SECRET: "a-shared-secret-0123456789",
+  ZQ_GIT_POLL: "1",
+};
+
 const li = { personId: "p-li", mattermostUser: "mm-li" };
 
 test("the unmapped queue and alias table persist and resolve on Postgres", async (t) => {
@@ -17,7 +23,7 @@ test("the unmapped queue and alias table persist and resolve on Postgres", async
   };
   const build = () =>
     createAuthorMapping({
-      config: zqConfigFromEnv({ ZQ_GIT_AUTHOR_MAPPING: "1" }).gitAuthors,
+      config: zqConfigFromEnv({ ...POLL, ZQ_GIT_AUTHOR_MAPPING: "1" }).gitAuthors,
       directory: createMemoryPeopleDirectory([{ emails: ["li@corp.example"], person: li }]),
       map,
     })!;

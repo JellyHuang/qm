@@ -1,6 +1,6 @@
-# Git commit poll (phase 2, default off)
+# Git commit poll (phase 2, default off; phase 3 author mapping, default off)
 
-QM asks the zq-git-mcp service for new commits on a schedule and, in this phase, only counts and logs them. No author mapping, no messages, no table in QM.
+QM asks the zq-git-mcp service for new commits on a schedule. With `ZQ_GIT_POLL=1` alone it only counts and logs them: no author mapping, no messages, no table in QM. With `ZQ_GIT_AUTHOR_MAPPING=1` as well (phase 3, see the last section) it also classifies each commit author and records them. It never sends a message in either case.
 
 ## What runs
 
@@ -17,7 +17,7 @@ QM asks the zq-git-mcp service for new commits on a schedule and, in this phase,
 | `ZQ_GIT_POLL`         | off     | `1` starts the poll. Needs `ZQ_GIT_MCP_URL` and `ZQ_GIT_MCP_SECRET`; startup fails with a clear error without them |
 | `ZQ_GIT_POLL_SECONDS` | 300     | Interval, integer from 30 through 3600; checked even while the poll is off                                         |
 
-`ZQ_GIT_MCP_URL` and `ZQ_GIT_MCP_SECRET` alone start nothing. No new HTTP endpoint, no other setting, no schema change, no table.
+`ZQ_GIT_MCP_URL` and `ZQ_GIT_MCP_SECRET` alone start nothing. No new HTTP endpoint. `ZQ_GIT_POLL=1` alone requests no table and has no schema change.
 
 ## Delivery semantics
 
@@ -38,6 +38,25 @@ The stored tips live in the service. After a QM restart the poller simply contin
 - A run still in flight when the next one is due is skipped.
 - `stop()` halts the schedule and waits for the run in flight.
 
+## Phase 3: author mapping composed into the poll (default off)
+
+Setting: `ZQ_GIT_AUTHOR_MAPPING=1` (default off). Nothing else is new: the retention, reopen, bot, external and domain alias settings are described in `docs/zq/author-mapping.md`.
+
+| Combination                                       | Result                                                                                              |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| defaults, URL and secret only, `ZQ_GIT_POLL=1`    | as phase 2: no author table requested, no directory lookup                                          |
+| `ZQ_GIT_AUTHOR_MAPPING=1` without `ZQ_GIT_POLL=1` | startup configuration error: `ZQ_GIT_AUTHOR_MAPPING needs ZQ_GIT_POLL=1`                            |
+| both on, Mattermost configured                    | the poll handler also runs the author mapper; the two tables below are created at the next start    |
+| both on, Mattermost not configured                | startup error: `ZQ_GIT_AUTHOR_MAPPING needs Mattermost`; nothing is built and no table is requested |
+
+Without a Mattermost directory every author would be classified unmapped and written to the durable queue as a false entry, so the combination is refused instead of warned about. The people directory is `createMattermostPeopleDirectory(mattermost.mmUserIdsOfEmail)`, passed to `createGitMcpRuntime` in `src/wiring.ts` only when Mattermost is configured.
+
+Composition: the sink handed to `dedupeBySha` first logs the per-branch count line, then calls `mapper.handle(batches)`. The mapper classifies each commit (person, unmapped, ambiguous, bot, external), writes unmapped and ambiguous authors to the queue, and hands person groupings to the recording sink (memory only, `createRecordingSink`, injectable as `authorSink`). No message of any kind is sent; notification is a later phase behind its own switch. The sha is remembered by the LRU only after the whole handler succeeded; the queue also ignores shas it already counted, so a failed handler followed by a retry, or a restart that redelivers a batch, does not double a count. A directory or store failure fails the handler, nothing is acknowledged and the next run retries. The recording sink is memory only and is empty after a restart.
+
+Tables created at the next start with both switches on, and only then: `zq_git_author_aliases` and `zq_git_unmapped_authors`, the approved DDL in `docs/zq-git-mcp-ddl-proposal.md` section 8 on `oa/spike-git` (listed in `docs/zq/author-mapping.md`). No other table is added. The queue prune function stays unscheduled. Log lines carry only email hashes (`hashEmail`), the reason and a count.
+
 ## Rollback
 
-Unset `ZQ_GIT_POLL` and restart. The service's stored tips stay valid.
+Unset `ZQ_GIT_AUTHOR_MAPPING` (and `ZQ_GIT_POLL` to stop the poll) and restart. The two tables stay and keep their rows.
+
+Phase 2 rollback: unset `ZQ_GIT_POLL` and restart. The service's stored tips stay valid.
