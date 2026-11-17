@@ -414,3 +414,27 @@ test("the completion confirmation of an optimization order is read from its flag
   assert.equal(read(false).completionSubmitted, undefined);
   assert.equal(read("yes").completionSubmitted, undefined);
 });
+
+test("the child orders of an optimization order under a feature are read as that feature's orders", async () => {
+  const rows = [
+    wp({ id: 1 }),
+    wp({
+      id: 61,
+      type_key: "optimization",
+      parent_id: 1,
+      stage_key: "execution.active",
+      status_key: "execution.active",
+    }),
+    wp({ id: 62, type_key: "backend", parent_id: 61, stage_key: "execution.active", status_key: "execution.active" }),
+  ];
+  const f = fake({
+    openproject_zq_list_work_packages: () => ({ next_offset: null, results: rows }),
+    openproject_zq_check_exit: () => ({ ready: false, blockers: [] }),
+    openproject_zq_meetings_for_feature: () => ({ next_offset: null, results: [] }),
+  });
+  const { facts } = await createMcpOpReader({ call: f.call, contract }).features(PERSON);
+  assert.deepEqual(
+    facts.map((x) => [x.feature.id, x.children.map((c) => c.id)]),
+    [[1, [61, 62]]],
+  );
+});

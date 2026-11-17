@@ -284,7 +284,15 @@ export function createMcpOpReader(opts: { call: OpCall; contract: ZqContract; se
       const isBug = (w: WorkView) => w.typeKey === contract.bugType;
       const facts = await mapLimited(features, async (feature) => {
         const under = found.filter((w) => w.parentId === feature.id);
-        const children = under.filter((w) => !isBug(w));
+        const attached = new Set(
+          under
+            .filter((w) => contract.optimizationType !== undefined && w.typeKey === contract.optimizationType)
+            .map((w) => w.id),
+        );
+        const children = [
+          ...under.filter((w) => !isBug(w)),
+          ...found.filter((w) => attached.has(w.parentId ?? -1) && !isBug(w)),
+        ];
         const [bugs, meetings, exit] = await Promise.all([
           contract.tools.bugsForFeature
             ? pages(contract.tools.bugsForFeature, { id: feature.id }, scanner.principalId).then(

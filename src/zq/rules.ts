@@ -155,8 +155,13 @@ function unassignedDispatch(
   return [...dispatch.values()];
 }
 
-function evaluateOptimization(facts: FeatureFacts, contract: ZqContract, opts: RuleOptions): RuleAction[] {
-  const { feature, children } = facts;
+function optimizationRules(
+  feature: WorkView,
+  children: readonly WorkView[],
+  planner: Target[],
+  contract: ZqContract,
+  opts: RuleOptions,
+): RuleAction[] {
   const done = contract.stageRoles.taskDone;
   if (!active(feature) || feature.statusKey === done) return [];
   const at = (rule: RuleId, to: Target[], text: string, subject: WorkView = feature): RuleAction => ({
@@ -166,7 +171,6 @@ function evaluateOptimization(facts: FeatureFacts, contract: ZqContract, opts: R
     to,
     text,
   });
-  const planner: Target[] = [{ kind: "field", field: "responsiblePlanner" }];
   const live = children.filter(active);
   const out: RuleAction[] = [];
   if (!live.length && !feature.assignee && feature.statusKey === contract.stageRoles.taskUnassigned)
@@ -219,9 +223,24 @@ function evaluateOptimization(facts: FeatureFacts, contract: ZqContract, opts: R
   return out;
 }
 
+function evaluateOptimization(facts: FeatureFacts, contract: ZqContract, opts: RuleOptions): RuleAction[] {
+  return optimizationRules(
+    facts.feature,
+    facts.children,
+    [{ kind: "field", field: "responsiblePlanner" }],
+    contract,
+    opts,
+  );
+}
+
 function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOptions): RuleAction[] {
-  const { feature, children } = facts;
+  const { feature } = facts;
   if (feature.typeKey !== contract.featureType || !active(feature)) return [];
+  const optimizations = facts.children.filter((c) => c.typeKey === contract.optimizationType);
+  const attached = new Set(optimizations.map((o) => o.id));
+  const children = facts.children.filter(
+    (c) => c.typeKey !== contract.optimizationType && !attached.has(c.parentId ?? -1),
+  );
   const at = (rule: RuleId, to: Target[], text: string, subject: WorkView = feature): RuleAction => ({
     rule,
     subjectId: `wp:${subject.id}`,
@@ -402,6 +421,18 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
         ),
       );
   }
+  for (const o of optimizations)
+    out.push(
+      ...optimizationRules(
+        o,
+        facts.children.filter((c) => c.parentId === o.id),
+        o.responsiblePlanner
+          ? [{ kind: "user", user: o.responsiblePlanner }]
+          : [{ kind: "field", field: "responsiblePlanner" }],
+        contract,
+        opts,
+      ),
+    );
   return out;
 }
 

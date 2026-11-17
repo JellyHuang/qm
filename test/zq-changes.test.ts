@@ -416,3 +416,37 @@ test("a delay notice is stored once per delay mark across days and scans, and a 
   assert.equal(renewed.created, 2);
   assert.equal((await store.pendingFor("mm-pm")).length, 2);
 });
+
+test("an optimization order under a feature, and its own child orders, are named as such in the digest", async () => {
+  const h = harness();
+  const opt = (over: Partial<WorkView> = {}) =>
+    work(5, { typeKey: "optimization", parentId: 1, assignee: BOB_OP, ...over });
+  await h.scan({ feature: feature(), children: [opt()] });
+  await h.scan({ feature: feature(), children: [opt({ statusKey: "execution.done" }), opt2()] });
+  await h.groups.ensure(1, ["mm-alice"], async () => "ch-1");
+  await h.flush();
+  const text = h.channel[0]!.text;
+  assert.match(text, /优化单「单5」\[#5\].* 已完成/);
+  assert.match(text, /新增优化单「单6」/);
+
+  function opt2() {
+    return work(6, { typeKey: "optimization", parentId: 1, assignee: BOB_OP });
+  }
+});
+
+test("a stand-alone optimization order is a digest of its own, titled as an optimization order", async () => {
+  const h = harness();
+  const alone = (over: Partial<WorkView> = {}) =>
+    work(60, {
+      typeKey: "optimization",
+      statusKey: "execution.unassigned",
+      responsiblePlanner: ALICE_OP,
+      pm: PM_OP,
+      ...over,
+    });
+  await h.scan({ feature: alone(), children: [] });
+  await h.scan({ feature: alone({ statusKey: "execution.active", assignee: BOB_OP }), children: [] });
+  await h.flush();
+  assert.match(h.dm[0]!.text, /^优化单「单60」\(#60\) 有 \d+ 项变化/);
+  assert.match(h.dm[0]!.text, /优化单 \[#60\]/);
+});

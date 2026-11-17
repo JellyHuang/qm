@@ -135,7 +135,7 @@ export function createZqChanges(opts: {
       text,
       ...about,
     });
-    const ref = `${isFeature ? `${nounOf(w, contract)} ` : `执行单「${w.subject}」`}[#${w.id}](${ctx.link(w.id)})`;
+    const ref = `${isFeature ? `${nounOf(w, contract)} ` : `${w.typeKey === contract.optimizationType ? "优化单" : "执行单"}「${w.subject}」`}[#${w.id}](${ctx.link(w.id)})`;
     const label = (stage: string) => contract.stages.feature[stage] ?? contract.stages.task[stage] ?? stage;
     const out: Pending[] = [];
     if (prev.stage !== w.statusKey) {
@@ -262,7 +262,7 @@ export function createZqChanges(opts: {
           ...nounField(fact.feature, contract),
           at: e.at,
           ...aboutOf(isFeature ? fact.feature.responsiblePlanner?.id : child!.assignee?.id),
-          text: `${isFeature ? `${nounOf(fact.feature, contract)} ` : `执行单「${subject}」`}[#${e.ticketId}](${ctx.link(e.ticketId)}) ${parts.join(";")}${by}`,
+          text: `${isFeature ? `${nounOf(fact.feature, contract)} ` : `${child?.typeKey === contract.optimizationType ? "优化单" : "执行单"}「${subject}」`}[#${e.ticketId}](${ctx.link(e.ticketId)}) ${parts.join(";")}${by}`,
         });
       }
       for (const [batchId, group] of batches) {
@@ -318,7 +318,7 @@ export function createZqChanges(opts: {
             pending.push({
               key: `${w.id}:created`,
               kind: "created",
-              text: `新增执行单「${w.subject}」[#${w.id}](${ctx.link(w.id)})${w.assignee ? `,执行人 ${w.assignee.name}` : ""}`,
+              text: `新增${w.typeKey === contract.optimizationType ? "优化单" : "执行单"}「${w.subject}」[#${w.id}](${ctx.link(w.id)})${w.assignee ? `,执行人 ${w.assignee.name}` : ""}`,
               ...aboutOf(w.assignee?.id),
             });
           continue;

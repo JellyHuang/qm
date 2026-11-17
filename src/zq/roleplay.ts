@@ -95,9 +95,11 @@ export function createRoleplay(opts: {
     if (fact.feature.typeKey === opts.contract?.optimizationType && fact.feature.assignee)
       out.push([fact.feature.assignee, "优化单执行人"]);
     for (const child of fact.children) {
+      if (child.responsiblePlanner) out.push([child.responsiblePlanner, FIELD_ROLES.responsiblePlanner]);
       if (!child.assignee) continue;
       const owner = opts.contract?.typeOwners[child.typeKey];
-      out.push([child.assignee, (owner?.kind === "duty" && DUTY_ROLES[owner.duty]) || "执行人"]);
+      const role = child.typeKey === opts.contract?.optimizationType ? "优化单执行人" : undefined;
+      out.push([child.assignee, role || (owner?.kind === "duty" && DUTY_ROLES[owner.duty]) || "执行人"]);
     }
     for (const bug of fact.bugs ?? []) if (bug.assignee) out.push([bug.assignee, "BUG 处理人"]);
     return out;

@@ -402,3 +402,39 @@ test("a submitted completion confirmation asks the planner to accept it once and
   assert.match(actions[0]!.text, /已提交完成确认.*已完成/);
   assert.deepEqual(rules({ feature: { ...submitted, statusKey: "execution.done" }, children: [] }), []);
 });
+
+const attachedFeature = (over: Partial<WorkView> = {}) =>
+  feature("feature.development", { pm: BOB, plannedEnd: NOW + 30 * DAY, ...over });
+const attached = (id: number, over: Partial<WorkView> = {}) =>
+  work(id, { typeKey: "optimization", parentId: 1, statusKey: "execution.unassigned", ...over });
+
+test("an optimization order under a feature asks the feature's planner to assign it, and is never chased for plan dates", () => {
+  const actions = rules({ feature: attachedFeature({ plannedEnd: NOW + DAY }), children: [attached(70)] });
+  assert.deepEqual(ids(actions), ["optimization-unassigned"]);
+  assert.deepEqual(actions[0]!.to, [{ kind: "field", field: "responsiblePlanner" }]);
+  const planned = attached(71, { assignee: BOB, statusKey: "execution.active" });
+  assert.deepEqual(rules({ feature: attachedFeature({ plannedEnd: NOW + DAY }), children: [planned] }), []);
+});
+
+test("an optimization order under a feature goes to its own planner once the executor submits, and its child orders close it", () => {
+  const own = attached(72, {
+    assignee: BOB,
+    statusKey: "execution.active",
+    completionSubmitted: true,
+    responsiblePlanner: { id: "21", name: "Planner Own" },
+  });
+  const submitted = rules({ feature: attachedFeature(), children: [own] });
+  assert.deepEqual(ids(submitted), ["optimization-completion-submitted"]);
+  assert.deepEqual(submitted[0]!.to, [{ kind: "user", user: { id: "21", name: "Planner Own" } }]);
+  const parent = attached(73, { statusKey: "execution.active" });
+  const kids = [74, 75].map((id) => work(id, { parentId: 73, statusKey: "execution.done", assignee: BOB }));
+  const closing = rules({ feature: attachedFeature(), children: [parent, ...kids] });
+  assert.deepEqual(ids(closing), ["optimization-children-done"]);
+  assert.equal(closing[0]!.subjectId, "wp:73");
+});
+
+test("the child orders of an optimization order under a feature are not chased as the feature's own orders", () => {
+  const parent = attached(76, { statusKey: "execution.active", assignee: BOB });
+  const kid = work(77, { parentId: 76, statusKey: "execution.active", assignee: BOB });
+  assert.deepEqual(rules({ feature: attachedFeature(), children: [parent, kid] }), []);
+});

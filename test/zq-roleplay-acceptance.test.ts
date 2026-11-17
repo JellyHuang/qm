@@ -253,6 +253,25 @@ test("role-play acceptance script: create, assign, develop, hand in, QA, finish,
     "finished child orders ask the planner to close the optimization order",
   );
 
+  h.world.extra = [];
+  h.world.children = [
+    view(90, { typeKey: "optimization", parentId: 1, statusKey: "execution.unassigned" }),
+    view(91, {
+      typeKey: "optimization",
+      parentId: 1,
+      assignee: DEV,
+      statusKey: "execution.active",
+      completionSubmitted: true,
+    }),
+  ];
+  const hosted = await h.step(10);
+  const hostedText = hosted.sent.map((m) => m.text);
+  assert.ok(
+    hostedText.some((t) => t.startsWith(label("策划", "策划小A")) && t.includes("优化单「单90」")),
+    "an optimization order under a feature goes to the feature's planner",
+  );
+  assert.ok(hostedText.some((t) => t.startsWith(label("策划", "策划小A")) && t.includes("已提交完成确认")));
+
   const children = createZqChildren({
     map: testMap<ZqChildDraft>(),
     call: async () => "预览:将创建 1 张执行单",

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { parseContract } from "../src/zq/contract.ts";
 import { createMcpOpReader } from "../src/zq/op-reader.ts";
-import { createReportSource } from "../src/zq/report-source.ts";
+import { createReportSource, projectsOfFacts } from "../src/zq/report-source.ts";
 import { createZqReports, reportPrompt, type ZqReportDraft } from "../src/zq/reports.ts";
 import { testMap } from "./support/test-database.ts";
 
@@ -155,4 +155,21 @@ test("a person with no linked OpenProject user gets an empty report without read
   const input = await source(unlinked, "weekly", UNTIL - 7 * 86_400_000, UNTIL);
   assert.deepEqual([input.statusChanges, input.timeEntries], [[], []]);
   assert.ok(!calls.some((c) => c.includes("changes_since") || c.includes("time_entries")));
+});
+
+test("a stand-alone optimization order reports to its own project manager, one under a feature to the feature's", () => {
+  const pm = (id: string) => ({ id, name: `pm${id}` });
+  const base = { statusKey: "execution.active", subject: "s" };
+  const alone = { feature: { ...base, id: 60, typeKey: "optimization", projectId: "p9", pm: pm("9") }, children: [] };
+  const hosted = {
+    feature: { ...base, id: 1, typeKey: "feature", projectId: "p1", pm: pm("1") },
+    children: [{ ...base, id: 5, typeKey: "optimization", projectId: "p1", parentId: 1 }],
+  };
+  assert.deepEqual(
+    projectsOfFacts([alone, hosted]).map((p) => [p.id, p.pmOpUserIds]),
+    [
+      ["p9", ["9"]],
+      ["p1", ["1"]],
+    ],
+  );
 });
