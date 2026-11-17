@@ -1,6 +1,6 @@
 # DDL proposal: GitLab read-only MCP service (for human review)
 
-Status: APPROVED by the PM on 2026-11-16 for the decisions marked APPROVED below (tenant scoped tables, the role grants, no redaction, audit retention, serve on audit failure). Section 9 (Jenkins tables) was APPROVED by the PM on 2026-11-17; that approval does not enable anything, see that section. Section 8 (author mapping tables) was approved on 2026-11-17 in its original shape, and a structure change is now PENDING approval (see section 8 and docs/zq-author-binding-design.md section 12): until that change is approved, the original section 8 shape is NOT an authority to create or enable anything. Nothing here is applied: no database was contacted, "current" shapes are derived from repo code, and the migrations and the role SQL are still to be written and reviewed.
+Status: APPROVED by the PM on 2026-11-16 for the decisions marked APPROVED below (tenant scoped tables, the role grants, no redaction, audit retention, serve on audit failure). Section 9 (Jenkins tables) was APPROVED by the PM on 2026-11-17; that approval does not enable anything, see that section. Section 8 (author mapping tables): structure change APPROVED (2026-11-17, design level) for the NEW name-keyed shapes of `zq_git_author_aliases` and `zq_git_unmapped_authors`, which replace the old email-keyed shapes as the current proposal (the old shape is a historical note only and is not an authority); see section 8 and docs/zq-author-binding-design.md section 12. Sections 10 and 11 (patch package tables `zq_patch_packages` and `zq_patch_deliveries`): design approved 2026-11-17, NOT created, NOT enabled. Approval of a design is NOT creating a table and NOT enabling anything: DBA table creation and enabling in any environment need Jelly's separate explicit consent plus a rollback plan. Nothing here is applied: no database was contacted, "current" shapes are derived from repo code, and the migrations and the role SQL are still to be written and reviewed.
 
 ## Who creates which table (read first, by design)
 
@@ -181,23 +181,23 @@ Still open:
 9. Rollback: drop the two new tables, then drop the database account, five statements in total, at any time. Existing tables and data are unaffected, and old rows stay valid.
 10. Still open: how the connection string is delivered, how the role is bound to the tenant in a multi-tenant deployment, and pruning of tombstones.
 
-## 8. Author mapping tables (original shape approved 2026-11-17; structure change PENDING approval)
+## 8. Author mapping tables (structure change APPROVED 2026-11-17, design level; NOT created, NOT enabled)
 
-Status: PENDING APPROVAL (structure change). The shapes below were approved on 2026-11-17, and the design in docs/zq-author-binding-design.md (section 12) proposes a different structure for both tables (keyed by normalised author name, with an ignore list and a departed flag). The proposed structure is not approved. Until the PM approves it, neither the original nor the proposed shape may be used as the basis for creating a table, for a DBA step or for enabling `ZQ_GIT_AUTHOR_MAPPING` in any environment. The code on branches `oa/zq-author-map` and `oa/zq-wire-3-authors` still implements the original shape and must not be enabled before the change is decided. Original status text follows: APPROVED by the PM, 2026-11-17. Approval of this DDL does NOT enable anything. Nothing here is applied and no database was contacted. The tables stay disabled by default: they are auto-created by the durable-map layer only when `ZQ_GIT_AUTHOR_MAPPING=1` is set, and no environment enables that switch by default. The code lives on branch `oa/zq-author-map` (docs/zq/author-mapping.md). With the switch off the code builds no durable map, so neither table is registered or created; turning the switch on in an environment is a separate, deliberate step.
+Status: structure change APPROVED (2026-11-17, design level) for the NEW shapes of `zq_git_author_aliases` and `zq_git_unmapped_authors` below (decision 1 of `docs/zq-author-binding-design.md` section 19; the PM answered "follow your recommendations"). The NEW shapes below are the current proposal and replace the old shapes; the old shape is kept at the end of this section as a historical note only and is not an authority for anything. Approval of a design is NOT creating a table and NOT enabling anything. DBA table creation, and enabling `ZQ_GIT_AUTHOR_MAPPING`, `ZQ_GIT_AUTHOR_BIND` or `ZQ_GIT_ASK` in any environment, each need Jelly's separate explicit consent plus a rollback plan. Nothing here is applied and no database was contacted. The tables stay disabled by default: they are auto-created by the durable-map layer only when `ZQ_GIT_AUTHOR_MAPPING=1` is set, and no environment enables that switch. The code on branches `oa/zq-author-map` and `oa/zq-wire-3-authors` still implements the OLD shape and must not be enabled anywhere until phase 3b of the wiring plan (author structure alignment) has aligned it with this section. With the switch off the code builds no durable map, so neither table is registered or created.
 
-Approved decisions affecting this section (PM, 2026-11-17): all recommendations adopted.
+Approved decisions affecting this section (PM, 2026-11-17, all recommendations adopted; the full list of 19 is in `docs/zq-author-binding-design.md` section 19):
 
-- Mattermost verified emails are the authoritative source of identity for now.
-- Aliases are maintained by the PM through the unmapped queue.
-- Commits by departed staff are handled by sending them to the PM.
-- Resolved and ignored unmapped entries are retained 180 days.
-- No Gmail dot folding.
-- Ignored authors stay silent.
+- People are recognised by the git author NAME (normalised), not by email. This replaces the earlier decision that Mattermost verified emails are the authoritative identity source; the Mattermost email match survives only as an optional fallback switch that is off by default and never authoritative.
+- People bind their own names in chat (one person can hold several names, at most 10 by default); the PM maintains the ignore list and answers for unknown authors through the same tool.
+- A name already bound to someone else is refused at bind time (plain unique name, no ambiguity states).
+- The PM keeps an ignore list of author names, each with a required reason `automation` or `external`; ignored authors are silent (no notice, no queue row).
+- Commits by departed people are sent to the PM.
+- Resolved queue entries are retained 180 days.
 - On audit failure the service keeps serving (serve confirmed).
 
 These are core-side tables used only by QM core. The zq-git-mcp service role (section 4) gets no grant on them. QM core reads and writes them with its normal application role (the one in `DATABASE_URL`, privileges from `qm db grant`), which also runs the migrations.
 
-### Table definitions as the durable-map layer creates them
+### Table definitions as the durable-map layer creates them (SQL unchanged by the structure change)
 
 Both tables are generic JSON document tables, created by `createPostgresMap` and `durableMapTenancy` (src/persistence/durable-map.ts, src/tenants/migrations.ts), migration ids `durable-map/<table>/0001`, `durable-map/<table>/0010-tenants/...`, `durable-map/<table>/0020-claim-ids` and `0021-claim-tenants`. For `T` in `zq_git_author_aliases`, `zq_git_unmapped_authors`:
 
@@ -209,45 +209,92 @@ ALTER TABLE T ALTER COLUMN tenant_id SET DEFAULT qm_bound_tenant();
 ALTER TABLE T ADD CONSTRAINT T_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id);
 ALTER TABLE T ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON T USING (tenant_id = qm_bound_tenant()) WITH CHECK (tenant_id = qm_bound_tenant());
-Plus the functions `claim_T()` and `claim_T_tenants()`. Net result per table: columns `id text`, `json jsonb NOT NULL`, `tenant_id uuid NOT NULL DEFAULT qm_bound_tenant()`, primary key `(tenant_id, id)`, no other index. `durable_map_versions` already exists and gets a row per tenant and table.
+Plus the functions `claim_T()` and `claim_T_tenants()`. Net result per table: columns `id text`, `json jsonb NOT NULL`, `tenant_id uuid NOT NULL DEFAULT qm_bound_tenant()`, primary key `(tenant_id, id)`, no other index, no check or unique constraint, no enum type. `durable_map_versions` already exists and gets a row per tenant and table. The only uniqueness in the database is `(tenant_id, id)`; with the new id convention that is a plain unique key on the normalised name. No indexed JSON field is declared (hundreds of rows, read whole). The table keeps the name `zq_git_author_aliases` although it now also holds ignore rows.
 
-### JSON shapes (examples are INVENTED)
+### JSON shapes (NEW, approved at design level; examples are INVENTED)
 
-`zq_git_author_aliases`, id `<normalised email>|<personId>`, one row per (address, person); two people on one address make the author ambiguous.
+Name normalisation (`nameKey`, one function for every reader and writer): Unicode NFKC, removal of invisible format characters, whitespace collapse, case folding; details in `docs/zq-author-binding-design.md` section 3. `|` and `%` inside a name are written `%7C` and `%25` in an id.
 
-- Shape: `{ "email": text, "personId": text, "mattermostUser": text, "addedBy": text, "addedAt": epoch ms }`
-- Example (INVENTED): id `zhang.home@example.org|p-zhang`, json `{ "email": "zhang.home@example.org", "personId": "p-zhang", "mattermostUser": "mm-zhang", "addedBy": "pm", "addedAt": 1763000000000 }`
+`zq_git_author_aliases`: id `<nameKey>`, exactly one row per normalised name, so a name can never be bound to two people and can never be both bound and ignored.
 
-`zq_git_unmapped_authors`, id the normalised commit email (`(none)` if empty). No commit message, subject or diff is stored.
+| JSON key         | Type and values                        | Rule                                                                                                          |
+| ---------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `nameKey`        | text                                   | the normalised name; equals the id before encoding                                                            |
+| `name`           | text                                   | the name as given after NFKC and whitespace collapse (display only)                                           |
+| `kind`           | enum string `person` or `ignored`      | absent is read as `person`                                                                                    |
+| `personId`       | text                                   | required for `person`, absent for `ignored`                                                                   |
+| `mattermostUser` | text                                   | required for `person`, absent for `ignored`                                                                   |
+| `reason`         | enum string `automation` or `external` | required for `ignored`, absent for `person`                                                                   |
+| `emailCondition` | text, normalised exact email           | optional on both kinds: the row applies only if the commit author email equals it; required for generic names |
+| `departedAt`     | epoch ms                               | optional, on `person` rows of a departed person                                                               |
+| `addedBy`        | text                                   | the person's own id for a self bind, the admin's id otherwise                                                 |
+| `addedAt`        | epoch ms                               |                                                                                                               |
 
-- Shape: `{ "email", "name", "reason": "no_match" | "invalid_email" | "ambiguous", "candidates": [personId], "status": "open" | "resolved" | "ignored", "firstSeenAt", "lastSeenAt", "count", "exampleRepo", "exampleSha", "recentShas": [sha] (last 200), "closedBy"?, "closedAt"?, "personId"? }`
-- Example (INVENTED): id `nobody@corp.example`, json `{ "email": "nobody@corp.example", "name": "Nobody", "reason": "no_match", "candidates": [], "status": "open", "firstSeenAt": 1763000000000, "lastSeenAt": 1763000900000, "count": 3, "exampleRepo": "client", "exampleSha": "c1", "recentShas": ["c1", "c2", "s1"] }`
-- Example (INVENTED), same row after the PM ignored it: `"status": "ignored", "closedBy": "pm", "closedAt": 1763001000000`
+Rules enforced in code on top of the primary key: a self bind of a held or ignored name is refused; `personId` and `mattermostUser` present exactly for `person`; `reason` present exactly for `ignored`; a generic name (`ZQ_GIT_GENERIC_NAMES`) requires `emailCondition`.
+
+Example rows (INVENTED):
+
+- person: id `alice example`, json `{ "nameKey": "alice example", "name": "Alice Example", "kind": "person", "personId": "p-alice", "mattermostUser": "mm-alice", "addedBy": "p-alice", "addedAt": 1763100000000 }`
+- person with a condition (generic name): id `host123\admin`, json `{ "nameKey": "host123\\admin", "name": "HOST123\\admin", "kind": "person", "emailCondition": "x@y.example", "personId": "p-fred", "mattermostUser": "mm-fred", "addedBy": "pm", "addedAt": 1763100100000 }`
+- ignored automation: id `pipeline-sync`, json `{ "nameKey": "pipeline-sync", "name": "pipeline-sync", "kind": "ignored", "reason": "automation", "emailCondition": "@partnerco", "addedBy": "pm", "addedAt": 1763100200000 }`
+- ignored external: id `visiting student`, json `{ "nameKey": "visiting student", "name": "Visiting Student", "kind": "ignored", "reason": "external", "addedBy": "pm", "addedAt": 1763100300000 }`
+- the first person row after the PM marked her departed: the same json plus `"departedAt": 1763200000000`.
+
+`zq_git_unmapped_authors`: the queue of authors that are not bound, ignored, a bot or external. No commit message, subject or diff is stored.
+
+| JSON key                             | Type and values                                        | Rule                                                                                                                                                                                                    |
+| ------------------------------------ | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| id                                   | text                                                   | `<nameKey>`; for a generic name `<nameKey>\|<email>`; when the name is empty `email:<email>`; `(none)` if both empty                                                                                    |
+| `nameKey`                            | text                                                   | empty for `email:` rows                                                                                                                                                                                 |
+| `name`                               | text                                                   | last seen display form                                                                                                                                                                                  |
+| `emails`                             | array of up to 10 distinct normalised emails           | seen with this name; shown to the PM, not a key                                                                                                                                                         |
+| `reason`                             | enum string `no_match`, `invalid_email` or `ambiguous` | `invalid_email` also covers an empty local part or domain; `ambiguous` only arises from the optional Mattermost email fallback                                                                          |
+| `candidates`                         | array of personId                                      |                                                                                                                                                                                                         |
+| `status`                             | enum string `open`, `resolved` or `ignored`            | the new design writes `open` and `resolved`; `ignored` stays in the code but is no longer written, because the PM's "ignore" answer registers an ignore-list row and closes the queue row as `resolved` |
+| `firstSeenAt`, `lastSeenAt`, `count` | epoch ms, epoch ms, integer                            |                                                                                                                                                                                                         |
+| `exampleRepo`, `exampleSha`          | text                                                   |                                                                                                                                                                                                         |
+| `recentShas`                         | array of sha, last 200                                 |                                                                                                                                                                                                         |
+| `askedAt`                            | epoch ms, optional                                     | set when the PM digest asked; cleared on reopen or reason change                                                                                                                                        |
+| `closedBy`, `closedAt`, `personId`   | optional                                               |                                                                                                                                                                                                         |
+
+Example (INVENTED): id `alice example`, json `{ "nameKey": "alice example", "name": "Alice Example", "emails": ["alice.example@corp.example", "a@personal.example"], "reason": "no_match", "candidates": [], "status": "open", "firstSeenAt": 1763000000000, "lastSeenAt": 1763000900000, "count": 7, "exampleRepo": "client", "exampleSha": "a1b2c3d", "recentShas": ["a1b2c3d"], "askedAt": 1763003600000 }`
+
+### Resolution order (what the new structure is used for)
+
+An explicit person binding wins; then the ignore list; then the bot name rule (whole word `bot` in the name or in the email local part, `ZQ_GIT_BOT_TOKENS`); then the external domain list; then, only if `ZQ_GIT_MATTERMOST_EMAIL_FALLBACK=1`, a verified exact Mattermost email; otherwise the author goes to the unmapped queue. Ignored authors and bots produce no notice and no queue row. Departed people's commits go to the PM. Full table: `docs/zq-author-binding-design.md` section 5.
+
+### Before and after (structure change)
+
+Both tables are still new and exist nowhere, so there is nothing to migrate, backfill or keep compatible; the SQL is unchanged and only the id convention and JSON keys changed. Field accounting for `zq_git_author_aliases`: `email` TRANSFORMED into the optional `emailCondition` (no longer a key); `personId`, `mattermostUser`, `addedBy`, `addedAt` kept; NEW `nameKey`, `name`, `kind`, `reason`, `departedAt`; id changed from `<normalised email>|<personId>` to `<nameKey>`; nothing dropped except the key role of `email`. For `zq_git_unmapped_authors`: `email` TRANSFORMED into `emails`; id changed from the normalised email to `<nameKey>`; `name`, `reason`, `candidates`, `status`, `firstSeenAt`, `lastSeenAt`, `count`, `exampleRepo`, `exampleSha`, `recentShas`, `closedBy`, `closedAt`, `personId` kept; NEW `nameKey`, `askedAt`; nothing dropped. Full side by side table: `docs/zq-author-binding-design.md` section 12.
 
 ### Retention
 
-Open entries are never pruned. Resolved and ignored entries are deleted when the later of `closedAt` and `lastSeenAt` is older than 180 days (`ZQ_GIT_UNMAPPED_RETENTION_DAYS`, default 180), by the core function `queue.prune()` (unscheduled, not called from startup, like `pruneGitAudit`). Aliases are kept until the PM removes them. Ignored authors stay silent forever by default; `ZQ_GIT_IGNORED_REOPEN_DAYS` (default 0, off) reopens them.
+Open entries are never pruned. Resolved entries are deleted when the later of `closedAt` and `lastSeenAt` is older than 180 days (`ZQ_GIT_UNMAPPED_RETENTION_DAYS`, default 180), by the core function `queue.prune()` (unscheduled, not called from startup, like `pruneGitAudit`). Aliases and ignore rows are kept until an admin removes them. `ZQ_GIT_IGNORED_REOPEN_DAYS` (default 0, off) applies to the queue status `ignored`, which the new design no longer writes. Dropped ignored commits are not stored or audited per commit; counts exist only as log counters carrying the name hash and the reason.
 
 ### Roles and grants
 
-No new role and no change to section 4. QM core's application role needs what it already has on every durable-map table (SELECT, INSERT, UPDATE, DELETE through `qm db grant`); DELETE is used by pruning and alias removal. The zq-git-mcp service role has no access to these tables.
+No new role and no change to section 4. QM core's application role needs what it already has on every durable-map table (SELECT, INSERT, UPDATE, DELETE through `qm db grant`); DELETE is used by pruning and by unbind and ignore-list removal. The zq-git-mcp service role has no access to these tables.
 
-### Rollout
+### Rollout (each step after step 1 needs the PM's separate explicit consent plus a rollback plan)
 
-1. Merge the code with the switch off (creates nothing). 2. PM approves this section. 3. Set `ZQ_GIT_AUTHOR_MAPPING=1` in one environment (staging first); the next start creates both tables. 4. Check as the application role: rows are visible only for the bound tenant, and a connection with no bound tenant fails with "No tenant is bound to this query". 5. Seed aliases.
+1. Merge the code (phase 3b of the wiring plan) with every switch off (creates nothing). 2. A DBA re-reads this section. 3. The PM gives explicit consent for one environment (staging first). 4. Set `ZQ_GIT_AUTHOR_MAPPING=1` there; the next start creates both tables. 5. Check as the application role: rows are visible only for the bound tenant, and a connection with no bound tenant fails with "No tenant is bound to this query". 6. Switch on `ZQ_GIT_AUTHOR_BIND` only after step 5. People bind their own names; the PM supplies the ignore list at deployment time through the tool's dry-run import. No author data enters the repository.
 
 ### Rollback
 
-Set `ZQ_GIT_AUTHOR_MAPPING` back to off, then:
+Set `ZQ_GIT_AUTHOR_MAPPING` (and `ZQ_GIT_AUTHOR_BIND`, `ZQ_GIT_ASK`) back to off, then:
 DROP TABLE IF EXISTS zq_git_unmapped_authors;
 DROP TABLE IF EXISTS zq_git_author_aliases;
 DROP FUNCTION IF EXISTS claim_zq_git_unmapped_authors(), claim_zq_git_unmapped_authors_tenants(), claim_zq_git_author_aliases(), claim_zq_git_author_aliases_tenants();
 DELETE FROM durable_map_versions WHERE tbl IN ('zq_git_unmapped_authors', 'zq_git_author_aliases');
 Migration ledger rows stay; remove the ids if re-adding. With the switch left on, the next start recreates the tables.
 
-### Existing tables
+### Existing tables and configuration
 
-Unchanged: `zq_git_audit`, `zq_git_branch_tips`, `zq_git_blob_meta`, `durable_map_versions` and every other table, column, index, constraint and JSON key. Configuration added: `ZQ_GIT_AUTHOR_MAPPING`, `ZQ_GIT_IGNORED_REOPEN_DAYS`, `ZQ_GIT_UNMAPPED_RETENTION_DAYS`, `ZQ_GIT_DOMAIN_ALIASES`; no existing setting changes.
+Unchanged: `zq_git_audit`, `zq_git_branch_tips`, `zq_git_blob_meta`, `durable_map_versions` and every other table, column, index, constraint and JSON key. Configuration, design approved and not implemented (full table with defaults, precedence and validation in `docs/zq-author-binding-design.md` section 11): kept `ZQ_GIT_AUTHOR_MAPPING`, `ZQ_GIT_IGNORED_REOPEN_DAYS`, `ZQ_GIT_UNMAPPED_RETENTION_DAYS`, `ZQ_GIT_BOT_NAMES`, `ZQ_GIT_EXTERNAL_DOMAINS`; added (all default off or empty) `ZQ_GIT_AUTHOR_BIND`, `ZQ_GIT_MATTERMOST_EMAIL_FALLBACK`, `ZQ_GIT_BOT_TOKENS` (default `bot`), `ZQ_GIT_GENERIC_NAMES`, `ZQ_GIT_IDENTITY_ADMINS`, `ZQ_GIT_BIND_MAX_PER_PERSON` (10), `ZQ_GIT_ASK`, `ZQ_GIT_PM_RECIPIENT`, `ZQ_GIT_ASK_DIGEST_MINUTES` (60), `ZQ_GIT_ASK_MAX_ITEMS` (20), `ZQ_GIT_ASK_REASK_DAYS` (0); removed `ZQ_GIT_DOMAIN_ALIASES` (retired-domain email retry; email is no longer a key); `ZQ_GIT_COMPANY_DOMAINS` is not carried over. No existing setting changes meaning except that the Mattermost email match no longer maps by default.
+
+### Historical note: the OLD section 8 shape (original approval of 2026-11-17, SUPERSEDED, not an execution basis)
+
+The first version of this section, approved on 2026-11-17 before the structure change, keyed rows by email. It is kept only so that a reader of the earlier text can see what changed. Nothing may be created, run or enabled from it, and no document may treat it as an authority. `zq_git_author_aliases` was keyed by `<normalised email>|<personId>` with json `{ "email", "personId", "mattermostUser", "addedBy", "addedAt" }` (example id `zhang.home@example.org|p-zhang`), where two people on one address made the author ambiguous. `zq_git_unmapped_authors` was keyed by the normalised commit email (`(none)` if empty) with json `{ "email", "name", "reason", "candidates", "status", "firstSeenAt", "lastSeenAt", "count", "exampleRepo", "exampleSha", "recentShas", "closedBy"?, "closedAt"?, "personId"? }` (example id `nobody@corp.example`). Its configuration included `ZQ_GIT_DOMAIN_ALIASES`, and its decision list named Mattermost verified emails as the authoritative source and "no Gmail dot folding".
 
 ## 9. Jenkins auto-rerun tables (APPROVED by the PM, 2026-11-17)
 
@@ -398,3 +445,217 @@ Core application role only (the role QM core already runs as, with the existing 
 Rollout: merge the code with every switch off (no table is created); set `ZQ_JENKINS_URL`, the credential and `ZQ_JENKINS_POLL=1` (dry-run); the next start creates the three tables and the poller only observes. Real reruns and notices are separate switches (`ZQ_JENKINS_RERUN`, `ZQ_JENKINS_NOTIFY`).
 
 Rollback: unset `ZQ_JENKINS_POLL` (the maps are no longer built; the tables and rows stay and are inert). To remove the data, after the poller is off: `DROP TABLE IF EXISTS zq_jenkins_notices, zq_jenkins_audit, zq_jenkins_builds;`. Dropping `zq_jenkins_builds` discards the once-only record, so do it only with `ZQ_JENKINS_RERUN` unset.
+
+## 10. Patch package record table `zq_patch_packages` (design approved 2026-11-17, NOT created, NOT enabled)
+
+Status: design approved by the PM on 2026-11-17 (decisions 10 and 14 of `docs/zq-patch-package-phase4-design.md` section 14, "follow your recommendations"). The table is NOT created and NOT enabled. Approval of a design is not creating a table and not enabling anything: DBA creation, and any environment's `ZQ_PATCH_RETAIN=1`, need Jelly's separate explicit consent plus a rollback plan. Nothing here is applied and no database was contacted.
+
+Sources and precedence: `docs/zq/patch-package-retention.md` on `oa/zq-patch-package` (the first record design) and `docs/zq-patch-package-phase4-design.md` sections 2.2, 13A.7 and 14 (the amendment). Where they disagree, the phase 4 design supersedes. The disagreements, each resolved in favour of phase 4:
+
+- Id: retention doc `<ticket>-<first 12 characters of the commit id>`; phase 4 `<ticket>-<first 12 hex characters of the sha256 over the sorted lines "<name> <sha256>" of the patch and payload files>` (content addressed, section 2). The phase 4 id is used.
+- `kind`: retention doc `text-patch` or `xlsx`; phase 4 one value `patch-package` (section 2.2).
+- `files[]`: retention doc lists the patch and manifest; phase 4 lists every package file (patch, payloads, message, scripts, README, manifest, comparisons).
+- `recipient`: retention doc a user name string; phase 4 a resolved object written by the agent tool (13A.7).
+- Delivery fields (`delivery`, `attempts`, `deliveredAt`, `lastError`, `postId`) and the `delivery` value `expired`: in the retention doc, in this table; phase 4 moves them to `zq_patch_deliveries` (section 11).
+- Delivery behaviour in the retention doc (a stale `sending` row returns to `pending` after the probe, an unresolvable user goes to `failed`) is replaced by the at-most-once state machine of phase 4 13A.4 and 13A.5 (section 11).
+- Open gap in both documents: `resultCommit`. The retention doc keeps it; phase 4 13A.7 says it is kept, but section 2 says a mixed package has no result commit on the builder side (the pointer blobs are made on the developer machine) and moves `result.tree` to `parts[A].resultTree`. Neither document says what the field holds for a package with an LFS part. It is listed below as kept per 13A.7 and the question is OPEN; it is a JSON key, so the SQL below does not depend on the answer, and the answer is due before any code builds the map.
+
+### DDL the durable-map layer would create
+
+Created by `createPostgresMap` and `durableMapTenancy` the moment a map named `zq_patch_packages` is built, in the same shape as every durable map (migration ids `durable-map/zq_patch_packages/0001`, `0010-tenants/*`, `0020-claim-ids`, `0021-claim-tenants`), with `<table>` = `zq_patch_packages`:
+
+```sql
+CREATE TABLE IF NOT EXISTS <table> (id TEXT PRIMARY KEY, json JSONB NOT NULL);
+CREATE TABLE IF NOT EXISTS durable_map_versions (tbl TEXT PRIMARY KEY, v BIGINT NOT NULL);
+ALTER TABLE <table> ADD COLUMN tenant_id UUID NOT NULL DEFAULT <first tenant, only if rows exist>;
+CREATE UNIQUE INDEX CONCURRENTLY <table>_tenant_pkey ON <table> (tenant_id, id);
+ALTER TABLE <table> DROP CONSTRAINT <table>_pkey, ADD CONSTRAINT <table>_pkey PRIMARY KEY USING INDEX <table>_tenant_pkey;
+ALTER TABLE <table> ALTER COLUMN tenant_id SET DEFAULT qm_bound_tenant();
+ALTER TABLE <table> ADD CONSTRAINT <table>_tenant FOREIGN KEY (tenant_id) REFERENCES tenants (id);
+ALTER TABLE <table> ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON <table> USING (tenant_id = qm_bound_tenant()) WITH CHECK (tenant_id = qm_bound_tenant());
+```
+
+Result: `id text NOT NULL`, `json jsonb NOT NULL`, `tenant_id uuid NOT NULL DEFAULT qm_bound_tenant()`, primary key `(tenant_id, id)`, foreign key `zq_patch_packages_tenant` to `tenants(id)`, row level security with the `tenant_isolation` policy, the functions `claim_zq_patch_packages()` and `claim_zq_patch_packages_tenants()`, a row per tenant in `durable_map_versions` on every write, no other index, no secondary index field, no CHECK constraint, no enum type. Grants: QM core's application role only, as for every durable map; no service role.
+
+### Row shape (JSON), all times epoch milliseconds
+
+| JSON key       | Type and values                                                                                        | Notes                                                                                                                                                                                                                                                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| id             | text, primary key part                                                                                 | the package id and the directory name, content addressed; recording the same package twice updates the same row                                                                                                                                                                               |
+| `kind`         | enum string `patch-package`                                                                            | one value; the retention doc's `text-patch` and `xlsx` are retired                                                                                                                                                                                                                            |
+| `ticket`       | text                                                                                                   |                                                                                                                                                                                                                                                                                               |
+| `repo`         | text                                                                                                   | per phase 4 section 2.1 (manifest `repo`) and 13A.7 (copied into the delivery row); absent from the retention doc's record. OPEN, small: confirm the package row carries it                                                                                                                   |
+| `recipient`    | object `{ mmUserId?: text, source: "requester" or "author_binding" or "explicit", unresolved?: text }` | a resolved decision written by the agent tool; a user name can change, the id cannot. `unresolved` holds the resolver kind that was not `person` (13A.3 names `unmapped`, `ambiguous`, `bot`, `external`; the name-keyed resolver of the author binding design adds `ignored` and `departed`) |
+| `baseCommit`   | text, 40 hex                                                                                           |                                                                                                                                                                                                                                                                                               |
+| `resultCommit` | text, 40 hex                                                                                           | kept per 13A.7; what it holds for a package with an LFS part is OPEN (see above)                                                                                                                                                                                                              |
+| `files`        | array of `{ name: text, sha256: text, bytes: integer }`                                                | every package file (section 2 layout); the manifest's `role`, `part` and `gitBlob` are in `manifest.json`, not in this record                                                                                                                                                                 |
+| `zip`          | `{ name: text, sha256: text, bytes: integer }`                                                         | the retained zip; built with a fixed file order and timestamps                                                                                                                                                                                                                                |
+| `createdAt`    | integer                                                                                                |                                                                                                                                                                                                                                                                                               |
+| `expiresAt`    | integer                                                                                                | `createdAt` plus `ZQ_PATCH_RETAIN_DAYS` (30 days)                                                                                                                                                                                                                                             |
+| `deletedAt`    | integer, optional                                                                                      | set when the cleanup removed the directory; the row is removed `ZQ_PATCH_RECORD_DAYS` (30) after it                                                                                                                                                                                           |
+
+The record holds metadata only: no file content, no patch text, no commit message body, no credential, no absolute path, no email.
+
+Dropped from the retention doc's record and moved to `zq_patch_deliveries`: `delivery` (values `pending`, `sending`, `delivered`, `failed`, `expired`), `attempts`, `deliveredAt`, `lastError`, `postId`. `recipient` is TRANSFORMED from a user name string into the object above. `delivery` value `expired` is DROPPED: it is expressed as the package `deletedAt` plus a delivery row `abandoned` with reason `package_expired`. Kept: `id`, `kind` (new value), `ticket`, `baseCommit`, `resultCommit`, `files` (new content), `zip`, `createdAt`, `expiresAt`, `deletedAt`.
+
+Example rows (INVENTED, for illustration only):
+
+```json
+{
+  "id": "WP-123-0123456789ab",
+  "kind": "patch-package",
+  "ticket": "WP-123",
+  "repo": "client",
+  "recipient": { "mmUserId": "mmuser0000000000000000001", "source": "requester" },
+  "baseCommit": "e663771131152811ec3cc107a6a307eaa5aa44de",
+  "files": [
+    { "name": "parts/A/0001-fix-the-thing.patch", "sha256": "<64 hex>", "bytes": 4210 },
+    { "name": "parts/B/0001.dat", "sha256": "<64 hex>", "bytes": 7000 },
+    { "name": "manifest.json", "sha256": "<64 hex>", "bytes": 2900 }
+  ],
+  "zip": { "name": "WP-123-0123456789ab.zip", "sha256": "<64 hex>", "bytes": 7340032 },
+  "createdAt": 1763000000000,
+  "expiresAt": 1765592000000
+}
+```
+
+A package whose recipient could not be resolved, after its files were removed:
+
+```json
+{
+  "id": "456-ba9876543210",
+  "kind": "patch-package",
+  "ticket": "456",
+  "repo": "server",
+  "recipient": { "source": "author_binding", "unresolved": "unmapped" },
+  "baseCommit": "<40 hex>",
+  "files": [{ "name": "manifest.json", "sha256": "<64 hex>", "bytes": 1190 }],
+  "zip": { "name": "456-ba9876543210.zip", "sha256": "<64 hex>", "bytes": 51200 },
+  "createdAt": 1763100000000,
+  "expiresAt": 1765692000000,
+  "deletedAt": 1765700000000
+}
+```
+
+### When the table comes into existence
+
+The durable-map layer registers a table's migrations the moment the map object is built, and `src/start.ts` runs the registered migrations at boot. The map is therefore built only behind `ZQ_PATCH_RETAIN=1` (with `ZQ_PATCH_RETAIN_DIR`); with the default configuration no `deps.map("zq_patch_packages")` call is made. A spy test on the map factory (to be written first, as for the Jenkins tables) shows zero requests for `zq_patch_packages` under default configuration and with only `ZQ_PATCH_AGENT` or `ZQ_PATCH_DELIVERY=off` set, and exactly this name (plus `zq_patch_deliveries` when delivery is `dry-run` or `send`) when retention is on.
+
+### Retention interplay with `zq_patch_deliveries`
+
+The cleanup (`cleanupExpiredPackages`, unscheduled until a schedule is approved) deletes the package directory first and marks the record (`deletedAt`) second, so a crash leaves a harmless record, never an orphan directory. A package row is removed `ZQ_PATCH_RECORD_DAYS` after its `deletedAt`; the delivery rows of the package are removed at their own `purgeAt` (`expiresAt` plus `ZQ_PATCH_RECORD_DAYS`), nearly the same moment, in the same cleanup pass. Before the directory is deleted the cleanup moves that package's `planned`, `failed` and `dry_run` delivery rows to `abandoned` (`package_expired`), with the usual PM notice for the first two; a `sending` row is left to the probe. Delivery never sends from a package past `expiresAt`. Full text: `docs/zq-patch-package-phase4-design.md` 13A.8.
+
+### Settings that gate it (design approved, none exist yet)
+
+`ZQ_PATCH_RETAIN` (off), `ZQ_PATCH_RETAIN_DIR` (unset, absolute, not under the temporary directory), `ZQ_PATCH_RETAIN_DAYS` (30), `ZQ_PATCH_RECORD_DAYS` (30), `ZQ_PATCH_CLEANUP_BATCH` (50); plus the agent switch `ZQ_PATCH_AGENT` of the wiring plan. No existing setting changes.
+
+### Rollout and rollback
+
+Rollout (each step after the first needs the PM's separate explicit consent plus a rollback plan): merge the code with `ZQ_PATCH_RETAIN` off (creates nothing); a DBA re-reads this section; set `ZQ_PATCH_RETAIN=1` and `ZQ_PATCH_RETAIN_DIR` in staging; the next start creates the table; check as the application role that rows are visible only for the bound tenant. Rollback: unset `ZQ_PATCH_RETAIN` (the map is no longer built; the table and rows stay and are inert). To remove the data, only on the PM's decision and after delivery is off: `DROP TABLE IF EXISTS zq_patch_packages;` `DROP FUNCTION IF EXISTS claim_zq_patch_packages(), claim_zq_patch_packages_tenants();` `DELETE FROM durable_map_versions WHERE tbl = 'zq_patch_packages';` Migration ledger rows stay; remove the ids if re-adding. The retained files under `ZQ_PATCH_RETAIN_DIR` are not database objects and are removed separately.
+
+Before and after: a new table; no existing table, column, index, constraint or JSON key changes; there is no migration, backfill or compatibility effect, because nothing exists yet.
+
+## 11. Patch package delivery table `zq_patch_deliveries` (design approved 2026-11-17, NOT created, NOT enabled)
+
+Status: design approved by the PM on 2026-11-17 (decision 14 of the phase 4 design, "Two tables, approved together"; decisions 13 and 15 to 21 cover its behaviour). NOT created and NOT enabled. Approval of a design is not creating a table and not enabling anything: DBA creation, and any environment's `ZQ_PATCH_DELIVERY=dry-run` or `send`, need Jelly's separate explicit consent plus a rollback plan. Nothing here is applied and no database was contacted. Source: `docs/zq-patch-package-phase4-design.md` 13A.4, 13A.5, 13A.7 and 13A.8 (supersedes the delivery section of `docs/zq/patch-package-retention.md`). The two documents' delivery rules disagree as listed in section 10; phase 4 is used.
+
+### DDL the durable-map layer would create
+
+Identical to section 10 with `<table>` = `zq_patch_deliveries`: `id text`, `json jsonb NOT NULL`, `tenant_id uuid NOT NULL DEFAULT qm_bound_tenant()`, primary key `(tenant_id, id)`, foreign key `zq_patch_deliveries_tenant` to `tenants(id)`, row level security with the `tenant_isolation` policy, grants to the application role only, the functions `claim_zq_patch_deliveries()` and `claim_zq_patch_deliveries_tenants()`, a `durable_map_versions` row per tenant. No secondary index: a few dozen rows a day are scanned with `all()`, and a declared indexed field would add an index and claim functions for no gain. No CHECK constraint, no enum type.
+
+### Row shape (JSON), all times epoch milliseconds
+
+| JSON key                                                                                      | Type and values                                                              | Notes                                                                                                                                                                                                                                         |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| id                                                                                            | text, primary key part                                                       | `<packageId>:<recipientMmUserId>:<generation>`, the idempotency key; for an unresolved recipient `<packageId>:unresolved:<generation>`                                                                                                        |
+| `packageId`                                                                                   | text                                                                         | the package directory and `zq_patch_packages` id                                                                                                                                                                                              |
+| `ticket`, `repo`                                                                              | text                                                                         | copied so the row stays readable after the package record is purged                                                                                                                                                                           |
+| `recipientId`                                                                                 | text, optional                                                               | Mattermost user id; absent when unresolved                                                                                                                                                                                                    |
+| `recipientSource`                                                                             | enum string `requester`, `author_binding` or `explicit`                      |                                                                                                                                                                                                                                               |
+| `generation`                                                                                  | integer, at least 1                                                          | 1 unless a person re-sends on purpose                                                                                                                                                                                                         |
+| `state`                                                                                       | enum string `planned`, `dry_run`, `sending`, `sent`, `failed` or `abandoned` | transitions in 13A.4                                                                                                                                                                                                                          |
+| `reason`                                                                                      | text, optional                                                               | with `abandoned`: `mattermost_auth`, `mattermost_forbidden`, `recipient_gone`, `too_large`, `mattermost_rejected`, `package_damaged`, `package_expired` (13A.5), `superseded`, `recipient_unresolved`, `recipient_not_allowed` (13A.3, 13A.4) |
+| `attempts`                                                                                    | integer                                                                      | incremented at claim time                                                                                                                                                                                                                     |
+| `zipSha256`, `zipBytes`, `manifestSha256`, `applyShSha256`, `applyPs1Sha256`, `messageSha256` | text, integer, text, text, text, text                                        | hashes and size only: what the recipient was told                                                                                                                                                                                             |
+| `claim`                                                                                       | text, optional                                                               | random token of the sweeper that holds `sending`                                                                                                                                                                                              |
+| `createdAt`, `updatedAt`                                                                      | integer                                                                      |                                                                                                                                                                                                                                               |
+| `nextAttemptAt`, `sendingAt`, `sentAt`, `dryRunAt`, `pmNotifiedAt`                            | integer, optional                                                            | with `failed`, the current attempt, `sent`, `dry_run`, and the one PM notice                                                                                                                                                                  |
+| `postId`                                                                                      | text, optional                                                               | with `sent`                                                                                                                                                                                                                                   |
+| `lastError`                                                                                   | `{ code: text, status?: integer }`, optional                                 | a code and an HTTP status, never a response body; the set of codes is not enumerated by the design (13A.5 names causes, the example uses `mattermost_5xx`)                                                                                    |
+| `purgeAt`                                                                                     | integer                                                                      | the package `expiresAt` plus `ZQ_PATCH_RECORD_DAYS`; `deleteBefore("purgeAt", now)` removes the row                                                                                                                                           |
+
+The row never holds file content, patch text, a commit message body, a response body, a token or an email address. In logs the recipient appears only as a 12 hex character hash of the Mattermost user id.
+
+Example rows (INVENTED, for illustration only). A delivered row, after one 503:
+
+```json
+{
+  "id": "WP-123-0123456789ab:mmuser0000000000000000001:1",
+  "packageId": "WP-123-0123456789ab",
+  "ticket": "WP-123",
+  "repo": "client",
+  "recipientId": "mmuser0000000000000000001",
+  "recipientSource": "requester",
+  "generation": 1,
+  "state": "sent",
+  "attempts": 2,
+  "zipSha256": "<64 hex>",
+  "zipBytes": 7340032,
+  "manifestSha256": "<64 hex>",
+  "applyShSha256": "<64 hex>",
+  "applyPs1Sha256": "<64 hex>",
+  "messageSha256": "<64 hex>",
+  "createdAt": 1763000000000,
+  "updatedAt": 1763000185000,
+  "sentAt": 1763000185000,
+  "postId": "p4x9k2",
+  "lastError": { "code": "mattermost_5xx", "status": 503 },
+  "purgeAt": 1768184000000
+}
+```
+
+A stuck row, window W4 (`createPost` timed out; the sweeper never retries directly because a post may exist):
+
+```json
+{
+  "id": "456-ba9876543210:mmuser0000000000000000002:1",
+  "packageId": "456-ba9876543210",
+  "ticket": "456",
+  "repo": "server",
+  "recipientId": "mmuser0000000000000000002",
+  "recipientSource": "author_binding",
+  "generation": 1,
+  "state": "sending",
+  "attempts": 1,
+  "zipSha256": "<64 hex>",
+  "zipBytes": 51200,
+  "manifestSha256": "<64 hex>",
+  "applyShSha256": "<64 hex>",
+  "applyPs1Sha256": "<64 hex>",
+  "messageSha256": "<64 hex>",
+  "claim": "c7e1d0a49b",
+  "createdAt": 1763100000000,
+  "updatedAt": 1763100003000,
+  "sendingAt": 1763100003000,
+  "purgeAt": 1768284000000
+}
+```
+
+### Why a second table, and what it asks of the package record
+
+Delivery is one to many (a re-send, a named second recipient, a superseded generation) and the package row can hold only one; the idempotency key needs its own row id per package and recipient; the delivery row outlives the package and is pruned on its own date; and the sweeper's claim updates would otherwise contend with cleanup updates on the same row. The field by field accounting against the retention record is in section 10 ("Dropped from the retention doc's record").
+
+### When the table comes into existence, retention interplay, and gating
+
+The map is built only when `ZQ_PATCH_DELIVERY` is `dry-run` or `send` (values `off`, `dry-run`, `send`; default `off`; any other value, including `1`, refuses startup). `dry-run` and `send` also need `ZQ_PATCH_RETAIN=1`, `ZQ_PATCH_RETAIN_DIR` and a Mattermost connection, or startup is refused; `send` also needs `ZQ_PATCH_DELIVERY_PM_CHANNEL`. Spy expectation (written first): with `ZQ_PATCH_DELIVERY` off, with unset, and with only the retention switch on, the map factory sees zero requests for `zq_patch_deliveries`; with `dry-run` or `send` it sees exactly `zq_patch_packages` and `zq_patch_deliveries`; no timer, no sweeper and no Mattermost request exist when the switch is off. `dry-run` writes a durable row in state `dry_run` and never calls `directChannel`, `upload` or `createPost`; a `dry_run` row of an unexpired package is promoted to `planned` if the switch later becomes `send` (the allowlist `ZQ_PATCH_DELIVERY_ALLOW` and staging cover that). Delivery rows are not deleted when the zip is: they live until `purgeAt`, 30 days later, so for 30 days after the zip is gone a person can see that, to whom and with which hashes it was sent (decision 21). A delivery sweeper runs only under the lease `zq:patch-delivery`; the claim under row lock covers the overlap of two instances in a blue-green deploy.
+
+### Settings that gate it (design approved, none exist yet)
+
+`ZQ_PATCH_DELIVERY` (`off`), `ZQ_PATCH_DELIVERY_PM_CHANNEL` (unset), `ZQ_PATCH_DELIVERY_ALLOW` (unset, comma separated Mattermost user ids; empty means every resolved recipient), `ZQ_PATCH_DELIVERY_ATTEMPTS` (5), and the reused `ZQ_PATCH_MAX_PACKAGE_BYTES` (80 MiB). Constants, not settings: backoff 60 s doubling to a 1 h cap, uncertainty window 10 minutes, sweeper tick 30 s. No existing setting changes.
+
+### Rollout and rollback
+
+Rollout (each step after the first needs the PM's separate explicit consent plus a rollback plan): merge the code with `ZQ_PATCH_DELIVERY` off (creates nothing); a DBA re-reads this section; with retention already on in staging, set `dry-run`; the next start creates the table; read back the `dry_run` rows; only later `send` with the one-person allowlist. Rollback: set `ZQ_PATCH_DELIVERY=off` (the map is no longer built; table and rows stay and are inert). To remove the data, only on the PM's decision: `DROP TABLE IF EXISTS zq_patch_deliveries;` `DROP FUNCTION IF EXISTS claim_zq_patch_deliveries(), claim_zq_patch_deliveries_tenants();` `DELETE FROM durable_map_versions WHERE tbl = 'zq_patch_deliveries';` Dropping it discards the once-only record of what was sent, so do it only with delivery off.
+
+Before and after: a new table; no existing table, column, index, constraint or JSON key changes; no migration, backfill or compatibility effect. Configuration: the five settings above are added (all off or unset by default), none changes.

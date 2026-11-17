@@ -1,6 +1,6 @@
 # Spike: where the patch package gets its local repository
 
-Status: design only, no code. Written for the first step of phase 5 of `docs/zq-git-mcp-wiring-plan.md` (section 4, "Design gap"). Nothing is deployed and nothing was changed outside this document.
+Status: design only, no code. Written for the first step of sub-phase 4a (the patch builder) of `docs/zq-git-mcp-wiring-plan.md` (formerly phase 5) (section 4, "Design gap"). Nothing is deployed and nothing was changed outside this document.
 
 ## The gap
 
@@ -53,7 +53,7 @@ Conclusion for B: the reasoning holds. Provided the base bytes are exact, no key
 
 ## Recommendation
 
-B, with a hard condition: verify that `read_file` returns exact bytes (text and binary) first; if it does not, add an exact-bytes mode to the service (a small, read-only change to an existing tool, not a tenth tool). B keeps the key in the service, touches neither the nine-tool contract nor the write-name rules, and the experiment shows the patch is equivalent to one built from a real clone, including binary, xlsx, rename and `--3way` against a moved target. Keep A as the fallback if the PM sets no size cap and files are large (hundreds of MB), and D as the interim answer until phase 5 ships. C is not recommended: it adds a second key custody for no capability that B lacks.
+B, with a hard condition: verify that `read_file` returns exact bytes (text and binary) first; if it does not, add an exact-bytes mode to the service (a small, read-only change to an existing tool, not a tenth tool). B keeps the key in the service, touches neither the nine-tool contract nor the write-name rules, and the experiment shows the patch is equivalent to one built from a real clone, including binary, xlsx, rename and `--3way` against a moved target. Keep A as the fallback if the PM sets no size cap and files are large (hundreds of MB), and D as the interim answer until the agent tool (sub-phase 4d) ships. C is not recommended: it adds a second key custody for no capability that B lacks.
 
 Builder change for B (design only): replace `repoDir` with an input `baseFiles: { path, bytes | file }[]` plus `baseCommit` (recorded in the manifest, not used to look anything up), build the synthetic root commit from those files, commit the new files on top, `format-patch --binary --full-index --no-signature -M`, then verify by `git am --3way --keep-cr` onto a second scratch built from the same base files. The commit message trailers and the manifest stay unchanged; the manifest should state `source: "base-files"`.
 
@@ -61,7 +61,7 @@ Honest limit of the verification in B: the library's own `git am` check proves t
 
 ## PM decisions needed before phases 4 and 5
 
-Phase 4 is live notification and does not depend on this spike; its decisions are in section 6 of the wiring plan (channel id, who "the PM" is, wording, owner map). Decisions that this spike adds, all before phase 5:
+Phase 4 is live notification and does not depend on this spike; its decisions are in section 6 of the wiring plan (channel id, who "the PM" is, wording, owner map). Decisions that this spike adds, all before sub-phase 4a:
 
 1. Route: B (recommended), A or D. If A, also accept a tenth tool and its name.
 2. Size cap for one package (total base plus modified bytes, and per file), and what happens above it (refuse and answer with D's instructions, or allow a streaming route in A).
@@ -69,7 +69,7 @@ Phase 4 is live notification and does not depend on this spike; its decisions ar
 4. Whether xlsx packages stay on the `diff_xlsx` table plus the workbook as delivered (no patch), which needs none of this.
 5. Recipient rule and ticket format (already open in section 6), since they affect the patch text and the manifest.
 6. Who runs the exactness check and what the tool does when it fails (refuse; no package is better than a wrong patch).
-7. Whether the interim answer D is wanted if phase 5 is delayed.
+7. Whether the interim answer D is wanted if sub-phase 4d is delayed.
 
 ## Not verified
 
