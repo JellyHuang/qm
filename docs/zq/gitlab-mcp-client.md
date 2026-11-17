@@ -49,3 +49,7 @@ When the server is registered with `attestActor` (catalog, shared bearer), the c
 | `ZQ_GIT_BOT_NAMES`        | empty   | Comma list of bot author names or email local parts (`ZQBot.compiler`)                      |
 
 They are parsed into `ZqConfig.gitMcp` and `ZqConfig.gitAuthors` and read by nothing in production yet. Environment variables are the only source.
+
+## Audit retention
+
+`zq_git_audit` rows are kept 180 days. `pruneGitAudit` (`src/zq/git-mcp/audit-retention.ts`) applies the rule through the durable map's `deleteBefore("at", cutoff)`; it is not scheduled anywhere. The service's database role has no DELETE, so pruning is a core or operator job (statement in `plugins/zq-git-mcp/docs/audit-and-storage.md`).

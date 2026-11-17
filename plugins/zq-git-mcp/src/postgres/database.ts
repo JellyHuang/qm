@@ -10,8 +10,19 @@ export interface Database extends Queryable {
   close(): Promise<void>;
 }
 
-export function createDatabase(options: { url: string; tenantId?: string | undefined }): Database {
-  const pool = new pg.Pool({ connectionString: options.url, max: 4 });
+interface PoolLike {
+  connect(): Promise<{
+    query(text: string, values?: unknown[]): Promise<{ rows: unknown[]; rowCount: number | null }>;
+    release(): void;
+  }>;
+  end(): Promise<void>;
+  on(event: "error", listener: () => void): unknown;
+}
+
+export function createDatabase(
+  options: { url: string; tenantId?: string | undefined },
+  pool: PoolLike = new pg.Pool({ connectionString: options.url, max: 4 }),
+): Database {
   const bound = new WeakSet<object>();
   pool.on("error", () => undefined);
 

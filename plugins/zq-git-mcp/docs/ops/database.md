@@ -40,3 +40,25 @@ In `serve` mode nothing is lost while the spool stays within its bounds: calls c
 ## Rollback
 
 See `upgrade-and-rollback.md`.
+
+## Tenancy, role and retention (approved by the PM)
+
+- Tables: all three are tenant scoped (`tenant_id uuid NOT NULL DEFAULT qm_bound_tenant() REFERENCES tenants(id)`, primary keys `(tenant_id, id)`, `(tenant_id, repo, branch)`, `(tenant_id, repo, oid)`, row level security with the `tenant_isolation` policy). `zq_git_audit` is unchanged. The DDL is in `docs/zq-git-mcp-ddl-proposal.md` on `oa/spike-git`.
+- Role grants, exactly: `INSERT` on `zq_git_audit`; `SELECT, INSERT, UPDATE` on `zq_git_branch_tips` and `zq_git_blob_meta`. No `DELETE`, no `TRUNCATE`, no `REFERENCES`, no default privileges.
+- Tenant binding step (operator, once): `ALTER ROLE zq_git_mcp SET qm.tenant_id = '<tenant uuid>';`. `ZQ_GIT_MCP_TENANT_ID` is only the optional per-connection setting for development and tests.
+- RLS check after the role exists: connect as `zq_git_mcp`, run `SELECT * FROM zq_git_branch_tips` (rows of the bound tenant only), `SELECT * FROM zq_git_audit` (must fail, no SELECT grant), `DELETE FROM zq_git_branch_tips` (must fail), and with `RESET qm.tenant_id` an insert must fail with "No tenant is bound to this query".
+- Retention: `zq_git_audit` is kept 180 days. Pruning is not done by the service role. The table owner runs, in batches until it deletes nothing:
+
+```sql
+DELETE FROM zq_git_audit
+WHERE ctid IN (
+  SELECT ctid FROM zq_git_audit
+  WHERE (json->>'at')::double precision < extract(epoch FROM now() - interval '180 days') * 1000
+  LIMIT 10000
+);
+```
+
+QM core has an unscheduled helper for the same rule (`pruneGitAudit`, `src/zq/git-mcp/audit-retention.ts`).
+
+- Logged `args` are not redacted: search patterns and workbook header and key names are stored as given.
+- `ZQ_GIT_MCP_AUDIT_ON_FAILURE=fail` is an explicit opt-in; the default `serve` never fails a read tool because of an audit write.

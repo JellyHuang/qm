@@ -23,9 +23,9 @@ The service role has no DELETE grant, so a deleted branch is never removed from 
 
 ## Postgres mapping
 
-Table `zq_git_branch_tips(repo, branch, tip_sha, seen_at)`, primary key `(repo, branch)`. The service role may SELECT, INSERT and UPDATE; nothing here needs DELETE.
+Table `zq_git_branch_tips(repo, branch, tip_sha, seen_at)`, primary key `(repo, branch)`. The table is tenant scoped: primary key `(tenant_id, repo, branch)`, `tenant_id` filled by the column default and filtered by row level security. The service role may SELECT, INSERT and UPDATE; nothing here needs DELETE.
 
-- First observation: `INSERT ... ON CONFLICT (repo, branch) DO NOTHING` for every branch.
+- First observation: `INSERT ... ON CONFLICT (tenant_id, repo, branch) DO NOTHING` for every branch.
 - Acknowledgement with a previous tip, including the tombstone: `UPDATE zq_git_branch_tips SET tip_sha = $to, seen_at = now() WHERE repo = $repo AND branch = $branch AND tip_sha = $from`. Zero rows updated means the entry was stale and is ignored.
 - Acknowledgement of a branch never seen (`from` is null): `INSERT ... ON CONFLICT DO NOTHING`.
 - Acknowledgement of a deletion (`to` is null): the same `UPDATE` with `$to` the tombstone.

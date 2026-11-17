@@ -34,3 +34,8 @@ Only the config files: `/etc/zq-git-mcp/zq-git-mcp.env` (and the optional JSON f
 2. Clones, cache and scratch refill on demand: first use of each repository clones it blobless (seconds to minutes, about 100 MB for all seven); a cold single-file fetch took about 2.6 s in the design measurements.
 3. Branch tips come from Postgres, so `check_updates` continues without a reset. With the memory store a restart is a first observation: no commits are reported until the next change.
 4. If the data directory is lost while the audit spool is non-empty, the records in it that were not yet replayed are lost for good. The window is bounded by the spool bounds (`ZQ_GIT_MCP_AUDIT_SPOOL_MAX_BYTES`, `ZQ_GIT_MCP_AUDIT_SPOOL_MAX_AGE_MS`), and only exists while the database was unreachable. Record the incident; the calls themselves were served and the repository content is unaffected.
+
+## Audit retention and content
+
+- `zq_git_audit` rows are kept 180 days; the service role has no DELETE, so the table owner (or QM core's `pruneGitAudit`) prunes them in batches, see `database.md`. Run it daily and check that the oldest `json->>'at'` is within 180 days.
+- Logged `args` are stored unredacted (search patterns, workbook header and key names). Restrict who can read `zq_git_audit` accordingly. File content, diffs and commit messages are never stored.
