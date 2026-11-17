@@ -15,10 +15,12 @@ import { createGitRunner, killLiveGitGroups } from "./runner.ts";
 import { createScratch } from "./scratch.ts";
 import { createMcpHttpServer } from "./server.ts";
 import { createSsh } from "./ssh.ts";
+import { diagnoseXlsx, type DiagnoseInput } from "./xlsx-diagnose.ts";
 import { TOOLS } from "./tools/index.ts";
 
 export interface Service {
-  start(): Promise<{ port: number }>;
+  start(): Promise<{ port: number; git: { binary: string; version: string } }>;
+  diagnoseXlsx(input: DiagnoseInput): Promise<Record<string, unknown>[]>;
   stop(): Promise<void>;
 }
 
@@ -33,11 +35,15 @@ export interface ServiceDeps {
 }
 
 export function createService(config: Config, deps: ServiceDeps = {}): Service {
-  const ssh = config.ssh ? createSsh(config.ssh) : undefined;
+  const ssh = config.ssh
+    ? createSsh({ ...config.ssh, path: config.childPath, ...(config.sshBin ? { binary: config.sshBin } : {}) })
+    : undefined;
   let audit: AuditSink = deps.audit ?? createMemoryAuditSink();
   let tips: TipStore = deps.tips ?? createMemoryTipStore();
   let ledger: BlobMetaLedger = createMemoryBlobMetaLedger();
   let pipeline: AuditPipeline | undefined;
+  let git = { binary: "", version: "" };
+  let diagnose: ((input: DiagnoseInput) => Promise<Record<string, unknown>[]>) | undefined;
   let database: { close(): Promise<void> } | undefined;
   const fetches = createLimiter(config.maxFetches);
   const bigFetches = createLimiter(config.maxBigFetches);
@@ -52,7 +58,11 @@ export function createService(config: Config, deps: ServiceDeps = {}): Service {
 
   return {
     async start() {
-      await assertGitVersion(createGitRunner(deps.gitBinary ? { gitBinary: deps.gitBinary } : {}));
+      const gitBinary = deps.gitBinary ?? config.gitBin;
+      git = await assertGitVersion(
+        createGitRunner({ path: config.childPath, ...(gitBinary ? { gitBinary } : {}) }),
+        gitBinary ?? "git (from PATH)",
+      );
       if (
         config.database &&
         (config.audit === "postgres" || config.tips === "postgres" || config.blobMeta === "postgres")
@@ -96,7 +106,8 @@ export function createService(config: Config, deps: ServiceDeps = {}): Service {
       const runner = createGitRunner({
         timeoutMs: config.gitTimeoutMs,
         ...(ssh ? { sshCommand: ssh.command() } : {}),
-        ...(deps.gitBinary ? { gitBinary: deps.gitBinary } : {}),
+        path: config.childPath,
+        ...(gitBinary ? { gitBinary } : {}),
       });
       const repos = createRepos({
         runner,
@@ -118,6 +129,14 @@ export function createService(config: Config, deps: ServiceDeps = {}): Service {
         noProgressMs: config.fetchNoProgressMs,
         failureTtlMs: config.fetchFailureTtlMs,
       });
+      const toolLimits = {
+        xlsxTimeoutMs: config.xlsxTimeoutMs,
+        xlsxNoProgressMs: config.xlsxNoProgressMs,
+        xlsxMaxHeapMb: config.xlsxMaxHeapMb,
+        regexTimeoutMs: config.regexTimeoutMs,
+        regexMaxChars: config.regexMaxChars,
+      };
+      diagnose = (input) => diagnoseXlsx({ repos, runner, blobs, limits: toolLimits }, input);
       const dispatcher = createDispatcher({
         tools: TOOLS,
         services: {
@@ -127,13 +146,8 @@ export function createService(config: Config, deps: ServiceDeps = {}): Service {
           cache,
           ledger,
           tips,
-          limits: {
-            xlsxTimeoutMs: config.xlsxTimeoutMs,
-            xlsxNoProgressMs: config.xlsxNoProgressMs,
-            xlsxMaxHeapMb: config.xlsxMaxHeapMb,
-            regexTimeoutMs: config.regexTimeoutMs,
-            regexMaxChars: config.regexMaxChars,
-          },
+          gitInfo: git,
+          limits: toolLimits,
         },
         truncateChars: config.truncateChars,
         audit,
@@ -148,7 +162,11 @@ export function createService(config: Config, deps: ServiceDeps = {}): Service {
         listening.once("error", reject);
         listening.listen(config.port, "127.0.0.1", resolve);
       });
-      return { port: (listening.address() as AddressInfo).port };
+      return { port: (listening.address() as AddressInfo).port, git };
+    },
+    async diagnoseXlsx(input) {
+      if (!diagnose) throw new Error("the service is not started");
+      return diagnose(input);
     },
     async stop() {
       scratch.stop();

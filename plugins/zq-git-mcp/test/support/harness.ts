@@ -39,6 +39,7 @@ export function testConfig(root: string, remoteBase: string, overrides: Partial<
     regexMaxChars: 500,
     fetchTimeoutMs: 60_000,
     gitTimeoutMs: 30_000,
+    childPath: "/usr/local/bin:/usr/bin:/bin",
     ...overrides,
   };
 }

@@ -3,6 +3,9 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { parentPort, workerData } from "node:worker_threads";
 import { compareSheets, readPage } from "./compare.ts";
+import { describeWorkbooks } from "./diagnose.ts";
+import { suggestKeyColumns } from "./keys.ts";
+import type { WorkbookInfo } from "./parse.ts";
 import { OverrideError, createSchema, ingestSide, type Overrides, type SheetMeta } from "./ingest.ts";
 
 export interface XlsxWorkerInput {
@@ -14,9 +17,15 @@ export interface XlsxWorkerInput {
   offset: number;
   limit: number;
   budget: number;
+  mode?: "diagnose";
 }
 
 const input = workerData as XlsxWorkerInput;
+
+interface Ingested {
+  info: WorkbookInfo;
+  metas: Map<string, SheetMeta>;
+}
 const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04];
 
 async function isZip(file: string): Promise<boolean> {
@@ -44,7 +53,7 @@ async function run() {
   const db = new DatabaseSync(join(input.dir, "work.sqlite"));
   createSchema(db);
   const filter = input.sheets ? new Set(input.sheets) : undefined;
-  const sides: { metas: Map<string, SheetMeta> }[] = [];
+  const sides: Ingested[] = [];
   let rowsSeen = 0;
   for (const [side, file, label] of [
     [0, input.baseFile, "base"],
@@ -56,21 +65,38 @@ async function run() {
       file,
       overrides: input.overrides,
       sheets: filter,
+      diagnostics: input.mode === "diagnose",
       progress: (rows) => {
         rowsSeen = rows;
         parentPort?.postMessage({ type: "progress", rows: rowsSeen });
       },
     });
-    if (ingested.info.macro) return unsupported("xlsm", label, "macro enabled workbooks are not supported");
-    if (!ingested.info.hasWorkbook) return unsupported("not_a_workbook", label, "the package has no xl/workbook.xml");
+    if (ingested.info.macro && input.mode !== "diagnose")
+      return unsupported("xlsm", label, "macro enabled workbooks are not supported");
+    if (!ingested.info.hasWorkbook && input.mode !== "diagnose")
+      return unsupported("not_a_workbook", label, "the package has no xl/workbook.xml");
     sides.push(ingested);
     parentPort?.postMessage({ type: "progress", rows: rowsSeen });
   }
   db.exec("CREATE INDEX rows_idx ON rows (sheet, side, key)");
   const [base, head] = sides;
+  if (input.mode === "diagnose" && base && head) {
+    const lines = describeWorkbooks(db, [base, head]);
+    db.close();
+    return { type: "diagnostics", lines };
+  }
   const { summaries, names } = compareSheets(db, base?.metas ?? new Map(), head?.metas ?? new Map(), filter, () =>
     parentPort?.postMessage({ type: "progress", rows: rowsSeen }),
   );
+  for (const [index, summary] of summaries.entries()) {
+    const headMeta = head?.metas.get(summary.sheet);
+    if (summary.status !== "both" || !headMeta) continue;
+    const ambiguous = db
+      .prepare("SELECT count(*) AS n FROM diffs WHERE sheet_idx = ? AND kind = 'ambiguous'")
+      .get(index) as { n: number };
+    if (ambiguous.n > 0)
+      summary.suggestedKeyColumns = suggestKeyColumns(db, summary.sheet, base?.metas.get(summary.sheet), headMeta);
+  }
   const headers = new Map([...(head?.metas ?? [])].map(([name, meta]) => [name, meta.headers]));
   const page = readPage(db, names, headers, input.offset, input.limit, input.budget);
   db.close();

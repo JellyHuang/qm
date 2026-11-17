@@ -28,7 +28,7 @@ ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 
 ## ssh ControlMaster directory
 
-The runtime directory `zqgit-ssh-*` under `TMPDIR` (`/home/zq-git-mcp/data/ssh`) must be 0700 and owned by `zq-git-mcp`, with `key` and `known_hosts` at 0600. While the service runs: `ls -ld /home/zq-git-mcp/data/ssh/zqgit-ssh-*` and `ls -l` inside it as the service user or root. ControlPath is `<dir>/%C` with `ControlPersist=10m`. After a clean stop the directory is gone.
+The runtime directory `z-<6 characters>` under `TMPDIR` (`/home/zq-git-mcp/data/ssh`) must be 0700 and owned by `zq-git-mcp`, with `key` and `known_hosts` at 0600. While the service runs: `ls -ld /home/zq-git-mcp/data/ssh/zqgit-ssh-*` and `ls -l` inside it as the service user or root. ControlPath is `<dir>/%C` with `ControlPersist=10m`. After a clean stop the directory is gone.
 
 ## Loopback binding
 
@@ -37,3 +37,11 @@ The listener is hard-coded to `127.0.0.1` (default port 8765). Check: `ss -ltnp 
 ## Audit alarm wiring
 
 Applies when `ZQ_GIT_MCP_AUDIT_ON_FAILURE=serve` (default, not finally confirmed by the PM). When an audit write fails the service must (a) log an error line, (b) raise a backlog counter and a degraded flag in its health output, and (c) call an optional alert hook. The health fields are `auditBacklog`, `auditDegraded`, `auditLastError`, `auditDropped` and `auditFailures`, returned by the `list_repos` tool. The log lines are JSON with `kind` `audit_write_failed`, `audit_dropped` (`reason` `spool_full`, `spool_unwritable` or `expired`) and `audit_recovered`. The hook is the `alarm` function of `createService` (`AuditAlarm` in `src/audit-pipeline.ts`); no network call is made unless QM supplies one. Before go-live prove the chain end to end in a staging environment: stop the staging database, make a tool call, confirm the call is served, the error line appears in the journal, the degraded flag and backlog show, and the monitoring alert fires; start the database and confirm the backlog drains to zero and degraded clears. Never run this test against production.
+
+## ssh socket path length
+
+The ssh ControlMaster socket is `<TMPDIR>/z-XXXXXX/c`, and ssh adds a 17 character temporary suffix while it creates it. Unix sockets are limited to 107 characters, so the service refuses to start when `<TMPDIR>` is longer than 72 characters (limit 100 with a margin) and says so: "the ssh control socket path would be N characters ... shorten TMPDIR or the data directory". The recommended `/home/zq-git-mcp/data/ssh` is 25 characters, so the socket path is at most 53. Check on the host: `echo -n /home/zq-git-mcp/data/ssh | wc -c` (add 28 for the worst case, and keep the sum under 100).
+
+## Git and ssh binaries
+
+`ZQ_GIT_MCP_GIT_BIN` (absolute path) is used for every git start and for the version check; `ZQ_GIT_MCP_PATH` (default `/usr/local/bin:/usr/bin:/bin`) is the PATH given to git, ssh and their helpers, with the directory of `ZQ_GIT_MCP_GIT_BIN` put first so a git installed under `/opt` finds its own helpers. `ZQ_GIT_MCP_SSH_BIN` (absolute, optional) replaces the `ssh` found on that PATH. At start the service prints the git version and path (`zq-git-mcp listening on ..., git 2.47 at /opt/git247/bin/git`), and `list_repos` returns `git: { binary, version }`. A git older than 2.44 stops the start and the error names the path and the version.

@@ -162,3 +162,22 @@ test("postgres needs a database url, the url is not echoed and the environment o
   assert.equal(merged.auditOnFailure, "serve");
   assert.equal(merged.tips, "postgres");
 });
+
+test("the git and ssh binaries and the child PATH are configurable and the git directory comes first", () => {
+  const plain = loadConfig({ ...BASE, ...SSH });
+  assert.equal(plain.gitBin, undefined);
+  assert.equal(plain.sshBin, undefined);
+  assert.equal(plain.childPath, "/usr/local/bin:/usr/bin:/bin");
+  const custom = loadConfig({
+    ...BASE,
+    ...SSH,
+    ZQ_GIT_MCP_GIT_BIN: "/opt/git247/bin/git",
+    ZQ_GIT_MCP_SSH_BIN: "/opt/ssh/bin/ssh",
+    ZQ_GIT_MCP_PATH: "/usr/bin:/bin",
+  });
+  assert.equal(custom.gitBin, "/opt/git247/bin/git");
+  assert.equal(custom.sshBin, "/opt/ssh/bin/ssh");
+  assert.equal(custom.childPath, "/opt/git247/bin:/usr/bin:/bin");
+  for (const bad of [{ ZQ_GIT_MCP_GIT_BIN: "git" }, { ZQ_GIT_MCP_SSH_BIN: "ssh" }])
+    assert.throws(() => loadConfig({ ...BASE, ...SSH, ...bad }), /absolute path/);
+});

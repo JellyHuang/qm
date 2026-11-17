@@ -14,12 +14,16 @@ export function gitVersionSupported(version: { major: number; minor: number }): 
   );
 }
 
-export async function assertGitVersion(runner: GitRunner): Promise<void> {
+export async function assertGitVersion(
+  runner: GitRunner,
+  binary: string,
+): Promise<{ binary: string; version: string }> {
   const text = (await runner.run(undefined, ["--version"])).stdout.toString("utf8").trim();
   const version = parseGitVersion(text);
-  if (!version) throw new Error(`cannot read the git version from "${text.slice(0, 80)}"`);
+  if (!version) throw new Error(`cannot read the git version of ${binary} from "${text.slice(0, 80)}"`);
   if (!gitVersionSupported(version))
     throw new Error(
-      `git ${version.major}.${version.minor} is too old: ${MIN_GIT_VERSION.major}.${MIN_GIT_VERSION.minor} or newer is required for GIT_NO_LAZY_FETCH`,
+      `git ${version.major}.${version.minor} (${binary}) is too old: ${MIN_GIT_VERSION.major}.${MIN_GIT_VERSION.minor} or newer is required for GIT_NO_LAZY_FETCH`,
     );
+  return { binary, version: `${version.major}.${version.minor}` };
 }

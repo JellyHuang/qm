@@ -10,12 +10,32 @@ interface SheetOverride {
 
 export type Overrides = Record<string, SheetOverride>;
 
+export type HeaderDetection = "rule" | "fallback_first_row" | "override" | "none";
+
+interface RowShape {
+  row: number;
+  nonEmpty: number;
+  text: number;
+  numeric: number;
+  formula: number;
+}
+
+interface HeaderRuleRow extends RowShape {
+  reason: "too_few_cells" | "not_mostly_text" | "no_data_row_after" | "qualified";
+}
+
 export interface SheetMeta {
   name: string;
   headerRow: number | undefined;
+  detection: HeaderDetection;
+  considered: HeaderRuleRow[];
+  firstRows: RowShape[];
+  rowElements: number;
+  columns: number;
   headers: string[];
   headerCols: number[];
   keyNames: string[];
+  keyId: string;
   ambiguousHeaders: string[];
   hiddenHeaders: string[];
   merges: string[];
@@ -30,6 +50,7 @@ export class OverrideError extends Error {
 }
 
 const HEADER_WINDOW = 10;
+const FIRST_ROWS = 15;
 const BATCH_ROWS = 5000;
 const CACHE_STRINGS = 20_000;
 const PROGRESS_EVERY = 20_000;
@@ -50,24 +71,43 @@ function textual(row: SheetRow): number {
   return row.cells.filter((cell) => cell.isText && cell.display.trim() !== "").length;
 }
 
-function nonEmpty(row: SheetRow): number {
-  return row.cells.filter((cell) => cell.display !== "" || cell.formula !== null).length;
+function filled(row: SheetRow) {
+  return row.cells.filter((cell) => cell.display !== "" || cell.formula !== null);
 }
 
-function pickHeader(rows: SheetRow[]): number {
+const nonEmpty = (row: SheetRow): number => filled(row).length;
+
+function shapeOf(row: SheetRow): RowShape {
+  const cells = filled(row);
+  const formula = cells.filter((cell) => cell.formula !== null).length;
+  const text = cells.filter((cell) => cell.formula === null && cell.isText && cell.display.trim() !== "").length;
+  return { row: row.num, nonEmpty: cells.length, text, numeric: cells.length - formula - text, formula };
+}
+
+function chooseHeader(rows: SheetRow[]): {
+  index: number;
+  detection: "rule" | "fallback_first_row" | "none";
+  considered: HeaderRuleRow[];
+} {
   const window = rows.slice(0, HEADER_WINDOW);
   const widest = Math.max(0, ...window.map(nonEmpty));
   const needed = Math.min(2, widest);
+  const considered: HeaderRuleRow[] = [];
   for (let i = 0; i < window.length; i++) {
     const row = window[i];
     if (!row) continue;
-    const cols = row.cells.filter((cell) => cell.display !== "" || cell.formula !== null).map((cell) => cell.col);
-    if (cols.length === 0 || cols.length < needed) continue;
-    const span = Math.max(...cols) - Math.min(...cols) + 1;
+    const cols = filled(row).map((cell) => cell.col);
+    const span = cols.length === 0 ? 1 : Math.max(...cols) - Math.min(...cols) + 1;
     const followed = rows.slice(i + 1).some((next) => nonEmpty(next) > 0);
-    if (textual(row) / span >= 0.6 && followed) return i;
+    let reason: HeaderRuleRow["reason"] = "qualified";
+    if (cols.length < needed) reason = "too_few_cells";
+    else if (textual(row) / span < 0.6) reason = "not_mostly_text";
+    else if (!followed) reason = "no_data_row_after";
+    considered.push({ ...shapeOf(row), reason });
+    if (reason === "qualified") return { index: i, detection: "rule", considered };
   }
-  return rows.findIndex((row) => nonEmpty(row) > 0);
+  const first = rows.findIndex((row) => nonEmpty(row) > 0);
+  return { index: first, detection: first < 0 ? "none" : "fallback_first_row", considered };
 }
 
 function resolveKeys(
@@ -114,6 +154,7 @@ export interface IngestContext {
   file: string;
   overrides: Overrides;
   sheets: Set<string> | undefined;
+  diagnostics?: boolean;
   progress(rows: number): void;
 }
 
@@ -161,9 +202,15 @@ export async function ingestSide(ctx: IngestContext): Promise<{ info: WorkbookIn
     const meta: SheetMeta = {
       name: sheet.name,
       headerRow: undefined,
+      detection: "none",
+      considered: [],
+      firstRows: [],
+      rowElements: 0,
+      columns: 0,
       headers: [],
       headerCols: [],
       keyNames: [],
+      keyId: "",
       ambiguousHeaders: [],
       hiddenHeaders: [],
       merges: [],
@@ -176,9 +223,10 @@ export async function ingestSide(ctx: IngestContext): Promise<{ info: WorkbookIn
     let colHeader = new Map<number, string>();
     let sortedHeaders: string[] = [];
 
-    const decide = (header: SheetRow) => {
+    const decide = (header: SheetRow, detection: HeaderDetection) => {
       const named = nameHeaders(header);
       meta.headerRow = header.num;
+      meta.detection = detection;
       meta.headers = named.headers;
       meta.headerCols = named.cols;
       meta.ambiguousHeaders = named.ambiguous;
@@ -186,6 +234,9 @@ export async function ingestSide(ctx: IngestContext): Promise<{ info: WorkbookIn
       sortedHeaders = [...named.headers].sort();
       const keys = resolveKeys(sheet.name, override, named.headers, named.cols);
       meta.keyNames = keys.names;
+      meta.keyId = override?.keyColumns?.length
+        ? `columns:${keys.cols.join(",")}`
+        : `names:${keys.names.join("\u001f")}`;
       keyCols = keys.cols;
     };
 
@@ -214,21 +265,26 @@ export async function ingestSide(ctx: IngestContext): Promise<{ info: WorkbookIn
       if (!buffer) return;
       const rows = buffer;
       buffer = undefined;
-      const at = pickHeader(rows);
-      const header = rows[at];
-      if (at < 0 || !header) return;
-      decide(header);
-      for (const row of rows.slice(at + 1)) emit(row);
+      const chosen = chooseHeader(rows);
+      meta.considered = chosen.considered;
+      const header = rows[chosen.index];
+      if (chosen.index < 0 || !header) return;
+      decide(header, chosen.detection === "none" ? "fallback_first_row" : chosen.detection);
+      for (const row of rows.slice(chosen.index + 1)) emit(row);
     };
 
     return {
       row(row) {
+        meta.rowElements++;
+        for (const cell of row.cells) if (cell.col > meta.columns) meta.columns = cell.col;
+        if (ctx.diagnostics && meta.firstRows.length < FIRST_ROWS) meta.firstRows.push(shapeOf(row));
         if (override?.headerRow !== undefined) {
           if (row.num < override.headerRow) return;
-          if (row.num === override.headerRow && !meta.headerRow) return decide(row);
+          if (row.num === override.headerRow && !meta.headerRow) return decide(row, "override");
           return emit(row);
         }
         if (!buffer) return emit(row);
+        if (nonEmpty(row) === 0) return;
         buffer.push(row);
         if (buffer.length > HEADER_WINDOW) flush();
       },

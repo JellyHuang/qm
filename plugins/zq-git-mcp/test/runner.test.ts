@@ -164,3 +164,12 @@ test("a failing command keeps its stderr message and stdin input is delivered", 
   });
   assert.match(out.stdout.toString(), new RegExp(`${fx.client.readmeOid} blob \\d+`));
 });
+
+test("the child PATH is the configured one", async () => {
+  const dump = join(root, "path-dump");
+  const bin = fakeGit(root, `printf '%s' "$PATH" > ${dump}`);
+  await createGitRunner({ gitBinary: bin, path: "/opt/git247/bin:/usr/bin" }).run(root, ["status"]);
+  assert.equal(readFileSync(dump, "utf8"), "/opt/git247/bin:/usr/bin");
+  await createGitRunner({ gitBinary: bin }).run(root, ["status"]);
+  assert.equal(readFileSync(dump, "utf8"), "/usr/local/bin:/usr/bin:/bin");
+});

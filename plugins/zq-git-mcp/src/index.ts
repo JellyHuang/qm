@@ -4,8 +4,8 @@ import { createService } from "./service.ts";
 
 async function main(): Promise<void> {
   const service = createService(loadConfig(process.env));
-  const { port } = await service.start();
-  console.log(`zq-git-mcp listening on 127.0.0.1:${port}`);
+  const { port, git } = await service.start();
+  console.log(`zq-git-mcp listening on 127.0.0.1:${port}, git ${git.version} at ${git.binary}`);
   const shutdown = () => {
     void service.stop().finally(() => process.exit(0));
   };

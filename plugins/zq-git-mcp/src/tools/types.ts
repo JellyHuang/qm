@@ -34,6 +34,7 @@ export interface Services {
   cache: BlobCache;
   ledger: BlobMetaLedger;
   tips: TipStore;
+  gitInfo: { binary: string; version: string };
   limits: ToolLimits;
 }
 

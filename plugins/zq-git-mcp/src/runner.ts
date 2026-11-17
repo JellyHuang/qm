@@ -7,6 +7,7 @@ export interface GitRunnerOptions {
   maxBytes?: number;
   gitBinary?: string;
   sshCommand?: string;
+  path?: string;
 }
 
 export interface GitOutput {
@@ -34,7 +35,7 @@ const GIT_TIMEOUT_MS = 60_000;
 const GIT_KILL_GRACE_MS = 2000;
 const GIT_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 const STDERR_BYTES = 4096;
-const SAFE_PATH = "/usr/local/bin:/usr/bin:/bin";
+const DEFAULT_CHILD_PATH = "/usr/local/bin:/usr/bin:/bin";
 const liveGroups = new Set<number>();
 
 export function killLiveGitGroups(): void {
@@ -47,9 +48,14 @@ export function killLiveGitGroups(): void {
   }
 }
 
-function cleanEnv(remote: boolean, sshCommand: string | undefined, trace: string | undefined): NodeJS.ProcessEnv {
+function cleanEnv(
+  remote: boolean,
+  sshCommand: string | undefined,
+  trace: string | undefined,
+  path: string,
+): NodeJS.ProcessEnv {
   return {
-    PATH: SAFE_PATH,
+    PATH: path,
     LC_ALL: "C",
     GIT_TERMINAL_PROMPT: "0",
     GIT_CONFIG_NOSYSTEM: "1",
@@ -80,7 +86,7 @@ export function createGitRunner(options: GitRunnerOptions = {}): GitRunner {
           bin,
           ["-c", "core.quotepath=false", ...(gitDir === undefined ? [] : [`--git-dir=${gitDir}`]), ...args],
           {
-            env: cleanEnv(opts.remote === true, options.sshCommand, opts.trace),
+            env: cleanEnv(opts.remote === true, options.sshCommand, opts.trace, options.path ?? DEFAULT_CHILD_PATH),
             shell: false,
             detached: true,
             stdio: ["pipe", "pipe", "pipe"],

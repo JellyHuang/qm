@@ -27,7 +27,7 @@ export function parseCommitRecord(record: string): CommitRecord {
   };
 }
 
-export async function resolveRev(ctx: ToolContext, repo: GitRepo, rev: string): Promise<string> {
+export async function resolveRev(ctx: Pick<ToolContext, "git">, repo: GitRepo, rev: string): Promise<string> {
   try {
     const out = await ctx.git(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", rev]);
     return out.stdout.toString("utf8").trim();

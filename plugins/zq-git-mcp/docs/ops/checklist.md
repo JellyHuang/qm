@@ -27,3 +27,6 @@
 - [ ] Approval: the PM approves the deployment in writing
 
 Approved by: ______________ Date: ______________
+
+- [ ] `TMPDIR` (the ssh runtime base) is at most 72 characters; the service started without the control socket path error
+- [ ] If git is not in `/usr/bin`, `ZQ_GIT_MCP_GIT_BIN` is set and the start line and `list_repos` show the expected git path and a version of at least 2.44

@@ -148,6 +148,7 @@ export const diffXlsx = defineTool({
           stats.signal ?? ctx.signal,
         );
         if (result.type === "error") throw new GitDenied(result.code, result.message);
+        if (result.type === "diagnostics") throw new Error("unexpected diagnostics result");
         if (result.type === "unsupported")
           return {
             ...where,

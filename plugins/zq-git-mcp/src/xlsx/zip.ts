@@ -11,8 +11,9 @@ export async function scanZip(file: string, open: (name: string) => PartSink | u
   const names: string[] = [];
   let failure: Error | undefined;
   const unzip = new Unzip((entry) => {
-    names.push(entry.name);
-    const sink = open(entry.name);
+    const name = entry.name.replaceAll("\\", "/").replace(/^\/+/, "");
+    names.push(name);
+    const sink = open(name);
     if (!sink && entry.size !== undefined && entry.size > 0) return;
     entry.ondata = (error, data, final) => {
       if (error) {
@@ -36,6 +37,14 @@ export async function scanZip(file: string, open: (name: string) => PartSink | u
   return names;
 }
 
+const local = (name: string) => name.slice(name.indexOf(":") + 1);
+
+function localAttributes(attributes: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(attributes)) if (!name.startsWith("xmlns")) out[local(name)] = value;
+  return out;
+}
+
 export interface XmlHandlers {
   open?(name: string, attributes: Record<string, string>): void;
   close?(name: string): void;
@@ -45,8 +54,8 @@ export interface XmlHandlers {
 export function xmlSink(handlers: XmlHandlers): PartSink {
   const parser = new SaxesParser();
   const decoder = new TextDecoder("utf-8");
-  parser.on("opentag", (tag: SaxesTagPlain) => handlers.open?.(tag.name, tag.attributes as Record<string, string>));
-  parser.on("closetag", (tag: SaxesTagPlain) => handlers.close?.(tag.name));
+  parser.on("opentag", (tag: SaxesTagPlain) => handlers.open?.(local(tag.name), localAttributes(tag.attributes)));
+  parser.on("closetag", (tag: SaxesTagPlain) => handlers.close?.(local(tag.name)));
   parser.on("text", (text: string) => handlers.text?.(text));
   return {
     write(chunk) {

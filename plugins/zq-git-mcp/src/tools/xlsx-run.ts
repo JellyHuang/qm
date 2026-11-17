@@ -14,6 +14,7 @@ export type XlsxWorkerResult =
       cut: number;
       next: number | null;
     }
+  | { type: "diagnostics"; lines: Record<string, unknown>[] }
   | { type: "unsupported"; reason: string; side: string; note: string }
   | { type: "error"; code: string; message: string };
 

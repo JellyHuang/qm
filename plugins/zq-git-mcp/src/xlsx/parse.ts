@@ -13,6 +13,8 @@ export interface WorkbookInfo {
   dateStyles: Set<number>;
   macro: boolean;
   hasWorkbook: boolean;
+  declared: string[];
+  unresolved: string[];
 }
 
 interface SheetCell {
@@ -61,7 +63,15 @@ function sharedStringsSink(add: (text: string) => void): PartSink {
 }
 
 export async function readWorkbookInfo(file: string, addShared: (text: string) => void): Promise<WorkbookInfo> {
-  const info: WorkbookInfo = { sheets: [], date1904: false, dateStyles: new Set(), macro: false, hasWorkbook: false };
+  const info: WorkbookInfo = {
+    sheets: [],
+    date1904: false,
+    dateStyles: new Set(),
+    macro: false,
+    hasWorkbook: false,
+    declared: [],
+    unresolved: [],
+  };
   const rawSheets: { name: string; rid: string; hidden: boolean }[] = [];
   const rels = new Map<string, string>();
   const formats = new Map<number, string>();
@@ -75,7 +85,7 @@ export async function readWorkbookInfo(file: string, addShared: (text: string) =
           if (tag === "sheet")
             rawSheets.push({
               name: attrs.name ?? "",
-              rid: attrs["r:id"] ?? "",
+              rid: attrs.id ?? "",
               hidden: attrs.state !== undefined && attrs.state !== "visible",
             });
         },
@@ -106,8 +116,12 @@ export async function readWorkbookInfo(file: string, addShared: (text: string) =
     if (isDateFormat(numFmtId, formats.get(numFmtId))) info.dateStyles.add(index);
   });
   for (const sheet of rawSheets) {
+    info.declared.push(sheet.name);
     const target = rels.get(sheet.rid);
-    if (!target) continue;
+    if (!target) {
+      info.unresolved.push(sheet.name);
+      continue;
+    }
     const part = target.startsWith("/") ? target.slice(1) : `xl/${target}`;
     info.sheets.push({ name: sheet.name, part, hidden: sheet.hidden });
   }

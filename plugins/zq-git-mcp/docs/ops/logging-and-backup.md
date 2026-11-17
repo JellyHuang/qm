@@ -18,7 +18,7 @@ Rotation: journald handles it; set `SystemMaxUse=` and `MaxRetentionSec=` in `jo
 | `data/clones`                                    | disposable, re-cloned on demand            |
 | `data/cache` blob cache                          | disposable                                 |
 | `data/scratch`                                   | disposable, swept at start                 |
-| `data/ssh/zqgit-ssh-*`                           | disposable, recreated each start           |
+| `data/ssh/z-*`                                   | disposable, recreated each start           |
 | audit spool file                                 | write-ahead buffer, durable until replayed |
 | `/etc/zq-git-mcp/zq-git-mcp.env`                 | the only thing to back up                  |
 

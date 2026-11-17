@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
 
 export const DEFAULT_REMOTE_BASE = "git@lab.skyunion.net:ca-programmer-zq/";
@@ -41,6 +41,9 @@ const ENV_KEYS = {
   ZQ_GIT_MCP_REGEX_MAX_CHARS: "regexMaxChars",
   ZQ_GIT_MCP_FETCH_TIMEOUT_MS: "fetchTimeoutMs",
   ZQ_GIT_MCP_GIT_TIMEOUT_MS: "gitTimeoutMs",
+  ZQ_GIT_MCP_GIT_BIN: "gitBin",
+  ZQ_GIT_MCP_SSH_BIN: "sshBin",
+  ZQ_GIT_MCP_PATH: "path",
 } as const;
 
 const count = (min: number, fallback: number) => z.coerce.number().int().min(min).default(fallback);
@@ -87,6 +90,9 @@ const schema = z
     regexMaxChars: count(1, 500),
     fetchTimeoutMs: count(1000, 30 * 60_000),
     gitTimeoutMs: count(1000, 60_000),
+    gitBin: z.string().refine(isAbsolute, "must be an absolute path").optional(),
+    sshBin: z.string().refine(isAbsolute, "must be an absolute path").optional(),
+    path: z.string().min(1).default("/usr/local/bin:/usr/bin:/bin"),
   })
   .superRefine((value, ctx) => {
     if (
@@ -136,6 +142,9 @@ export interface Config {
   regexMaxChars: number;
   fetchTimeoutMs: number;
   gitTimeoutMs: number;
+  gitBin?: string;
+  sshBin?: string;
+  childPath: string;
 }
 
 export class ConfigError extends Error {
@@ -218,5 +227,8 @@ export function loadConfig(
     regexMaxChars: value.regexMaxChars,
     fetchTimeoutMs: value.fetchTimeoutMs,
     gitTimeoutMs: value.gitTimeoutMs,
+    ...(value.gitBin ? { gitBin: value.gitBin } : {}),
+    ...(value.sshBin ? { sshBin: value.sshBin } : {}),
+    childPath: [...new Set([...(value.gitBin ? [dirname(value.gitBin)] : []), ...value.path.split(":")])].join(":"),
   };
 }

@@ -1,5 +1,5 @@
 import type { DatabaseSync, StatementSync } from "node:sqlite";
-import type { SheetMeta } from "./ingest.ts";
+import type { HeaderDetection, SheetMeta } from "./ingest.ts";
 
 const VALUE_CHARS = 200;
 
@@ -10,6 +10,9 @@ export interface SheetSummary {
   status: "both" | "sheet_added" | "sheet_removed";
   baseHeaderRow: number | null;
   headHeaderRow: number | null;
+  baseHeaderDetection: HeaderDetection;
+  headHeaderDetection: HeaderDetection;
+  suggestedKeyColumns?: string[];
   keyColumns: string[];
   rows: { base: number; head: number };
   changedCells: number;
@@ -86,6 +89,8 @@ export function compareSheets(
       status: sheetStatus(b, h),
       baseHeaderRow: b?.headerRow ?? null,
       headHeaderRow: h?.headerRow ?? null,
+      baseHeaderDetection: b?.detection ?? "none",
+      headHeaderDetection: h?.detection ?? "none",
       keyColumns: (h ?? b)?.keyNames ?? [],
       rows: { base: b?.dataRows ?? 0, head: h?.dataRows ?? 0 },
       changedCells: 0,
@@ -164,7 +169,7 @@ export function compareSheets(
         add(sheetIdx, GROUP.merge, "(merge)", 1, "merge_changed", `merged ${ref}`, "", { ref });
       }
 
-    if (b.keyNames.join("\u001f") !== h.keyNames.join("\u001f")) {
+    if (b.keyId !== h.keyId) {
       summary.ambiguous++;
       add(sheetIdx, GROUP.ambiguity, "(key)", 0, "ambiguous", b.keyNames.join(", "), h.keyNames.join(", "), {
         reason: "key_columns_differ",

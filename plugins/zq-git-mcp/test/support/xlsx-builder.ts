@@ -29,6 +29,8 @@ export interface WorkbookSpec {
   sheets: SheetSpec[];
   date1904?: boolean;
   macro?: boolean;
+  prefix?: string;
+  backslashNames?: boolean;
 }
 
 const escapeXml = (text: string) =>
@@ -136,15 +138,23 @@ function packageParts(spec: WorkbookSpec): Record<string, string> {
   };
 }
 
+function prefixed(xml: string, prefix: string | undefined): string {
+  if (!prefix) return xml;
+  return xml.replace(/<(\/?)([A-Za-z][\w]*)/g, `<$1${prefix}:$2`).replace(/ xmlns="/, ` xmlns:${prefix}="`);
+}
+
 export function buildXlsx(spec: WorkbookSpec): Uint8Array {
   const strings = sharedStringsOf(spec);
   const files: Record<string, Uint8Array> = {};
-  for (const [name, text] of Object.entries(packageParts(spec))) files[name] = strToU8(text);
-  spec.sheets.forEach((sheet, i) => {
-    files[`xl/worksheets/sheet${i + 1}.xml`] = strToU8(sheetXml(sheet, strings.table));
-  });
-  files["xl/sharedStrings.xml"] = strToU8(strings.xml());
-  if (spec.macro) files["xl/vbaProject.bin"] = strToU8("macro");
+  const parts = packageParts(spec);
+  const put = (name: string, text: string, wrap: boolean) => {
+    const stored = spec.backslashNames && name.startsWith("xl/") ? name.replaceAll("/", "\\") : name;
+    files[stored] = strToU8(wrap ? prefixed(text, spec.prefix) : text);
+  };
+  for (const [name, text] of Object.entries(parts)) put(name, text, name === "xl/workbook.xml");
+  spec.sheets.forEach((sheet, i) => put(`xl/worksheets/sheet${i + 1}.xml`, sheetXml(sheet, strings.table), true));
+  put("xl/sharedStrings.xml", strings.xml(), true);
+  if (spec.macro) put("xl/vbaProject.bin", "macro", false);
   return zipSync(files, { level: 6 });
 }
 

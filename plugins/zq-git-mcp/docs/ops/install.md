@@ -25,7 +25,7 @@ A dedicated system account `zq-git-mcp`, no login shell, home `/home/zq-git-mcp`
 
 ## The ssh private directory
 
-The code does not keep the key in the data directory. `src/ssh.ts` creates `mkdtemp(os.tmpdir()/zqgit-ssh-*)` at start, writes `key` and `known_hosts` (0600), keeps the ControlMaster socket there, and on stop overwrites the key with zeros and removes the directory. To keep it on the data volume under the service user, the unit sets `TMPDIR=/home/zq-git-mcp/data/ssh`. mkdtemp creates it 0700.
+The code does not keep the key in the data directory. `src/ssh.ts` creates `mkdtemp(os.tmpdir()/z-*)` at start, writes `key` and `known_hosts` (0600), keeps the ControlMaster socket there, and on stop overwrites the key with zeros and removes the directory. To keep it on the data volume under the service user, the unit sets `TMPDIR=/home/zq-git-mcp/data/ssh`. mkdtemp creates it 0700.
 
 ## Why the key and config are readable only by the service user
 
@@ -46,3 +46,11 @@ Build the release with `npm ci --omit=dev` inside `plugins/zq-git-mcp` (lockfile
 ## plugins/chassis ships with the service
 
 The service imports `../../chassis/src/...` by relative path (error helpers, node:http helpers). Install the whole `plugins/zq-git-mcp` directory together with `plugins/chassis` and keep the two side by side (`<root>/plugins/zq-git-mcp`, `<root>/plugins/chassis`); the service does not start without it. `chassis` has no dependencies and imports nothing from QM core.
+
+## Short paths for the ssh socket
+
+Keep `TMPDIR` (the base of the ssh runtime directory) at most 72 characters. The socket is `<TMPDIR>/z-XXXXXX/c` plus 17 characters added by ssh while it creates the socket; unix sockets stop at 107 characters. With `TMPDIR=/home/zq-git-mcp/data/ssh` (25 characters) the worst case is 53 characters. The service checks this at start and refuses to run when it would exceed 100.
+
+## Settings for a git or ssh outside the system directories
+
+`ZQ_GIT_MCP_GIT_BIN=/opt/git247/bin/git`, optional `ZQ_GIT_MCP_SSH_BIN` and `ZQ_GIT_MCP_PATH` (default `/usr/local/bin:/usr/bin:/bin`); see `checks.md`.

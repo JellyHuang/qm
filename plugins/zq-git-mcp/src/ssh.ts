@@ -8,8 +8,9 @@ export interface SshOptions {
   target: string;
   keyB64: string;
   hostFingerprint: string;
-  scan?: (host: string) => Promise<string>;
+  scan?: (host: string, path: string) => Promise<string>;
   binary?: string;
+  path?: string;
   tmpRoot?: string;
   warmTimeoutMs?: number;
 }
@@ -36,13 +37,10 @@ function pinnedHostKeys(scanned: string, fingerprint: string): string[] {
     });
 }
 
-function scanWithSshKeyscan(host: string): Promise<string> {
+function scanWithSshKeyscan(host: string, searchPath: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(
-      "ssh-keyscan",
-      ["-T", "15", host],
-      { timeout: 30_000, env: { PATH: "/usr/local/bin:/usr/bin:/bin" } },
-      (error, stdout) => (error ? reject(error) : resolve(stdout)),
+    execFile("ssh-keyscan", ["-T", "15", host], { timeout: 30_000, env: { PATH: searchPath } }, (error, stdout) =>
+      error ? reject(error) : resolve(stdout),
     );
   });
 }
@@ -80,8 +78,30 @@ function sshOptionArgs(paths: { key: string; knownHosts: string; control: string
   ];
 }
 
+const DIR_PREFIX = "z-";
+const DIR_SUFFIX = 6;
+const SOCKET_NAME = "c";
+const SOCKET_TEMP_SUFFIX = 17;
+const SOCKET_PATH_LIMIT = 100;
+const DEFAULT_PATH = "/usr/local/bin:/usr/bin:/bin";
+
+export function controlSocketLength(base: string): number {
+  return base.length + 1 + DIR_PREFIX.length + DIR_SUFFIX + 1 + SOCKET_NAME.length + SOCKET_TEMP_SUFFIX;
+}
+
+function assertSocketPath(base: string): void {
+  const length = controlSocketLength(base);
+  if (length > SOCKET_PATH_LIMIT) {
+    const room = SOCKET_PATH_LIMIT - controlSocketLength("");
+    throw new Error(
+      `the ssh control socket path would be ${length} characters, more than the ${SOCKET_PATH_LIMIT} allowed (unix sockets are limited to 107): shorten TMPDIR or the data directory so that the ssh base directory "${base}" is at most ${room} characters`,
+    );
+  }
+}
+
 export function createSsh(options: SshOptions): Ssh {
   const binary = options.binary ?? "ssh";
+  const searchPath = options.path ?? DEFAULT_PATH;
   let dir: string | undefined;
   let keyFile = "";
 
@@ -90,24 +110,29 @@ export function createSsh(options: SshOptions): Ssh {
     return dir;
   };
   const optionArgs = () =>
-    sshOptionArgs({ key: keyFile, knownHosts: join(need(), "known_hosts"), control: join(need(), "%C") });
+    sshOptionArgs({ key: keyFile, knownHosts: join(need(), "known_hosts"), control: join(need(), SOCKET_NAME) });
   const run = (args: string[], timeoutMs: number) =>
     new Promise<void>((resolve) => {
-      execFile(binary, args, { timeout: timeoutMs, env: { PATH: "/usr/local/bin:/usr/bin:/bin" } }, () => resolve());
+      execFile(binary, args, { timeout: timeoutMs, env: { PATH: searchPath } }, () => resolve());
     });
 
   return {
     async start() {
+      const base = options.tmpRoot ?? tmpdir();
+      assertSocketPath(base);
       const host = options.target.split("@").pop() ?? options.target;
-      const pinned = pinnedHostKeys(await (options.scan ?? scanWithSshKeyscan)(host), options.hostFingerprint);
+      const pinned = pinnedHostKeys(
+        await (options.scan ?? scanWithSshKeyscan)(host, searchPath),
+        options.hostFingerprint,
+      );
       if (pinned.length === 0) throw new Error(`no host key offered by ${host} matches the pinned fingerprint`);
-      dir = await mkdtemp(join(options.tmpRoot ?? tmpdir(), "zqgit-ssh-"));
+      dir = await mkdtemp(join(base, DIR_PREFIX));
       keyFile = join(dir, "key");
       const key = Buffer.from(options.keyB64, "base64").toString("utf8");
       await writeFile(keyFile, key.endsWith("\n") ? key : `${key}\n`, { mode: 0o600 });
       await writeFile(join(dir, "known_hosts"), `${pinned.join("\n")}\n`, { mode: 0o600 });
     },
-    command: () => ["ssh", ...optionArgs()].map((part, i) => (i === 0 ? part : quote(part))).join(" "),
+    command: () => [binary === "ssh" ? "ssh" : quote(binary), ...optionArgs().map(quote)].join(" "),
     warm: () => run([...optionArgs(), options.target], options.warmTimeoutMs ?? 30_000),
     async stop() {
       if (dir === undefined) return;

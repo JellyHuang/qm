@@ -11,11 +11,16 @@ export interface TreeEntry {
 
 const ENTRY = /^(\d+) (blob|tree|commit) ([0-9a-f]+)\t([^\0]*)\0?$/;
 
-export function resolveCommit(ctx: ToolContext, repo: GitRepo, ref: string): Promise<string> {
+export function resolveCommit(ctx: Pick<ToolContext, "git">, repo: GitRepo, ref: string): Promise<string> {
   return resolveRev(ctx, repo, `${checkRevision(ref)}^{commit}`);
 }
 
-export async function lookupEntry(ctx: ToolContext, repo: GitRepo, commit: string, path: string): Promise<TreeEntry> {
+export async function lookupEntry(
+  ctx: Pick<ToolContext, "git">,
+  repo: GitRepo,
+  commit: string,
+  path: string,
+): Promise<TreeEntry> {
   const out = await ctx.git(repo, ["ls-tree", "-z", "--end-of-options", commit, "--", path]);
   const match = ENTRY.exec(out.stdout.toString("utf8"));
   if (!match || match[4] !== path) throw new GitDenied("not_found", "no such path at that ref");

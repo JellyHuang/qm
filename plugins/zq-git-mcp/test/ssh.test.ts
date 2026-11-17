@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { after, test } from "node:test";
 import { join } from "node:path";
-import { createSsh } from "../src/ssh.ts";
+import { controlSocketLength, createSsh } from "../src/ssh.ts";
 import { fakeGit } from "./support/fake-git.ts";
 import { makeRoot } from "./support/fixtures.ts";
 
@@ -49,7 +49,7 @@ test("the command pins the key and host key and shares one control master", asyn
       "'ForwardAgent=no'",
       "'ControlMaster=auto'",
       "'ControlPersist=10m'",
-      `'ControlPath=${join(dir, "%C")}'`,
+      `'ControlPath=${join(dir, "c")}'`,
       "'ServerAliveInterval=30'",
     ])
       assert.ok(command.includes(part), part);
@@ -69,7 +69,7 @@ test("warming opens the master with the same options against the configured targ
   await ssh.stop();
   const [warm, exit] = readFileSync(log, "utf8").trim().split("\n");
   assert.ok(warm?.includes("ControlMaster=auto"));
-  assert.ok(warm?.includes(`ControlPath=${dir}/%C`));
+  assert.ok(warm?.includes(`ControlPath=${dir}/c`));
   assert.ok(warm?.endsWith("git@lab.example"));
   assert.ok(exit?.startsWith("-O exit"));
 });
@@ -90,4 +90,47 @@ test("only host keys matching the pinned fingerprint are trusted and a mismatch 
   });
   await assert.rejects(unreachable.start(), /scan failed/);
   assert.equal(readdirSync(root).length, before);
+});
+
+test("the control socket path stays well under the unix limit and is a short fixed name", async () => {
+  const ssh = createSsh({ ...options, tmpRoot: root });
+  await ssh.start();
+  try {
+    const control = /'ControlPath=([^']+)'/.exec(ssh.command())?.[1] ?? "";
+    assert.equal(control, join(ssh.dir(), "c"));
+    assert.ok(control.length + 17 <= 100, `${control.length + 17} characters`);
+    assert.ok(control.length + 17 <= controlSocketLength(root));
+    assert.ok(controlSocketLength("/home/zq-git-mcp/data/ssh") < 60);
+  } finally {
+    await ssh.stop();
+  }
+});
+
+test("a base directory that would make the socket path too long is refused with the way out and creates nothing", async () => {
+  const long = join(root, "x".repeat(80));
+  const before = readdirSync(root).length;
+  const ssh = createSsh({ ...options, tmpRoot: long });
+  await assert.rejects(
+    ssh.start(),
+    (e) =>
+      e instanceof Error &&
+      /control socket path would be \d+ characters, more than the 100 allowed/.test(e.message) &&
+      /shorten TMPDIR or the data directory/.test(e.message) &&
+      /at most 72 characters/.test(e.message),
+  );
+  assert.equal(readdirSync(root).length, before);
+  assert.ok(controlSocketLength(join(root, "x".repeat(10))) <= 100);
+});
+
+test("a configured ssh binary is used for the command, the warm up and the shutdown, with the configured PATH", async () => {
+  const log = join(root, "ssh-bin-calls");
+  const binary = fakeGit(root, `printf '%s|%s\\n' "$PATH" "$*" >> ${log}`);
+  const ssh = createSsh({ ...options, tmpRoot: root, binary, path: "/opt/x/bin:/usr/bin" });
+  await ssh.start();
+  assert.ok(ssh.command().startsWith(`'${binary}' `));
+  await ssh.warm();
+  await ssh.stop();
+  const lines = readFileSync(log, "utf8").trim().split("\n");
+  assert.equal(lines.length, 2);
+  assert.ok(lines.every((line) => line.startsWith("/opt/x/bin:/usr/bin|")));
 });
