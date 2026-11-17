@@ -57,9 +57,15 @@ function detail(id: number, over: Record<string, unknown> = {}) {
 }
 
 const DETAILS = [
-  detail(1, { type_key: "feature", status_key: "feature.staffing", planner: ALICE_OP }),
+  detail(1, { type_key: "feature", status_key: "feature.staffing", planner: ALICE_OP, assignee: asUser(ALICE_OP) }),
   detail(2, { type_key: "vfx", status_key: "execution.unassigned", parent_id: 1 }),
-  detail(20, { type_key: "feature", status_key: "feature.development", planner: ALICE_OP, due_date: "2026-12-31" }),
+  detail(20, {
+    type_key: "feature",
+    status_key: "feature.development",
+    planner: ALICE_OP,
+    assignee: asUser(ALICE_OP),
+    due_date: "2026-12-31",
+  }),
   detail(21, { parent_id: 20, assignee: asUser(BOB_OP) }),
   detail(22, {
     parent_id: 20,
@@ -69,7 +75,7 @@ const DETAILS = [
     start_date: "2026-11-09",
   }),
   detail(30, { type_key: "feature", status_key: "feature.planning_unassigned", lifecycle: "suspended" }),
-  detail(50, { type_key: "feature", status_key: "feature.staffing", planner: ALICE_OP }),
+  detail(50, { type_key: "feature", status_key: "feature.staffing", planner: ALICE_OP, assignee: asUser(ALICE_OP) }),
 ];
 
 const extraTools: Tool[] = ["zq_list_work_packages", "zq_duty_holders"].map((name) => ({
@@ -345,7 +351,9 @@ test("a person whose OpenProject read fails is skipped without stopping the rest
 });
 
 test("the group for a feature in the briefing stage is made once, only when every live order has an assignee", async () => {
-  const feature = parseWork(detail(40, { type_key: "feature", status_key: "feature.briefing", planner: ALICE_OP }));
+  const feature = parseWork(
+    detail(40, { type_key: "feature", status_key: "feature.briefing", planner: ALICE_OP, assignee: asUser(ALICE_OP) }),
+  );
   const ready = [
     parseWork(detail(41, { parent_id: 40, assignee: asUser(BOB_OP) })),
     parseWork(detail(42, { parent_id: 40, assignee: asUser(CAROL_OP) })),
@@ -393,7 +401,9 @@ test("the group for a feature in the briefing stage is made once, only when ever
 });
 
 test("the channel receipt is written to OpenProject once after the channel exists, retried while it fails, and never repeated", async () => {
-  const feature = parseWork(detail(40, { type_key: "feature", status_key: "feature.briefing", planner: ALICE_OP }));
+  const feature = parseWork(
+    detail(40, { type_key: "feature", status_key: "feature.briefing", planner: ALICE_OP, assignee: asUser(ALICE_OP) }),
+  );
   const children = [parseWork(detail(41, { parent_id: 40, assignee: asUser(BOB_OP) }))];
   const groups = createZqGroups({ map: testMap<ZqGroup>() });
   const remarks: Array<{ featureId: number; channelId: string; participantOpUserIds: string[] }> = [];

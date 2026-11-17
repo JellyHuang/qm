@@ -26,7 +26,14 @@ function work(id: number, over: Partial<WorkView> = {}): WorkView {
 const PLANNED = { plannedEnd: NOW + 30 * DAY };
 
 function feature(stage: string, over: Partial<WorkView> = {}): WorkView {
-  return work(1, { typeKey: "feature", statusKey: stage, projectId: "p1", responsiblePlanner: ALICE, ...over });
+  return work(1, {
+    typeKey: "feature",
+    statusKey: stage,
+    projectId: "p1",
+    responsiblePlanner: ALICE,
+    assignee: ALICE,
+    ...over,
+  });
 }
 
 const rules = (facts: FeatureFacts, c: ZqContract = contract, o = OPTS): RuleAction[] => evaluateRules(facts, c, o);
@@ -462,13 +469,17 @@ test("each new submission time of an optimization order is reminded once, and a 
   assert.ok([first, resubmitted, untimed].every((a) => a.once === true));
 });
 
-test("a feature with several responsible planners and no assignee asks the producer once which planner takes it", () => {
+test("a feature with responsible planners and no assignee asks the producer once which planner takes it", () => {
   const second = { id: "15", name: "Carol C" };
-  const many = feature("feature.planning", { planners: [ALICE, second], reviewer: { id: "22", name: "Rev R" } });
+  const many = feature("feature.planning", {
+    assignee: undefined,
+    planners: [ALICE, second],
+    reviewer: { id: "22", name: "Rev R" },
+  });
   const asked = rules({ feature: many, children: [] }).filter((a) => a.rule === "assignee-unconfirmed");
   assert.equal(asked.length, 1);
   assert.deepEqual(asked[0]!.to, [{ kind: "field", field: "reviewer" }]);
-  assert.match(asked[0]!.text, /2 位负责策划.*Alice A、Carol C.*受理人/);
+  assert.match(asked[0]!.text, /还没有受理人.*Alice A、Carol C.*确认哪一位/);
   assert.equal(asked[0]!.once, true);
   const again = rules({ feature: many, children: [] }).filter((a) => a.rule === "assignee-unconfirmed")[0]!;
   assert.equal(again.subjectId, asked[0]!.subjectId);
@@ -478,6 +489,16 @@ test("a feature with several responsible planners and no assignee asks the produ
   assert.notEqual(changed.subjectId, asked[0]!.subjectId);
   const settled = rules({ feature: { ...many, assignee: ALICE }, children: [] });
   assert.equal(settled.filter((a) => a.rule === "assignee-unconfirmed").length, 0);
-  const single = rules({ feature: feature("feature.planning"), children: [] });
-  assert.equal(single.filter((a) => a.rule === "assignee-unconfirmed").length, 0);
+  const single = rules({
+    feature: feature("feature.planning", { assignee: undefined, reviewer: { id: "22", name: "Rev R" } }),
+    children: [],
+  });
+  assert.equal(single.filter((a) => a.rule === "assignee-unconfirmed").length, 1);
+  const noPlanner = feature("feature.planning", { assignee: undefined });
+  assert.equal(
+    rules({ feature: { ...noPlanner, responsiblePlanner: undefined }, children: [] }).filter(
+      (a) => a.rule === "assignee-unconfirmed",
+    ).length,
+    0,
+  );
 });
