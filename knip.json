@@ -30,6 +30,7 @@
         "scripts/skills-materialize-smoke.ts",
         "scripts/slack-user-token.ts",
         "scripts/tenant.ts",
+        "scripts/zq-jenkins-verify.ts",
         "superserve/templates/qm-agent.ts",
         "superserve/templates/verify-qm-agent.ts",
         "docs/qa/resource-search-demo.mjs",

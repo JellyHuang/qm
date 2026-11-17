@@ -43,7 +43,7 @@ export interface FeedEvent {
   batchId?: string;
 }
 
-export interface FeedContext {
+interface FeedContext {
   facts: readonly FeatureFacts[];
   day: (at: number) => string;
   link: (id: number) => string;
@@ -55,13 +55,13 @@ export interface ZqChangeCursor {
   cursor: string;
 }
 
-export interface RecordContext {
+interface RecordContext {
   day: (at: number) => string;
   link: (id: number) => string;
   fallbackMmUserId?: string;
 }
 
-export interface FlushTransport {
+interface FlushTransport {
   channel: (channelId: string, text: string) => Promise<void>;
   dm: (mmUserId: string, text: string) => Promise<void>;
 }

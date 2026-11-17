@@ -32,7 +32,7 @@ export interface ZqRunState {
   lastReport?: ScanReport;
 }
 
-export interface ReportSource {
+interface ReportSource {
   build(
     person: ScanPerson,
     period: ReportInput["period"],

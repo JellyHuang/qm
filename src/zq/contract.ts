@@ -6,14 +6,7 @@ export type Lifecycle = "normal" | "delayed" | "suspended" | "cancelled";
 
 const LIFECYCLES: readonly Lifecycle[] = ["normal", "delayed", "suspended", "cancelled"];
 
-export const PERSON_FIELDS = [
-  "responsiblePlanner",
-  "pm",
-  "reviewer",
-  "qaOwner",
-  "acceptor",
-  "regressionOwner",
-] as const;
+const PERSON_FIELDS = ["responsiblePlanner", "pm", "reviewer", "qaOwner", "acceptor", "regressionOwner"] as const;
 
 export type PersonField = (typeof PERSON_FIELDS)[number];
 
@@ -28,9 +21,9 @@ const PERSON_DEFAULTS: Record<PersonField, string> = {
 
 export type Recipient = { kind: "duty"; duty: Duty } | { kind: "field"; field: PersonField };
 
-export type TypeOwner = { kind: "duty"; duty: Duty } | { kind: "taskField"; field: PersonField };
+type TypeOwner = { kind: "duty"; duty: Duty } | { kind: "taskField"; field: PersonField };
 
-export interface StageRoles {
+interface StageRoles {
   plannerUnassigned: string;
   reviewPending: string;
   staffing: string;

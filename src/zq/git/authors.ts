@@ -1,4 +1,4 @@
-export type CommitAuthor = { kind: "person"; mmUserId: string } | { kind: "unmatched" };
+type CommitAuthor = { kind: "person"; mmUserId: string } | { kind: "unmatched" };
 
 export interface AuthorResolver {
   resolve(email: string): Promise<CommitAuthor>;

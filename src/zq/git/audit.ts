@@ -3,7 +3,7 @@ import type { DurableMap } from "../../persistence/durable-map.ts";
 import { GitRateLimited } from "./limits.ts";
 import { GitDenied, printable } from "./validate.ts";
 
-export type GitAuditResult = "ok" | `denied:${string}` | "rate_limited" | "error";
+type GitAuditResult = "ok" | `denied:${string}` | "rate_limited" | "error";
 
 export interface GitAuditRow {
   at: number;

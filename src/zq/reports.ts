@@ -41,7 +41,7 @@ export interface ReportInput {
   projects?: ReportProject[];
 }
 
-export interface ProjectReportInput {
+interface ProjectReportInput {
   projectId: string;
   projectName?: string;
   weekKey: string;
@@ -110,7 +110,7 @@ function templateReport(input: ReportInput): string {
   return lines.join("\n");
 }
 
-export function projectDraftId(projectId: string, weekKey: string): string {
+function projectDraftId(projectId: string, weekKey: string): string {
   return `project:${projectId}:weekly:${weekKey}`;
 }
 

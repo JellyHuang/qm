@@ -14,7 +14,7 @@ export interface ZqIdentityLink {
   confirmedBy?: string;
 }
 
-export interface ZqIdentityProposal {
+interface ZqIdentityProposal {
   mmUserId: string;
   opUserId: string;
   opLogin: string;

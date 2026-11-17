@@ -19,7 +19,7 @@ import {
   type GitRepo,
 } from "./validate.ts";
 
-export const MAX_COMMITS = 50;
+const MAX_COMMITS = 50;
 export const MAX_FILES_PER_COMMIT_LISTING = 50;
 export const MAX_COMMIT_MESSAGE_EXCERPT_BYTES = 1024;
 export const MAX_FILES_IN_COMMIT = 200;
@@ -27,8 +27,8 @@ export const MAX_DIFF_BYTES = 64 * 1024;
 export const MAX_DIFF_FILES = 20;
 export const MAX_FILE_BYTES = 64 * 1024;
 export const MAX_BLAME_LINES = 200;
-export const MAX_BLAME_LINE_BYTES = 1024;
-export const MAX_BRANCHES = 200;
+const MAX_BLAME_LINE_BYTES = 1024;
+const MAX_BRANCHES = 200;
 
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const BINARY_SNIFF_BYTES = 8000;
@@ -43,13 +43,13 @@ export interface GitReadonlyConfig {
   fetchTimeoutMs?: number;
 }
 
-export interface Cut {
+interface Cut {
   truncated: boolean;
   cutBytes?: number;
   cutItems?: number;
 }
 
-export interface FileChange {
+interface FileChange {
   path: string;
   status: string;
   added: number | null;
@@ -60,7 +60,7 @@ export interface FileChange {
   newOid?: string;
 }
 
-export interface BinaryFileInfo {
+interface BinaryFileInfo {
   path: string;
   status: string;
   oldOid?: string;
@@ -69,7 +69,7 @@ export interface BinaryFileInfo {
   newSize?: number;
 }
 
-export interface CommitSummary {
+interface CommitSummary {
   sha: string;
   authorName: string;
   authorEmail: string;
@@ -82,11 +82,11 @@ export interface CommitSummary {
   filesTruncated: boolean;
 }
 
-export interface RecentCommits extends Cut {
+interface RecentCommits extends Cut {
   commits: CommitSummary[];
 }
 
-export interface CommitDetail extends Cut {
+interface CommitDetail extends Cut {
   sha: string;
   message: string;
   author: { name: string; email: string; date: string };
@@ -95,7 +95,7 @@ export interface CommitDetail extends Cut {
   files: { path: string; status: string; added: number | null; removed: number | null; binary: boolean }[];
 }
 
-export interface DiffResult extends Cut {
+interface DiffResult extends Cut {
   base: string;
   head: string;
   patch: string;
@@ -103,11 +103,11 @@ export interface DiffResult extends Cut {
   binaryFiles: BinaryFileInfo[];
 }
 
-export type FileAtResult = Cut & { sha: string; path: string; oid: string; size: number } & (
+type FileAtResult = Cut & { sha: string; path: string; oid: string; size: number } & (
     { binary: false; content: string } | { binary: true }
   );
 
-export interface BlameLine {
+interface BlameLine {
   line: number;
   sha: string;
   author: string;
@@ -115,17 +115,17 @@ export interface BlameLine {
   text: string;
 }
 
-export interface BlameResult extends Cut {
+interface BlameResult extends Cut {
   sha: string;
   path: string;
   lines: BlameLine[];
 }
 
-export interface BranchesResult extends Cut {
+interface BranchesResult extends Cut {
   branches: { name: string; sha: string; date: string }[];
 }
 
-export interface FetchResult extends Cut {
+interface FetchResult extends Cut {
   repo: string;
 }
 

@@ -19,10 +19,10 @@ export class GitDenied extends Error {
   }
 }
 
-export const MAX_REF_LENGTH = 200;
-export const MAX_PATH_LENGTH = 1024;
-export const MAX_PATTERN_LENGTH = 100;
-export const MAX_LINE_NUMBER = 10_000_000;
+const MAX_REF_LENGTH = 200;
+const MAX_PATH_LENGTH = 1024;
+const MAX_PATTERN_LENGTH = 100;
+const MAX_LINE_NUMBER = 10_000_000;
 
 const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/+@-]*$/;
 const REVISION = /^[A-Za-z0-9][A-Za-z0-9._/+@^~-]*$/;
@@ -49,7 +49,7 @@ function refLike(kind: string, value: unknown, shape: RegExp): string {
   return value;
 }
 
-export const GIT_FETCH_FILTERS = ["blob:none"] as const;
+const GIT_FETCH_FILTERS = ["blob:none"] as const;
 
 export function checkFilter(value: unknown): string {
   if (typeof value !== "string" || !(GIT_FETCH_FILTERS as readonly string[]).includes(value))

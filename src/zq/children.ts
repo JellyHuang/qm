@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { DurableMap } from "../persistence/durable-map.ts";
 import { errMessage } from "../util/errors.ts";
 
-export interface ChildInput {
+interface ChildInput {
   typeKey: string;
   subject: string;
   description: string;

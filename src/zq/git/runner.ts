@@ -12,13 +12,13 @@ export interface GitRunnerOptions {
   withKeyFile?: <T>(fn: (keyFile: string) => Promise<T>) => Promise<T>;
 }
 
-export interface GitOutput {
+interface GitOutput {
   stdout: Buffer;
   truncated: boolean;
   cutBytes: number;
 }
 
-export interface GitRunOptions {
+interface GitRunOptions {
   maxBytes?: number;
   timeoutMs?: number;
   remote?: boolean;
@@ -28,10 +28,10 @@ export interface GitRunner {
   run(gitDir: string, args: readonly string[], opts?: GitRunOptions): Promise<GitOutput>;
 }
 
-export const GIT_TIMEOUT_MS = 60_000;
+const GIT_TIMEOUT_MS = 60_000;
 export const GIT_FETCH_TIMEOUT_MS = 30 * 60_000;
-export const GIT_KILL_GRACE_MS = 2000;
-export const GIT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
+const GIT_KILL_GRACE_MS = 2000;
+const GIT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const STDERR_BYTES = 4096;
 const SAFE_PATH = "/usr/local/bin:/usr/bin:/bin";
 const liveGroups = new Set<number>();
