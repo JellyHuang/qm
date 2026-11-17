@@ -1,6 +1,6 @@
 # DDL proposal: GitLab read-only MCP service (for human review)
 
-Status: APPROVED by the PM on 2026-11-16 for the decisions marked APPROVED below (tenant scoped tables, the role grants, no redaction, audit retention, serve on audit failure). Nothing here is applied: no database was contacted, "current" shapes are derived from repo code, and the migrations and the role SQL are still to be written and reviewed.
+Status: APPROVED by the PM on 2026-11-16 for the decisions marked APPROVED below (tenant scoped tables, the role grants, no redaction, audit retention, serve on audit failure). Sections 8 (author mapping tables) and 9 (Jenkins tables) were APPROVED by the PM on 2026-11-17; that approval does not enable anything, see those sections. Nothing here is applied: no database was contacted, "current" shapes are derived from repo code, and the migrations and the role SQL are still to be written and reviewed.
 
 ## 0. How this repo does tables and roles (facts from the code)
 
@@ -173,9 +173,19 @@ Still open:
 9. Rollback: drop the two new tables, then drop the database account, five statements in total, at any time. Existing tables and data are unaffected, and old rows stay valid.
 10. Still open: how the connection string is delivered, how the role is bound to the tenant in a multi-tenant deployment, and pruning of tombstones.
 
-## 8. Author mapping tables (not yet approved)
+## 8. Author mapping tables (APPROVED by the PM, 2026-11-17)
 
-Status: NOT APPROVED. Nothing here is applied and no database was contacted. The code lives on branch `oa/zq-author-map` (docs/zq/author-mapping.md). It is switched off by `ZQ_GIT_AUTHOR_MAPPING` (default off, set in no environment): with the switch off the code builds no durable map, so neither table is registered or created. Turning the switch on makes the durable-map layer create both tables, so the switch must stay off until this section is approved.
+Status: APPROVED by the PM, 2026-11-17. Approval of this DDL does NOT enable anything. Nothing here is applied and no database was contacted. The tables stay disabled by default: they are auto-created by the durable-map layer only when `ZQ_GIT_AUTHOR_MAPPING=1` is set, and no environment enables that switch by default. The code lives on branch `oa/zq-author-map` (docs/zq/author-mapping.md). With the switch off the code builds no durable map, so neither table is registered or created; turning the switch on in an environment is a separate, deliberate step.
+
+Approved decisions affecting this section (PM, 2026-11-17): all recommendations adopted.
+
+- Mattermost verified emails are the authoritative source of identity for now.
+- Aliases are maintained by the PM through the unmapped queue.
+- Commits by departed staff are handled by sending them to the PM.
+- Resolved and ignored unmapped entries are retained 180 days.
+- No Gmail dot folding.
+- Ignored authors stay silent.
+- On audit failure the service keeps serving (serve confirmed).
 
 These are core-side tables used only by QM core. The zq-git-mcp service role (section 4) gets no grant on them. QM core reads and writes them with its normal application role (the one in `DATABASE_URL`, privileges from `qm db grant`), which also runs the migrations.
 
@@ -231,11 +241,28 @@ Migration ledger rows stay; remove the ids if re-adding. With the switch left on
 
 Unchanged: `zq_git_audit`, `zq_git_branch_tips`, `zq_git_blob_meta`, `durable_map_versions` and every other table, column, index, constraint and JSON key. Configuration added: `ZQ_GIT_AUTHOR_MAPPING`, `ZQ_GIT_IGNORED_REOPEN_DAYS`, `ZQ_GIT_UNMAPPED_RETENTION_DAYS`, `ZQ_GIT_DOMAIN_ALIASES`; no existing setting changes.
 
-## 9. Jenkins auto-rerun tables (not yet approved)
+## 9. Jenkins auto-rerun tables (APPROVED by the PM, 2026-11-17)
 
 Source: branch `oa/zq-jenkins-rerun` of this repository, `docs/zq/jenkins-auto-rerun.md` (design) and `src/zq/jenkins/store.ts`.
 
-Status: NOT YET APPROVED. No table is created until the PM approves this DDL. Nothing here has been applied; no database was contacted. The shapes below come from the code in `src/zq/jenkins/store.ts` and from how the durable-map layer builds a table (`src/persistence/durable-map.ts`, `src/tenants/migrations.ts`).
+Status: APPROVED by the PM, 2026-11-17. Approval of this DDL does NOT enable anything. The three tables stay disabled by default: they are auto-created by the durable-map layer only when `ZQ_JENKINS_POLL=1` is set (with `ZQ_JENKINS_URL` and the bot credential), and no environment enables that switch by default. Nothing here has been applied; no database was contacted.
+
+Approved decisions affecting this section (PM, 2026-11-17):
+
+- Jobs `Server-Run` and `PackageSent` are excluded.
+- Human-triggered builds are not rerun.
+- UNSTABLE is not a failure.
+- At most 3 reruns per job per hour.
+- The window is 30 minutes.
+- Notices are written in Chinese and sent for failures only.
+- The owner map is static.
+- `zq_jenkins_audit` is retained 90 days.
+- A chain rooted at a human is still rerun.
+- If the record of the cause is lost, the build falls back to the bot cause.
+- `ZQ_JENKINS_BOT_IDS=AI-Agent`.
+- Audit failure policy: serve (confirmed).
+
+The shapes below come from the code in `src/zq/jenkins/store.ts` and from how the durable-map layer builds a table (`src/persistence/durable-map.ts`, `src/tenants/migrations.ts`).
 
 ### When the tables come into existence
 
@@ -270,11 +297,27 @@ All timestamps are epoch milliseconds. All example rows are INVENTED.
 `zq_jenkins_builds`, `id` = `<job>:<number>` of the original build (the idempotency key):
 
 ```json
-{ "job": "Server-Build", "number": 812, "state": "rerun_failed", "reason": null, "url": "https://jenkins.example/job/Server-Build/812/",
-  "result": "FAILURE", "finishedAt": 1763000040000, "observedAt": 1763000070000, "updatedAt": 1763000400000,
-  "causes": ["timer"], "fingerprint": "<sha256 of the sorted name/value pairs>", "parameterCount": 4,
-  "consoleTailHash": "<sha256 of the last 4 KiB>", "claimedAt": 1763000100000, "queueId": 501,
-  "rerunNumber": 813, "rerunUrl": "https://jenkins.example/job/Server-Build/813/", "rerunResult": "FAILURE", "parameterDifferences": [] }
+{
+  "job": "Server-Build",
+  "number": 812,
+  "state": "rerun_failed",
+  "reason": null,
+  "url": "https://jenkins.example/job/Server-Build/812/",
+  "result": "FAILURE",
+  "finishedAt": 1763000040000,
+  "observedAt": 1763000070000,
+  "updatedAt": 1763000400000,
+  "causes": ["timer"],
+  "fingerprint": "<sha256 of the sorted name/value pairs>",
+  "parameterCount": 4,
+  "consoleTailHash": "<sha256 of the last 4 KiB>",
+  "claimedAt": 1763000100000,
+  "queueId": 501,
+  "rerunNumber": 813,
+  "rerunUrl": "https://jenkins.example/job/Server-Build/813/",
+  "rerunResult": "FAILURE",
+  "parameterDifferences": []
+}
 ```
 
 Keys that are absent are not stored (`reason`, `consoleTailHash`, `claimedAt`, `queueId`, `rerunNumber`, `rerunUrl`, `rerunResult`, `parameterDifferences`). `state` is one of `observed`, `eligible`, `rerun_requested`, `rerun_running`, `rerun_succeeded`, `rerun_failed`, `notified`, `skipped`. `reason` (with `skipped`) is one of `job_not_enabled`, `dangerous_parameters`, `is_rerun`, `bot_triggered`, `manual_trigger`, `cause_not_allowed`, `chain_rerun`, `superseded`, `parameters_unreadable`, `parameters_incomplete`, `circuit_open`, `too_old`, `request_rejected`, `claim_uncertain`. `causes` values are `timer`, `scm`, `upstream`, `user`, `remote`, `other`. No parameter value, no console text and no credential is stored: only a count, a fingerprint and a hash.
@@ -282,8 +325,16 @@ Keys that are absent are not stored (`reason`, `consoleTailHash`, `claimedAt`, `
 `zq_jenkins_audit`, `id` = `<job>:<number>:<event>` (state changes use the new state as the event), `notice` events use `<notice id>:notice_queued|notice_sent|notice_failed`, errors use `poll:<job>:<kind>:<hour>`:
 
 ```json
-{ "id": "Server-Build:812:rerun_requested", "at": 1763000100000, "job": "Server-Build", "number": 812,
-  "event": "rerun_requested", "from": "eligible", "to": "rerun_requested", "actor": "poller" }
+{
+  "id": "Server-Build:812:rerun_requested",
+  "at": 1763000100000,
+  "job": "Server-Build",
+  "number": 812,
+  "event": "rerun_requested",
+  "from": "eligible",
+  "to": "rerun_requested",
+  "actor": "poller"
+}
 ```
 
 Optional keys: `number`, `from`, `to`, `reason`, `detail` (names and counts only). `actor` is always `poller`.
@@ -291,8 +342,18 @@ Optional keys: `number`, `from`, `to`, `reason`, `detail` (names and counts only
 `zq_jenkins_notices`, `id` = `<job>:<number>:<kind>`, or `breaker:<job>:<hour>`:
 
 ```json
-{ "id": "Server-Build:812:rerun_failed", "kind": "rerun_failed", "job": "Server-Build", "number": 812, "channelId": "backend-group",
-  "text": "Jenkins ...", "mode": "dry-run", "status": "pending", "attempts": 0, "createdAt": 1763000400000 }
+{
+  "id": "Server-Build:812:rerun_failed",
+  "kind": "rerun_failed",
+  "job": "Server-Build",
+  "number": 812,
+  "channelId": "backend-group",
+  "text": "Jenkins ...",
+  "mode": "dry-run",
+  "status": "pending",
+  "attempts": 0,
+  "createdAt": 1763000400000
+}
 ```
 
 `kind` is `rerun_failed`, `needs_attention` or `circuit_open`; `status` is `pending`, `sending`, `sent` or `failed`; `mode` is `dry-run` or `live`; `sentAt` is added when sent. The text has the job, build numbers, URLs, results and an owner mention; no parameters, no log content.
@@ -301,7 +362,7 @@ Before and after: all three tables are new. Nothing existing is changed, moved o
 
 ### Retention
 
-`zq_jenkins_audit` is recommended at 90 days. `createJenkinsStore(...).pruneAudit()` (`src/zq/jenkins/store.ts`) deletes rows whose `at` is older than 90 days through the same function as `pruneGitAudit`; it is tested and NOT scheduled, so nothing deletes anything until the PM approves a schedule. `zq_jenkins_builds` and `zq_jenkins_notices` have no pruning (one row per failed build; low volume); a retention for them is an open decision.
+`zq_jenkins_audit` is retained 90 days (approved). `createJenkinsStore(...).pruneAudit()` (`src/zq/jenkins/store.ts`) deletes rows whose `at` is older than 90 days through the same function as `pruneGitAudit`; it is tested and NOT scheduled, so nothing deletes anything until a schedule is wired. `zq_jenkins_builds` and `zq_jenkins_notices` have no pruning (one row per failed build; low volume); a retention for them is an open decision.
 
 ### Grants
 
@@ -309,6 +370,6 @@ Core application role only (the role QM core already runs as, with the existing 
 
 ### Rollout and rollback
 
-Rollout: merge the code with every switch off (no table is created); after the PM approves, set `ZQ_JENKINS_URL`, the credential and `ZQ_JENKINS_POLL=1` (dry-run); the next start creates the three tables and the poller only observes. Real reruns and notices are separate switches (`ZQ_JENKINS_RERUN`, `ZQ_JENKINS_NOTIFY`).
+Rollout: merge the code with every switch off (no table is created); set `ZQ_JENKINS_URL`, the credential and `ZQ_JENKINS_POLL=1` (dry-run); the next start creates the three tables and the poller only observes. Real reruns and notices are separate switches (`ZQ_JENKINS_RERUN`, `ZQ_JENKINS_NOTIFY`).
 
 Rollback: unset `ZQ_JENKINS_POLL` (the maps are no longer built; the tables and rows stay and are inert). To remove the data, after the poller is off: `DROP TABLE IF EXISTS zq_jenkins_notices, zq_jenkins_audit, zq_jenkins_builds;`. Dropping `zq_jenkins_builds` discards the once-only record, so do it only with `ZQ_JENKINS_RERUN` unset.
