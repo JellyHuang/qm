@@ -1,3 +1,5 @@
+import { normaliseEmail } from "./names.ts";
+
 export interface Person {
   personId: string;
   mattermostUser: string;
@@ -5,15 +7,6 @@ export interface Person {
 
 export interface PeopleDirectory {
   findByEmail(email: string): Promise<Person[]>;
-}
-
-export function normaliseEmail(raw: string): string {
-  const email = raw.trim().toLowerCase();
-  const at = email.lastIndexOf("@");
-  if (at < 0) return email;
-  const plus = email.indexOf("+");
-  const local = plus >= 0 && plus < at ? email.slice(0, plus) : email.slice(0, at);
-  return `${local}@${email.slice(at + 1)}`;
 }
 
 export function createMattermostPeopleDirectory(

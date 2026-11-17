@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import type { DurableMap } from "../src/persistence/durable-map.ts";
 import { zqConfigFromEnv } from "../src/zq/config.ts";
 import { createAuthorMapping } from "../src/zq/git-mcp/author-mapping.ts";
-import { createMemoryPeopleDirectory } from "../src/zq/git-mcp/people.ts";
 import { tenantTest as test } from "./support/tenant-test.ts";
 import { testMap } from "./support/test-database.ts";
 
@@ -12,9 +11,9 @@ const POLL = {
   ZQ_GIT_POLL: "1",
 };
 
-const li = { personId: "p-li", mattermostUser: "mm-li" };
+const alice = { personId: "p-alice", mattermostUser: "mm-alice" };
 
-test("the unmapped queue and alias table persist and resolve on Postgres", async (t) => {
+test("the unmapped queue and the name rows persist, resolve and refuse a second insert of one name on Postgres", async (t) => {
   if (!process.env.DATABASE_URL) return t.skip("DATABASE_URL is not set");
   const tables = new Map<string, DurableMap<never>>();
   const map = <T>(table: string) => {
@@ -24,14 +23,13 @@ test("the unmapped queue and alias table persist and resolve on Postgres", async
   const build = () =>
     createAuthorMapping({
       config: zqConfigFromEnv({ ...POLL, ZQ_GIT_AUTHOR_MAPPING: "1" }).gitAuthors,
-      directory: createMemoryPeopleDirectory([{ emails: ["li@corp.example"], person: li }]),
       map,
     })!;
   const before = build();
   const commits = [
     {
       sha: "c1",
-      authorName: "N",
+      authorName: "Nobody Example",
       authorEmail: "Nobody@corp.example",
       date: "2026-01-01T00:00:00Z",
       subject: "s",
@@ -43,12 +41,19 @@ test("the unmapped queue and alias table persist and resolve on Postgres", async
   await before.mapper.map([batch]);
   const after = build();
   const [entry] = await after.queue.list();
-  assert.deepEqual([entry?.email, entry?.count, entry?.exampleSha], ["nobody@corp.example", 1, "c1"]);
-  await after.queue.resolve("nobody@corp.example", li, "pm");
+  assert.deepEqual(
+    [entry?.nameKey, entry?.emails, entry?.count, entry?.exampleSha],
+    ["nobody example", ["nobody@corp.example"], 1, "c1"],
+  );
+  const row = { kind: "person" as const, name: "Nobody Example", ...alice, addedBy: "pm" };
+  assert.equal(await after.aliases.insert(row), true);
+  assert.equal(await after.aliases.insert({ ...row, name: "NOBODY  example", personId: "p-other" }), false);
+  assert.equal((await after.aliases.get("nobody example"))?.kind, "person");
+  await after.queue.resolve({ name: "Nobody Example", email: "nobody@corp.example" }, "p-alice", "pm");
   assert.deepEqual(await after.queue.list(), []);
   const result = await build().mapper.map([batch]);
   assert.deepEqual(
     result.byPerson.map((g) => g.person.personId),
-    ["p-li"],
+    ["p-alice"],
   );
 });

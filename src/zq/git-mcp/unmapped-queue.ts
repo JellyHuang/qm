@@ -1,12 +1,14 @@
 import type { DurableMap } from "../../persistence/durable-map.ts";
-import type { AuthorAliases } from "./author-aliases.ts";
-import { normaliseEmail, type Person } from "./people.ts";
+import { displayName, encodeNameId, isGenericName, nameKey, normaliseEmail } from "./names.ts";
 
 export type UnmappedReason = "no_match" | "invalid_email" | "ambiguous";
 type UnmappedStatus = "open" | "resolved" | "ignored";
 
+const EMAILS_MAX = 10;
+
 export interface UnmappedAuthor {
-  email: string;
+  nameKey: string;
+  emails: string[];
   name: string;
   reason: UnmappedReason;
   candidates: string[];
@@ -22,9 +24,14 @@ export interface UnmappedAuthor {
   personId?: string;
 }
 
-interface UnmappedSighting {
-  email: string;
+interface UnmappedAuthorRef {
   name: string;
+  email: string;
+}
+
+interface UnmappedSighting {
+  name: string;
+  emails: readonly string[];
   reason: UnmappedReason;
   candidates?: readonly string[];
   commits: ReadonlyArray<{ repo: string; sha: string }>;
@@ -33,8 +40,9 @@ interface UnmappedSighting {
 export interface UnmappedQueue {
   record(sighting: UnmappedSighting): Promise<UnmappedAuthor>;
   list(status?: UnmappedStatus): Promise<UnmappedAuthor[]>;
-  resolve(email: string, person: Person, by: string): Promise<UnmappedAuthor | null>;
-  ignore(email: string, by: string): Promise<UnmappedAuthor | null>;
+  idOf(author: UnmappedAuthorRef): string;
+  resolve(author: UnmappedAuthorRef, personId: string, by: string): Promise<UnmappedAuthor | null>;
+  ignore(author: UnmappedAuthorRef, by: string): Promise<UnmappedAuthor | null>;
   prune(): Promise<number>;
 }
 
@@ -46,8 +54,6 @@ export function unmappedCutoff(now: number, days = UNMAPPED_RETENTION_DAYS): num
   if (!Number.isInteger(days) || days < 1) throw new Error("the retention is a whole number of days from 1");
   return now - days * DAY_MS;
 }
-
-const keyOf = (email: string) => normaliseEmail(email) || "(none)";
 
 function absorb(
   entry: UnmappedAuthor,
@@ -62,9 +68,14 @@ function absorb(
       now - (entry.closedAt ?? entry.lastSeenAt) >= reopenIgnoredAfterDays * DAY_MS);
   const seen = new Set(entry.recentShas);
   const fresh = sighting.commits.filter((c, i, all) => !seen.has(c.sha) && all.findIndex((o) => o.sha === c.sha) === i);
+  const emails = [...new Set([...entry.emails, ...sighting.emails.map(normaliseEmail)].filter(Boolean))].slice(
+    0,
+    EMAILS_MAX,
+  );
   return {
     ...entry,
-    name: sighting.name || entry.name,
+    emails,
+    name: displayName(sighting.name) || entry.name,
     reason: sighting.reason,
     candidates: [...(sighting.candidates ?? [])],
     status: reopen ? "open" : entry.status,
@@ -76,15 +87,21 @@ function absorb(
 
 export function createUnmappedQueue(opts: {
   map: DurableMap<UnmappedAuthor>;
-  aliases: Pick<AuthorAliases, "add">;
+  genericNames: readonly string[];
   retentionDays?: number;
   reopenIgnoredAfterDays?: number;
   now?: () => number;
 }): UnmappedQueue {
   const reopenAfter = opts.reopenIgnoredAfterDays ?? 0;
   const now = opts.now ?? (() => Date.now());
-  const close = (email: string, status: "resolved" | "ignored", by: string, personId?: string) =>
-    opts.map.update(keyOf(email), (entry) => ({
+  const idOf = ({ name, email }: UnmappedAuthorRef) => {
+    const key = nameKey(name);
+    const mail = normaliseEmail(email);
+    if (!key) return mail ? `email:${mail}` : "(none)";
+    return isGenericName(key, opts.genericNames) ? `${encodeNameId(key)}|${mail}` : encodeNameId(key);
+  };
+  const close = (author: UnmappedAuthorRef, status: "resolved" | "ignored", by: string, personId?: string) =>
+    opts.map.update(idOf(author), (entry) => ({
       ...entry,
       status,
       closedBy: by,
@@ -92,14 +109,16 @@ export function createUnmappedQueue(opts: {
       ...(personId ? { personId } : {}),
     }));
   return {
+    idOf,
     async record(sighting) {
-      const key = keyOf(sighting.email);
+      const key = idOf({ name: sighting.name, email: sighting.emails[0] ?? "" });
       const first = sighting.commits[0];
       if (!first) throw new Error("a sighting needs at least one commit");
       const at = now();
       const fresh: UnmappedAuthor = {
-        email: normaliseEmail(sighting.email),
-        name: sighting.name,
+        nameKey: nameKey(sighting.name),
+        emails: [],
+        name: displayName(sighting.name),
         reason: sighting.reason,
         candidates: [...(sighting.candidates ?? [])],
         status: "open",
@@ -117,14 +136,10 @@ export function createUnmappedQueue(opts: {
     async list(status = "open") {
       return (await opts.map.all())
         .filter((entry) => entry.status === status)
-        .sort((a, b) => a.firstSeenAt - b.firstSeenAt || a.email.localeCompare(b.email));
+        .sort((a, b) => a.firstSeenAt - b.firstSeenAt || a.nameKey.localeCompare(b.nameKey));
     },
-    async resolve(email, person, by) {
-      if (!(await opts.map.get(keyOf(email)))) return null;
-      await opts.aliases.add(email, person, by);
-      return close(email, "resolved", by, person.personId);
-    },
-    ignore: (email, by) => close(email, "ignored", by),
+    resolve: (author, personId, by) => close(author, "resolved", by, personId),
+    ignore: (author, by) => close(author, "ignored", by),
     async prune() {
       const cutoff = unmappedCutoff(now(), opts.retentionDays);
       const stale = (entry: UnmappedAuthor) =>

@@ -22,7 +22,12 @@ export interface ZqConfig {
   gitAuthors: {
     externalDomains: readonly string[];
     botNames: readonly string[];
-    domainAliases: Readonly<Record<string, string>>;
+    botTokens: readonly string[];
+    genericNames: readonly string[];
+    identityAdmins: readonly string[];
+    bindMaxPerPerson: number;
+    bind: boolean;
+    mattermostEmailFallback: boolean;
     mapping: boolean;
     ignoredReopenDays: number;
     queueRetentionDays: number;
@@ -36,6 +41,9 @@ const DEFAULT_DAILY_CEILING = 200;
 const DEFAULT_ESCALATION_DAYS = 2;
 const WEDNESDAY = 3;
 const GIT_POLL_SECONDS = { default: 300, min: 30, max: 3600 };
+const DEFAULT_BOT_TOKENS = ["bot"];
+const DEFAULT_GENERIC_NAMES = ["admin", "administrator", "root", "test", "user", "git", "unknown", "pc"];
+const MAX_BOT_TOKENS = 50;
 
 const on = (value: string | undefined) => value?.trim() === "1";
 
@@ -71,12 +79,10 @@ function names(raw: string | undefined): string[] {
     .filter(Boolean);
 }
 
-function domainAliases(name: string, raw: string | undefined): Record<string, string> {
-  const pairs = names(raw).map((item) => item.split("=").map((part) => part.trim().toLowerCase().replace(/^@/, "")));
-  for (const pair of pairs)
-    if (pair.length !== 2 || !pair[0] || !pair[1])
-      throw new Error(`${name} must list pairs such as old.example=corp.example`);
-  return Object.fromEntries(pairs.map(([from, to]) => [from!, to!]));
+function listed(name: string, raw: string | undefined, fallback: readonly string[], valid: (item: string) => boolean) {
+  const list = raw === undefined ? [...fallback] : names(raw);
+  for (const item of list) if (!valid(item)) throw new Error(`${name} has an invalid item: ${item}`);
+  return list;
 }
 
 function jobNames(name: string, raw: string | undefined, fallback: readonly string[]): string[] {
@@ -117,6 +123,24 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   if (gitPoll && !gitMcpUrl) throw new Error("ZQ_GIT_POLL needs ZQ_GIT_MCP_URL and ZQ_GIT_MCP_SECRET");
   const gitAuthorMapping = on(env.ZQ_GIT_AUTHOR_MAPPING);
   if (gitAuthorMapping && !gitPoll) throw new Error("ZQ_GIT_AUTHOR_MAPPING needs ZQ_GIT_POLL=1");
+  const gitAuthorBind = on(env.ZQ_GIT_AUTHOR_BIND);
+  if (gitAuthorBind && !gitAuthorMapping) throw new Error("ZQ_GIT_AUTHOR_BIND needs ZQ_GIT_AUTHOR_MAPPING=1");
+  const gitEmailFallback = on(env.ZQ_GIT_MATTERMOST_EMAIL_FALLBACK);
+  if (gitEmailFallback && !gitAuthorMapping)
+    throw new Error("ZQ_GIT_MATTERMOST_EMAIL_FALLBACK needs ZQ_GIT_AUTHOR_MAPPING=1");
+  const botTokens = listed("ZQ_GIT_BOT_TOKENS", env.ZQ_GIT_BOT_TOKENS, DEFAULT_BOT_TOKENS, (item) =>
+    /^[a-z0-9]{2,32}$/.test(item),
+  );
+  if (botTokens.length > MAX_BOT_TOKENS) throw new Error(`ZQ_GIT_BOT_TOKENS lists at most ${MAX_BOT_TOKENS} tokens`);
+  const genericNames = listed(
+    "ZQ_GIT_GENERIC_NAMES",
+    env.ZQ_GIT_GENERIC_NAMES,
+    DEFAULT_GENERIC_NAMES,
+    (item) => !item.includes("\\"),
+  );
+  const identityAdmins = listed("ZQ_GIT_IDENTITY_ADMINS", env.ZQ_GIT_IDENTITY_ADMINS, [], (item) =>
+    /^[\x21-\x7e]{1,256}$/.test(item),
+  );
   const gitPollSeconds = integer(
     "ZQ_GIT_POLL_SECONDS",
     env.ZQ_GIT_POLL_SECONDS,
@@ -165,7 +189,12 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
     gitAuthors: {
       externalDomains: names(env.ZQ_GIT_EXTERNAL_DOMAINS),
       botNames: names(env.ZQ_GIT_BOT_NAMES),
-      domainAliases: domainAliases("ZQ_GIT_DOMAIN_ALIASES", env.ZQ_GIT_DOMAIN_ALIASES),
+      botTokens,
+      genericNames,
+      identityAdmins,
+      bindMaxPerPerson: integer("ZQ_GIT_BIND_MAX_PER_PERSON", env.ZQ_GIT_BIND_MAX_PER_PERSON, 10, 1, 100),
+      bind: gitAuthorBind,
+      mattermostEmailFallback: gitEmailFallback,
       mapping: gitAuthorMapping,
       ignoredReopenDays: integer("ZQ_GIT_IGNORED_REOPEN_DAYS", env.ZQ_GIT_IGNORED_REOPEN_DAYS, 0, 0, 3650),
       queueRetentionDays: integer("ZQ_GIT_UNMAPPED_RETENTION_DAYS", env.ZQ_GIT_UNMAPPED_RETENTION_DAYS, 180, 1, 3650),

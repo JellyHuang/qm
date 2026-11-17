@@ -58,40 +58,79 @@ test("who hears about an empty responsibility field is configured and never chos
   );
 });
 
+const AUTHOR_DEFAULTS = {
+  externalDomains: [],
+  botNames: [],
+  botTokens: ["bot"],
+  genericNames: ["admin", "administrator", "root", "test", "user", "git", "unknown", "pc"],
+  identityAdmins: [],
+  bindMaxPerPerson: 10,
+  bind: false,
+  mattermostEmailFallback: false,
+  mapping: false,
+  ignoredReopenDays: 0,
+  queueRetentionDays: 180,
+};
+
 test("the zq-git-mcp service address and secret go together and the author rules are plain lists", () => {
   const off = zqConfigFromEnv({});
   assert.equal(off.gitMcp, undefined);
-  assert.deepEqual(off.gitAuthors, {
-    externalDomains: [],
-    botNames: [],
-    domainAliases: {},
-    mapping: false,
-    ignoredReopenDays: 0,
-    queueRetentionDays: 180,
-  });
+  assert.deepEqual(off.gitAuthors, AUTHOR_DEFAULTS);
   const on = zqConfigFromEnv({
     ZQ_GIT_MCP_URL: "http://127.0.0.1:8765/mcp",
     ZQ_GIT_MCP_SECRET: "a-shared-secret-0123456789",
-    ZQ_GIT_EXTERNAL_DOMAINS: "@yizhu, partner.example,",
-    ZQ_GIT_BOT_NAMES: "ZQBot.compiler",
-    ZQ_GIT_DOMAIN_ALIASES: "Old.Example=corp.example, @legacy=corp.example",
+    ZQ_GIT_EXTERNAL_DOMAINS: "@partnerco, partner.example,",
+    ZQ_GIT_BOT_NAMES: "dependabot",
+    ZQ_GIT_DOMAIN_ALIASES: "ignored-now",
+    ZQ_GIT_COMPANY_DOMAINS: "ignored-now",
   });
   assert.deepEqual(on.gitMcp, { url: "http://127.0.0.1:8765/mcp", secret: "a-shared-secret-0123456789" });
   assert.deepEqual(on.gitAuthors, {
-    externalDomains: ["@yizhu", "partner.example"],
-    botNames: ["ZQBot.compiler"],
-    domainAliases: { "old.example": "corp.example", legacy: "corp.example" },
-    mapping: false,
-    ignoredReopenDays: 0,
-    queueRetentionDays: 180,
+    ...AUTHOR_DEFAULTS,
+    externalDomains: ["@partnerco", "partner.example"],
+    botNames: ["dependabot"],
   });
-  assert.throws(() => zqConfigFromEnv({ ZQ_GIT_DOMAIN_ALIASES: "old.example" }), /ZQ_GIT_DOMAIN_ALIASES/);
   assert.throws(() => zqConfigFromEnv({ ZQ_GIT_MCP_URL: "http://127.0.0.1:8765/mcp" }), /go together/);
   assert.throws(() => zqConfigFromEnv({ ZQ_GIT_MCP_SECRET: "x" }), /go together/);
   assert.throws(
     () => zqConfigFromEnv({ ZQ_GIT_MCP_URL: "ftp://host/mcp", ZQ_GIT_MCP_SECRET: "never-echoed-secret" }),
     (e) => e instanceof Error && /http\(s\)/.test(e.message) && !e.message.includes("never-echoed-secret"),
   );
+});
+
+test("the author name settings parse, an empty value empties a list and a bad item names the setting", () => {
+  const poll = {
+    ZQ_GIT_MCP_URL: "http://127.0.0.1:8765/mcp",
+    ZQ_GIT_MCP_SECRET: "a-shared-secret-0123456789",
+    ZQ_GIT_POLL: "1",
+    ZQ_GIT_AUTHOR_MAPPING: "1",
+  };
+  const set = zqConfigFromEnv({
+    ...poll,
+    ZQ_GIT_AUTHOR_BIND: "1",
+    ZQ_GIT_MATTERMOST_EMAIL_FALLBACK: "1",
+    ZQ_GIT_BOT_TOKENS: "bot, robot",
+    ZQ_GIT_GENERIC_NAMES: "admin,Root",
+    ZQ_GIT_IDENTITY_ADMINS: "p-pm, p-lead",
+    ZQ_GIT_BIND_MAX_PER_PERSON: "3",
+  }).gitAuthors;
+  assert.deepEqual(
+    [set.bind, set.mattermostEmailFallback, set.botTokens, set.genericNames, set.identityAdmins, set.bindMaxPerPerson],
+    [true, true, ["bot", "robot"], ["admin", "Root"], ["p-pm", "p-lead"], 3],
+  );
+  const empty = zqConfigFromEnv({ ZQ_GIT_BOT_TOKENS: "", ZQ_GIT_GENERIC_NAMES: "" }).gitAuthors;
+  assert.deepEqual([empty.botTokens, empty.genericNames], [[], []]);
+  for (const [name, value] of [
+    ["ZQ_GIT_BOT_TOKENS", "bo.t"],
+    ["ZQ_GIT_BOT_TOKENS", "b"],
+    ["ZQ_GIT_BOT_TOKENS", "Bot"],
+    ["ZQ_GIT_BOT_TOKENS", Array.from({ length: 51 }, (_, i) => `tok${i}`).join(",")],
+    ["ZQ_GIT_GENERIC_NAMES", "host\\admin"],
+    ["ZQ_GIT_IDENTITY_ADMINS", "has space"],
+    ["ZQ_GIT_BIND_MAX_PER_PERSON", "0"],
+    ["ZQ_GIT_BIND_MAX_PER_PERSON", "101"],
+  ] as const)
+    assert.throws(() => zqConfigFromEnv({ [name]: value }), new RegExp(name), `${name}=${value}`);
 });
 
 test("the git poll switch is off by default, needs the service address and secret, and bounds its interval", () => {

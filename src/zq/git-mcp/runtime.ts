@@ -1,4 +1,5 @@
 import type { DurableMap } from "../../persistence/durable-map.ts";
+import type { AuditLog } from "../../audit/audit-log.ts";
 import type { LeaderLease } from "../../persistence/leader-lease.ts";
 import { errMessage } from "../../util/errors.ts";
 import type { Sweeper } from "../../util/sweeper.ts";
@@ -6,6 +7,7 @@ import type { ZqConfig } from "../config.ts";
 import { createGitMcpClient, type GitMcpClient } from "./client.ts";
 import { createAuthorMapping, type AuthorNotificationSink } from "./author-mapping.ts";
 import { GitMcpContractError } from "./contract.ts";
+import type { IdentityService } from "./identity.ts";
 import type { PeopleDirectory } from "./people.ts";
 import { createGitCommitPoller, type CommitBatch, type PollError } from "./poller.ts";
 import { dedupeBySha, type CommitSink } from "./sink.ts";
@@ -29,6 +31,7 @@ export interface GitMcpRuntime {
   start(): void;
   stop(): Promise<void>;
   status(): GitPollStatus;
+  identity?: IdentityService;
 }
 
 interface GitMcpLog {
@@ -51,6 +54,8 @@ export function createGitMcpRuntime(deps: {
   sink?: CommitSink;
   people?: PeopleDirectory;
   authorSink?: AuthorNotificationSink;
+  audit?: AuditLog;
+  mattermostUserOf?: (personId: string) => Promise<string | undefined>;
   map?: <T>(table: string) => DurableMap<T>;
   log?: GitMcpLog;
   now?: () => number;
@@ -67,6 +72,7 @@ export function createGitMcpRuntime(deps: {
     },
   };
   const mapping = deps.config.gitAuthors.mapping ? authorMapping() : undefined;
+  const identity = mapping?.identity;
   const sink = dedupeBySha(
     mapping
       ? {
@@ -79,13 +85,17 @@ export function createGitMcpRuntime(deps: {
     DEDUPE_CAPACITY,
   );
   function authorMapping() {
-    if (!deps.people)
-      throw new Error("ZQ_GIT_AUTHOR_MAPPING needs Mattermost: without its directory no author can be mapped");
+    if (deps.config.gitAuthors.mattermostEmailFallback && !deps.people)
+      throw new Error(
+        "ZQ_GIT_MATTERMOST_EMAIL_FALLBACK needs Mattermost: without its directory no email can be matched",
+      );
     if (!deps.map) throw new Error("ZQ_GIT_AUTHOR_MAPPING needs a durable store for its two tables");
     return createAuthorMapping({
       config: deps.config.gitAuthors,
-      directory: deps.people,
+      ...(deps.people ? { directory: deps.people } : {}),
       map: deps.map,
+      ...(deps.audit ? { audit: deps.audit } : {}),
+      ...(deps.mattermostUserOf ? { mattermostUserOf: deps.mattermostUserOf } : {}),
       ...(deps.authorSink ? { sink: deps.authorSink } : {}),
       now,
       log: (line) => log.info(`[zq git poll] ${line}`),
@@ -174,5 +184,10 @@ export function createGitMcpRuntime(deps: {
       ),
   });
 
-  return { start: () => poller.start(), stop: () => poller.stop(), status: () => ({ ...status }) };
+  return {
+    start: () => poller.start(),
+    stop: () => poller.stop(),
+    status: () => ({ ...status }),
+    ...(identity ? { identity } : {}),
+  };
 }

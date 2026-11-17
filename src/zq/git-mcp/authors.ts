@@ -1,12 +1,14 @@
-import type { AuthorAliases } from "./author-aliases.ts";
-import { normaliseEmail, type PeopleDirectory, type Person } from "./people.ts";
+import type { AuthorAliases, IgnoreReason } from "./author-aliases.ts";
+import { emailDomain, isBotAuthor, nameKey, normaliseEmail, usableEmail, type BotRules } from "./names.ts";
+import type { PeopleDirectory, Person } from "./people.ts";
 
-export type MatchedBy = "email" | "alias" | "domain_alias";
+export type MatchedBy = "name" | "mattermost_email";
 
 export type AuthorClass =
-  | ({ kind: "person"; matchedBy: MatchedBy } & Person)
+  | ({ kind: "person"; matchedBy: MatchedBy; departed?: true } & Person)
+  | { kind: "ignored"; reason: IgnoreReason; nameKey: string }
   | { kind: "unmapped"; email: string; name: string; reason: "no_match" | "invalid_email" }
-  | { kind: "ambiguous"; email: string; candidates: Person[] }
+  | { kind: "ambiguous"; email: string; name: string; candidates: Person[] }
   | { kind: "bot"; name: string }
   | { kind: "external"; domain: string };
 
@@ -15,68 +17,51 @@ export interface CommitAuthor {
   name?: string | undefined;
 }
 
-export interface AuthorRules {
+export interface AuthorRules extends BotRules {
   externalDomains: readonly string[];
-  botNames: readonly string[];
 }
 
 export interface AuthorResolver {
   resolve(author: CommitAuthor): Promise<AuthorClass>;
 }
 
-const normal = (value: string) => value.trim().toLowerCase().replace(/^@/, "");
-
-export function classifyAuthor(author: CommitAuthor, rules: AuthorRules): AuthorClass | undefined {
-  const email = normaliseEmail(author.email);
-  const name = author.name?.trim() ?? "";
-  const at = email.lastIndexOf("@");
-  const bots = new Set(rules.botNames.map(normal));
-  const local = at < 0 ? email : email.slice(0, at);
-  if (bots.has(normal(name)) || bots.has(local)) return { kind: "bot", name: name || local };
-  if (at < 0) return { kind: "unmapped", email, name, reason: "invalid_email" };
-  const domain = email.slice(at + 1);
-  const external = rules.externalDomains.map(normal).find((d) => domain === d || domain.endsWith(`.${d}`));
-  return external ? { kind: "external", domain } : undefined;
-}
-
-function pick(
-  email: string,
-  hits: readonly Person[],
-  matchedBy: MatchedBy,
-): Extract<AuthorClass, { kind: "person" | "ambiguous" }> | undefined {
-  const unique = [...new Map(hits.map((p) => [p.personId, p])).values()];
-  if (unique.length === 0) return undefined;
-  if (unique.length > 1) return { kind: "ambiguous", email, candidates: unique };
-  const [only] = unique;
-  return { kind: "person", personId: only!.personId, mattermostUser: only!.mattermostUser, matchedBy };
-}
+const bare = (value: string) => value.trim().toLowerCase().replace(/^@/, "");
 
 export function createAuthorResolver(options: {
   rules: AuthorRules;
-  directory: PeopleDirectory;
-  aliases: Pick<AuthorAliases, "find">;
-  domainAliases?: Readonly<Record<string, string>>;
+  aliases: Pick<AuthorAliases, "get">;
+  directory?: PeopleDirectory;
 }): AuthorResolver {
-  const domainAliases = new Map(
-    Object.entries(options.domainAliases ?? {}).map(([from, to]) => [normal(from), normal(to)]),
-  );
+  const external = options.rules.externalDomains.map(bare);
   return {
     async resolve(author) {
-      const classified = classifyAuthor(author, options.rules);
-      if (classified) return classified;
+      const name = author.name ?? "";
       const email = normaliseEmail(author.email);
-      const direct = pick(email, await options.directory.findByEmail(email), "email");
-      if (direct) return direct;
-      const aliased = pick(email, await options.aliases.find(email), "alias");
-      if (aliased) return aliased;
-      const at = email.lastIndexOf("@");
-      const canonical = domainAliases.get(email.slice(at + 1));
-      if (canonical) {
-        const moved = `${email.slice(0, at)}@${canonical}`;
-        const viaDomain = pick(email, await options.directory.findByEmail(moved), "domain_alias");
-        if (viaDomain) return viaDomain;
+      if (nameKey(name)) {
+        const row = await options.aliases.get(name);
+        if (row && (row.emailCondition === undefined || row.emailCondition === email)) {
+          if (row.kind === "ignored") return { kind: "ignored", reason: row.reason, nameKey: row.nameKey };
+          return {
+            kind: "person",
+            matchedBy: "name",
+            personId: row.personId,
+            mattermostUser: row.mattermostUser,
+            ...(row.departedAt === undefined ? {} : { departed: true as const }),
+          };
+        }
       }
-      return { kind: "unmapped", email, name: author.name?.trim() ?? "", reason: "no_match" };
+      if (isBotAuthor({ name, email }, options.rules)) return { kind: "bot", name: name.trim() };
+      const domain = emailDomain(email);
+      if (domain !== undefined && external.some((d) => domain === d || domain.endsWith(`.${d}`)))
+        return { kind: "external", domain };
+      if (!usableEmail(email)) return { kind: "unmapped", email, name, reason: "invalid_email" };
+      if (options.directory) {
+        const people = [...new Map((await options.directory.findByEmail(email)).map((p) => [p.personId, p])).values()];
+        if (people.length > 1) return { kind: "ambiguous", email, name, candidates: people };
+        const [only] = people;
+        if (only) return { kind: "person", matchedBy: "mattermost_email", ...only };
+      }
+      return { kind: "unmapped", email, name, reason: "no_match" };
     },
   };
 }

@@ -1,10 +1,12 @@
-import { createHash } from "node:crypto";
+import type { AuditLog } from "../../audit/audit-log.ts";
 import type { DurableMap } from "../../persistence/durable-map.ts";
 import type { ZqConfig } from "../config.ts";
-import { createAuthorAliases, type AuthorAlias, type AuthorAliases } from "./author-aliases.ts";
+import { createAuthorAliases, type AuthorAlias, type AuthorAliases, type IgnoreReason } from "./author-aliases.ts";
 import { createAuthorResolver, type AuthorClass, type AuthorResolver } from "./authors.ts";
+import { createIdentityService, type IdentityService } from "./identity.ts";
+import { displayName, hashEmail, hashName, nameKey, normaliseEmail } from "./names.ts";
 import type { CommitBatch } from "./poller.ts";
-import { normaliseEmail, type PeopleDirectory, type Person } from "./people.ts";
+import type { PeopleDirectory, Person } from "./people.ts";
 import { createUnmappedQueue, type UnmappedAuthor, type UnmappedQueue, type UnmappedReason } from "./unmapped-queue.ts";
 
 interface MappedCommit {
@@ -19,12 +21,19 @@ interface PersonCommits {
   commits: MappedCommit[];
 }
 
+interface DepartedCommits extends PersonCommits {
+  authorName: string;
+}
+
 export interface AuthorNotificationSink {
   deliver(notice: PersonCommits): Promise<void>;
+  deliverToPm(notice: DepartedCommits): Promise<void>;
+  deliverClaimAttempt(holder: Person): Promise<void>;
 }
 
 interface ClassifiedCommit extends MappedCommit {
   author: AuthorClass;
+  authorName: string;
 }
 
 interface UnmappedItem {
@@ -34,51 +43,88 @@ interface UnmappedItem {
   commits: number;
 }
 
+interface IgnoredItem {
+  nameHash: string;
+  reason: IgnoreReason;
+  commits: number;
+}
+
 interface MappingResult {
   commits: ClassifiedCommit[];
   byPerson: PersonCommits[];
+  departed: DepartedCommits[];
   unmapped: UnmappedItem[];
+  ignored: IgnoredItem[];
 }
 
 export interface RecordingSink extends AuthorNotificationSink {
   sent: PersonCommits[];
+  sentToPm: DepartedCommits[];
+  claimAttempts: Person[];
 }
 
 export function createRecordingSink(): RecordingSink {
   const sent: PersonCommits[] = [];
+  const sentToPm: DepartedCommits[] = [];
+  const claimAttempts: Person[] = [];
   return {
     sent,
+    sentToPm,
+    claimAttempts,
     async deliver(notice) {
       sent.push(notice);
     },
+    async deliverToPm(notice) {
+      sentToPm.push(notice);
+    },
+    async deliverClaimAttempt(holder) {
+      claimAttempts.push(holder);
+    },
   };
 }
-
-export const hashEmail = (email: string) =>
-  createHash("sha256").update(normaliseEmail(email)).digest("hex").slice(0, 12);
 
 interface AuthorMapper {
   map(batches: readonly CommitBatch[]): Promise<MappingResult>;
   handle(batches: CommitBatch[]): Promise<void>;
 }
 
+function groupPeople<T extends PersonCommits>(
+  commits: readonly ClassifiedCommit[],
+  wanted: (author: AuthorClass) => author is Extract<AuthorClass, { kind: "person" }>,
+  make: (person: Person, authorName: string) => T,
+): T[] {
+  const groups = new Map<string, T>();
+  for (const { author, authorName, repo, branch, sha, date } of commits) {
+    if (!wanted(author)) continue;
+    const group =
+      groups.get(author.personId) ??
+      make({ personId: author.personId, mattermostUser: author.mattermostUser }, authorName);
+    group.commits.push({ repo, branch, sha, date });
+    groups.set(author.personId, group);
+  }
+  return [...groups.values()];
+}
+
 function createAuthorMapper(deps: {
   resolver: AuthorResolver;
-  queue: Pick<UnmappedQueue, "record">;
+  queue: Pick<UnmappedQueue, "record" | "idOf">;
   sink: AuthorNotificationSink;
   log?: (line: string) => void;
 }): AuthorMapper {
   async function map(batches: readonly CommitBatch[]): Promise<MappingResult> {
     const resolved = new Map<string, AuthorClass>();
     const classified: ClassifiedCommit[] = [];
-    const unmappedCommits = new Map<string, { author: AuthorClass; name: string; commits: ClassifiedCommit[] }>();
+    const unmappedCommits = new Map<
+      string,
+      { author: AuthorClass; name: string; emails: Set<string>; commits: ClassifiedCommit[] }
+    >();
     for (const batch of batches)
       for (const commit of batch.commits) {
-        const key = normaliseEmail(commit.authorEmail);
-        let author = resolved.get(key);
+        const cacheKey = `${nameKey(commit.authorName)}\n${normaliseEmail(commit.authorEmail)}`;
+        let author = resolved.get(cacheKey);
         if (!author) {
           author = await deps.resolver.resolve({ email: commit.authorEmail, name: commit.authorName });
-          resolved.set(key, author);
+          resolved.set(cacheKey, author);
         }
         const entry: ClassifiedCommit = {
           repo: batch.repo,
@@ -86,17 +132,25 @@ function createAuthorMapper(deps: {
           sha: commit.sha,
           date: commit.date,
           author,
+          authorName: displayName(commit.authorName),
         };
         classified.push(entry);
         if (author.kind === "unmapped" || author.kind === "ambiguous") {
-          const group = unmappedCommits.get(key) ?? { author, name: commit.authorName.trim(), commits: [] };
+          const key = deps.queue.idOf({ name: commit.authorName, email: commit.authorEmail });
+          const group = unmappedCommits.get(key) ?? {
+            author,
+            name: commit.authorName,
+            emails: new Set<string>(),
+            commits: [],
+          };
+          group.emails.add(commit.authorEmail);
           group.commits.push(entry);
           unmappedCommits.set(key, group);
         }
       }
 
     const unmapped: UnmappedItem[] = [];
-    for (const { author, name, commits } of unmappedCommits.values()) {
+    for (const { author, name, emails, commits } of unmappedCommits.values()) {
       if (author.kind !== "unmapped" && author.kind !== "ambiguous") continue;
       const item: UnmappedItem = {
         email: author.email,
@@ -105,27 +159,46 @@ function createAuthorMapper(deps: {
         commits: commits.length,
       };
       await deps.queue.record({
-        ...item,
+        name,
+        emails: [...emails],
+        reason: item.reason,
         ...(author.kind === "ambiguous" ? { candidates: author.candidates.map((p) => p.personId) } : {}),
         commits: commits.map(({ repo, sha }) => ({ repo, sha })),
       });
-      deps.log?.(`zq git author needs review: ${hashEmail(item.email)} ${item.reason} commits=${item.commits}`);
+      deps.log?.(
+        `zq git author needs review: ${hashName(name)} ${hashEmail(item.email)} ${item.reason} commits=${item.commits}`,
+      );
       unmapped.push(item);
     }
 
-    const people = new Map<string, PersonCommits>();
-    for (const { author, repo, branch, sha, date } of classified) {
-      if (author.kind !== "person") continue;
-      const group = people.get(author.personId) ?? {
-        person: { personId: author.personId, mattermostUser: author.mattermostUser },
-        commits: [],
+    const ignoredCounts = new Map<string, IgnoredItem>();
+    for (const { author } of classified) {
+      if (author.kind !== "ignored") continue;
+      const item = ignoredCounts.get(author.nameKey) ?? {
+        nameHash: hashName(author.nameKey),
+        reason: author.reason,
+        commits: 0,
       };
-      group.commits.push({ repo, branch, sha, date });
-      people.set(author.personId, group);
+      item.commits++;
+      ignoredCounts.set(author.nameKey, item);
     }
-    const byPerson = [...people.values()];
+    const ignored = [...ignoredCounts.values()];
+    for (const item of ignored)
+      deps.log?.(`zq git author ignored: ${item.nameHash} reason=${item.reason} commits=${item.commits}`);
+
+    const isPerson = (author: AuthorClass): author is Extract<AuthorClass, { kind: "person" }> =>
+      author.kind === "person" && !author.departed;
+    const isDeparted = (author: AuthorClass): author is Extract<AuthorClass, { kind: "person" }> =>
+      author.kind === "person" && author.departed === true;
+    const byPerson = groupPeople(classified, isPerson, (person) => ({ person, commits: [] }));
+    const departed = groupPeople(classified, isDeparted, (person, authorName) => ({
+      person,
+      authorName,
+      commits: [],
+    }));
     for (const notice of byPerson) await deps.sink.deliver(notice);
-    return { commits: classified, byPerson, unmapped };
+    for (const notice of departed) await deps.sink.deliverToPm(notice);
+    return { commits: classified, byPerson, departed, unmapped, ignored };
   }
 
   return {
@@ -141,13 +214,16 @@ export interface AuthorMapping {
   queue: UnmappedQueue;
   aliases: AuthorAliases;
   sink: AuthorNotificationSink;
+  identity?: IdentityService;
 }
 
 export function createAuthorMapping(deps: {
   config: ZqConfig["gitAuthors"];
-  directory: PeopleDirectory;
+  directory?: PeopleDirectory;
   map: <T>(table: string) => DurableMap<T>;
   sink?: AuthorNotificationSink;
+  audit?: AuditLog;
+  mattermostUserOf?: (personId: string) => Promise<string | undefined>;
   now?: () => number;
   log?: (line: string) => void;
 }): AuthorMapping | undefined {
@@ -158,16 +234,15 @@ export function createAuthorMapping(deps: {
   });
   const queue = createUnmappedQueue({
     map: deps.map<UnmappedAuthor>("zq_git_unmapped_authors"),
-    aliases,
+    genericNames: deps.config.genericNames,
     retentionDays: deps.config.queueRetentionDays,
     reopenIgnoredAfterDays: deps.config.ignoredReopenDays,
     ...(deps.now ? { now: deps.now } : {}),
   });
   const resolver = createAuthorResolver({
     rules: deps.config,
-    directory: deps.directory,
     aliases,
-    domainAliases: deps.config.domainAliases,
+    ...(deps.config.mattermostEmailFallback && deps.directory ? { directory: deps.directory } : {}),
   });
   const sink = deps.sink ?? createRecordingSink();
   return {
@@ -175,5 +250,18 @@ export function createAuthorMapping(deps: {
     queue,
     aliases,
     sink,
+    ...(deps.config.bind
+      ? {
+          identity: createIdentityService({
+            aliases,
+            queue,
+            config: deps.config,
+            sink,
+            ...(deps.audit ? { audit: deps.audit } : {}),
+            ...(deps.mattermostUserOf ? { mattermostUserOf: deps.mattermostUserOf } : {}),
+            ...(deps.now ? { now: deps.now } : {}),
+          }),
+        }
+      : {}),
   };
 }
