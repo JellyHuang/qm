@@ -1,0 +1,42 @@
+# DRAFT. Nothing here has been installed or run. Deploying needs the PM's explicit written approval.
+[Unit]
+Description=zq-git-mcp read-only GitLab MCP service (loopback only)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=zq-git-mcp
+Group=zq-git-mcp
+WorkingDirectory=/opt/zq-git-mcp/current/plugins/zq-git-mcp
+EnvironmentFile=/etc/zq-git-mcp/zq-git-mcp.env
+Environment=TMPDIR=/home/zq-git-mcp/data/ssh
+ExecStartPre=/usr/local/libexec/zq-git-mcp/check-prereqs
+ExecStart=/usr/bin/node src/index.ts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindPaths=/home/zq-git-mcp/data
+ReadWritePaths=/home/zq-git-mcp/data
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+UMask=0077
+MemoryMax=4G
+
+[Install]
+WantedBy=multi-user.target
