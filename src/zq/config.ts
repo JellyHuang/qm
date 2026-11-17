@@ -18,6 +18,7 @@ export interface ZqConfig {
   unsetResponsibilityDuties: readonly Duty[];
   reports: { enabled: boolean; dailyCron?: string; weeklyCron?: string };
   gitMcp?: { url: string; secret: string };
+  gitPoll: { enabled: boolean; intervalMs: number };
   gitAuthors: { externalDomains: readonly string[]; botNames: readonly string[] };
   jenkins: { url?: string; rerun: boolean; jobs: readonly string[]; rerunJobs: readonly string[]; hourlyCap: number };
 }
@@ -27,6 +28,7 @@ const DEFAULT_TIMEZONE = "Asia/Shanghai";
 const DEFAULT_DAILY_CEILING = 200;
 const DEFAULT_ESCALATION_DAYS = 2;
 const WEDNESDAY = 3;
+const GIT_POLL_SECONDS = { default: 300, min: 30, max: 3600 };
 
 const on = (value: string | undefined) => value?.trim() === "1";
 
@@ -96,6 +98,15 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   const gitMcpSecret = env.ZQ_GIT_MCP_SECRET?.trim();
   if (gitMcpUrl && !/^https?:\/\//.test(gitMcpUrl)) throw new Error("ZQ_GIT_MCP_URL must be an http(s) URL");
   if (Boolean(gitMcpUrl) !== Boolean(gitMcpSecret)) throw new Error("ZQ_GIT_MCP_URL and ZQ_GIT_MCP_SECRET go together");
+  const gitPoll = on(env.ZQ_GIT_POLL);
+  if (gitPoll && !gitMcpUrl) throw new Error("ZQ_GIT_POLL needs ZQ_GIT_MCP_URL and ZQ_GIT_MCP_SECRET");
+  const gitPollSeconds = integer(
+    "ZQ_GIT_POLL_SECONDS",
+    env.ZQ_GIT_POLL_SECONDS,
+    GIT_POLL_SECONDS.default,
+    GIT_POLL_SECONDS.min,
+    GIT_POLL_SECONDS.max,
+  );
   const jenkinsUrl = env.ZQ_JENKINS_URL?.trim().replace(/\/+$/, "");
   if (jenkinsUrl && !/^https?:\/\//.test(jenkinsUrl)) throw new Error("ZQ_JENKINS_URL must be an http(s) URL");
   const jenkinsRerun = on(env.ZQ_JENKINS_RERUN);
@@ -133,6 +144,7 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
       ...(weeklyCron ? { weeklyCron } : {}),
     },
     ...(gitMcpUrl && gitMcpSecret ? { gitMcp: { url: gitMcpUrl, secret: gitMcpSecret } } : {}),
+    gitPoll: { enabled: gitPoll, intervalMs: gitPollSeconds * 1000 },
     gitAuthors: {
       externalDomains: names(env.ZQ_GIT_EXTERNAL_DOMAINS),
       botNames: names(env.ZQ_GIT_BOT_NAMES),

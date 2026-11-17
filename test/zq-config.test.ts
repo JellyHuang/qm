@@ -77,3 +77,21 @@ test("the zq-git-mcp service address and secret go together and the author rules
     (e) => e instanceof Error && /http\(s\)/.test(e.message) && !e.message.includes("never-echoed-secret"),
   );
 });
+
+test("the git poll switch is off by default, needs the service address and secret, and bounds its interval", () => {
+  assert.deepEqual(zqConfigFromEnv({}).gitPoll, { enabled: false, intervalMs: 300_000 });
+  const service = { ZQ_GIT_MCP_URL: "http://127.0.0.1:8765/mcp", ZQ_GIT_MCP_SECRET: "a-shared-secret-0123456789" };
+  assert.equal(zqConfigFromEnv(service).gitPoll.enabled, false);
+  assert.deepEqual(zqConfigFromEnv({ ...service, ZQ_GIT_POLL: "1", ZQ_GIT_POLL_SECONDS: "30" }).gitPoll, {
+    enabled: true,
+    intervalMs: 30_000,
+  });
+  assert.equal(zqConfigFromEnv({ ...service, ZQ_GIT_POLL_SECONDS: "3600" }).gitPoll.intervalMs, 3_600_000);
+  assert.throws(() => zqConfigFromEnv({ ZQ_GIT_POLL: "1" }), /ZQ_GIT_POLL needs ZQ_GIT_MCP_URL and ZQ_GIT_MCP_SECRET/);
+  assert.throws(() => zqConfigFromEnv({ ZQ_GIT_POLL: "1", ZQ_GIT_MCP_URL: service.ZQ_GIT_MCP_URL }), /go together/);
+  for (const bad of ["29", "3601", "0", "-5", "1.5", "abc"])
+    assert.throws(
+      () => zqConfigFromEnv({ ...service, ZQ_GIT_POLL_SECONDS: bad }),
+      /ZQ_GIT_POLL_SECONDS must be an integer from 30 through 3600/,
+    );
+});

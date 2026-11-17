@@ -1,4 +1,5 @@
 import { setZqChildren } from "./zq/children.ts";
+import { createGitMcpRuntime } from "./zq/git-mcp/runtime.ts";
 import { createZqRuntime, type ZqIdentityAdmin, type ZqRuntime } from "./zq/runtime.ts";
 import { setLogOutboundTools } from "./agent/diagnostics.ts";
 import { createOaClient } from "./integrations/openagents/client.ts";
@@ -2683,6 +2684,7 @@ export function buildApp(
         })
       : null;
   setZqChildren(zq?.children);
+  const gitMcpPoll = createGitMcpRuntime({ config: config.zq, leaderLease, createSweeper });
   setLogOutboundTools(config.logOutboundTools === true);
   const webhookDelivery = createDeliveryRelay(deliveries, {
     type: "webhook",
@@ -3110,6 +3112,7 @@ export function buildApp(
       mattermost?.start();
       openAgents?.start();
       zq?.start();
+      gitMcpPoll?.start();
       webhookDelivery.start();
     };
     if (backgroundStopping)
@@ -3150,6 +3153,7 @@ export function buildApp(
       mattermost?.stop(),
       openAgents?.stop(),
       zq?.stop(),
+      gitMcpPoll?.stop(),
       preemptionSweeper.stop(),
       worker.stopClaims(),
     ];
