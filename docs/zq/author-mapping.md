@@ -6,8 +6,8 @@ After `check_updates` (through the poller) reports new commits, each commit auth
 
 `createAuthorResolver` (`src/zq/git-mcp/authors.ts`) answers one of five kinds, in this order:
 
-1. `bot`: the author name, or the part of the email before the `@`, is in `ZQ_GIT_BOT_NAMES` (for example `ZQBot.compiler`).
-2. `external`: the email domain equals, or is under, a domain in `ZQ_GIT_EXTERNAL_DOMAINS` (for example `@yizhu`).
+1. `bot`: the author name, or the part of the email before the `@`, is in `ZQ_GIT_BOT_NAMES` (for example `ExampleBot.compiler`).
+2. `external`: the email domain equals, or is under, a domain in `ZQ_GIT_EXTERNAL_DOMAINS` (for example `@pipeline.invalid`).
 3. `unmapped` with reason `invalid_email`: no `@` in the address.
 4. `person { personId, mattermostUser, matchedBy }`, found by, in order: `email` (the normalised address in the people directory), `alias` (a row of the alias table), `domain_alias` (the address with its domain replaced through `ZQ_GIT_DOMAIN_ALIASES`, looked up in the directory). The first step that finds anyone decides.
 5. `ambiguous { email, candidates }` when that step finds more than one distinct person; `unmapped { email, name, reason: "no_match" }` when no step finds anyone.

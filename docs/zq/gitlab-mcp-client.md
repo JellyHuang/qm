@@ -41,13 +41,13 @@ When the server is registered with `attestActor` (catalog, shared bearer), the c
 
 ## Settings
 
-| Setting                   | Default | Meaning                                                                                     |
-| ------------------------- | ------- | ------------------------------------------------------------------------------------------- |
-| `ZQ_GIT_MCP_URL`          | unset   | `http(s)` address of the service's `/mcp` endpoint; must be set together with the secret    |
-| `ZQ_GIT_MCP_SECRET`       | unset   | The shared bearer secret; never logged, never put in an error                               |
-| `ZQ_GIT_EXTERNAL_DOMAINS` | empty   | Comma list of non-company email domains (`@yizhu`, `partner.example`); subdomains match too |
-| `ZQ_GIT_BOT_NAMES`        | empty   | Comma list of bot author names or email local parts (`ZQBot.compiler`)                      |
-| `ZQ_GIT_DOMAIN_ALIASES`   | empty   | Comma list of `old.example=corp.example` domain aliases for author mapping                  |
+| Setting                   | Default | Meaning                                                                                                |
+| ------------------------- | ------- | ------------------------------------------------------------------------------------------------------ |
+| `ZQ_GIT_MCP_URL`          | unset   | `http(s)` address of the service's `/mcp` endpoint; must be set together with the secret               |
+| `ZQ_GIT_MCP_SECRET`       | unset   | The shared bearer secret; never logged, never put in an error                                          |
+| `ZQ_GIT_EXTERNAL_DOMAINS` | empty   | Comma list of non-company email domains (`@pipeline.invalid`, `partner.example`); subdomains match too |
+| `ZQ_GIT_BOT_NAMES`        | empty   | Comma list of bot author names or email local parts (`ExampleBot.compiler`)                            |
+| `ZQ_GIT_DOMAIN_ALIASES`   | empty   | Comma list of `old.example=corp.example` domain aliases for author mapping                             |
 
 They are parsed into `ZqConfig.gitMcp` and `ZqConfig.gitAuthors` and read by nothing in production yet. Environment variables are the only source.
 

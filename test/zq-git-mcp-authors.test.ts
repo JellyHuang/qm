@@ -9,7 +9,10 @@ import {
 } from "../src/zq/git-mcp/people.ts";
 import { memoryMap } from "./support/memory-map.ts";
 
-const rules = { externalDomains: ["@yizhu", "partner.example"], botNames: ["ZQBot.compiler", "jenkins"] };
+const rules = {
+  externalDomains: ["@pipeline.invalid", "partner.example"],
+  botNames: ["ExampleBot.compiler", "jenkins"],
+};
 
 const zhang = { personId: "p-zhang", mattermostUser: "mm-zhang" };
 const li = { personId: "p-li", mattermostUser: "mm-li" };
@@ -41,10 +44,22 @@ const person = (p: typeof zhang, matchedBy: MatchedBy): AuthorClass => ({
 });
 
 const table: Array<[string, { email: string; name?: string }, AuthorClass]> = [
-  ["bot by name", { name: "ZQBot.compiler", email: "x@corp.example" }, { kind: "bot", name: "ZQBot.compiler" }],
-  ["bot by local part", { name: "Someone", email: "zqbot.compiler@corp.example" }, { kind: "bot", name: "Someone" }],
+  [
+    "bot by name",
+    { name: "ExampleBot.compiler", email: "x@corp.example" },
+    { kind: "bot", name: "ExampleBot.compiler" },
+  ],
+  [
+    "bot by local part",
+    { name: "Someone", email: "examplebot.compiler@corp.example" },
+    { kind: "bot", name: "Someone" },
+  ],
   ["bot by local part with plus tag", { name: "", email: "jenkins+ci@corp.example" }, { kind: "bot", name: "jenkins" }],
-  ["external domain", { name: "Wang", email: "wang@yizhu" }, { kind: "external", domain: "yizhu" }],
+  [
+    "external domain",
+    { name: "Wang", email: "wang@pipeline.invalid" },
+    { kind: "external", domain: "pipeline.invalid" },
+  ],
   [
     "external sub-domain and case",
     { name: "Li", email: "Li@Dev.Partner.Example" },
