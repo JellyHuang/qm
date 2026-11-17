@@ -154,7 +154,8 @@ test("the manifest has hashes and refs, no secrets and no absolute temp paths", 
   assert.ok(!/\/tmp\//.test(text));
   assert.deepEqual(readdirSync(pkg.dir).sort(), [
     "COMMIT_MESSAGE.txt",
-    "README.txt",
+    "README_CN.txt",
+    "README_EN.txt",
     "apply.cmd",
     "apply.ps1",
     "apply.sh",

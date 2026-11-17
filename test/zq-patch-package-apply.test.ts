@@ -259,7 +259,7 @@ test("package damage is refused with exit 3 and nothing is touched: files, manif
   const copy = (name: string) => {
     const dest = join(scratchDir(t, `pp-${name}-`), "pkg");
     mkdirSync(dest);
-    for (const file of ["COMMIT_MESSAGE.txt", "README.txt", "apply.sh", "manifest.json"])
+    for (const file of ["COMMIT_MESSAGE.txt", "README_CN.txt", "README_EN.txt", "apply.sh", "manifest.json"])
       writeFileSync(join(dest, file), readFileSync(join(pkg.dir, file)));
     mkdirSync(join(dest, "patches"));
     writeFileSync(join(dest, "patches", "0001.patch"), readFileSync(join(pkg.dir, "patches", "0001.patch")));

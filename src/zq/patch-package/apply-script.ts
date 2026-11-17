@@ -21,6 +21,7 @@ export interface ScriptData {
   textPatches: readonly string[];
   packageFiles: readonly { blob: string; name: string }[];
   lfsFiles: readonly LfsRecord[];
+  paths: readonly string[];
 }
 
 const UNSAFE = /['\u0000-\u001f\u007f]/;
@@ -42,7 +43,7 @@ export function withoutManifestLine(script: string): string {
 }
 
 const BODY = `PKG=$(cd "$(dirname -- "$0")" 2>/dev/null && pwd) || PKG=$(pwd)
-REPO=.
+REPO=
 DRY=0
 NEWBRANCH=0
 KEEPBOT=0
@@ -51,9 +52,10 @@ NL='
 TAB=$(printf '\\t')
 
 usage() {
-  printf '%s\\n' "Usage: sh apply.sh [--repo DIR] [--dry-run] [--new-branch] [--keep-bot-author] [--help]" \\
+  printf '%s\\n' "Usage: sh <package folder>/apply.sh [--repo DIR] [--dry-run] [--new-branch] [--keep-bot-author] [--help]" \\
+    "  Put the WHOLE package folder into the ROOT of your repository, then run it with no folder argument." \\
     "  (default)          create ONE commit on the branch you are on; you are its author and committer" \\
-    "  --repo DIR         the git clone to apply to (default: current directory)" \\
+    "  --repo DIR         apply to the repository that contains DIR; the package folder may then be anywhere" \\
     "  --dry-run          do everything, show the result, then undo it completely" \\
     "  --new-branch       safer mode: build the commit on the new local branch $QM_BRANCH, made from the base commit in a temporary worktree; your branch and files are not touched" \\
     "  --keep-bot-author  keep $QM_AUTHOR_NAME as the author of the commit (you stay the committer)" \\
@@ -165,12 +167,42 @@ $QM_PACKAGE_FILES
 QM_PACKAGE_FILES
 
 say "step 2/6: checking your repository (nothing is changed in it)"
-TOP=$(git -C "$REPO" rev-parse --show-toplevel 2>/dev/null) || die 4 "$REPO is not a git repository (use --repo DIR)"
-[ "$(g rev-parse --is-bare-repository)" = false ] || die 4 "$REPO is a bare repository"
+if [ -z "$REPO" ]; then
+  ROOT=1
+  REPO=$(cd "$PKG/.." && pwd) || die 4 "cannot find the folder that contains this package"
+  HINT="put the whole package folder into the root of your repository and run it again (or use --repo DIR)"
+else
+  ROOT=0
+  HINT="use --repo DIR with a directory of your clone"
+fi
+[ "$(git -C "$REPO" rev-parse --is-bare-repository 2>/dev/null)" != true ] || die 4 "$REPO is a bare repository, which has no working tree: $HINT"
+TOP=$(git -C "$REPO" rev-parse --show-toplevel 2>/dev/null) || die 4 "$REPO is not a git repository: $HINT"
+if [ "$ROOT" = 1 ] && [ -n "$(git -C "$REPO" rev-parse --show-cdup)" ]; then
+  die 4 "$REPO, the folder that contains this package, is inside the repository $TOP but is not its root: move the package folder to $TOP and run it again (or use --repo DIR)"
+fi
 for state in rebase-apply rebase-merge MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG; do
   [ ! -e "$(g rev-parse --path-format=absolute --git-path "$state")" ] || die 4 "an operation is in progress ($state): finish or abort it first"
 done
 [ -z "$(g status --porcelain --untracked-files=no)" ] || die 4 "the working tree has uncommitted changes: commit or stash them, then run again"
+PKGREL=
+if [ "$(git -C "$PKG" rev-parse --show-toplevel 2>/dev/null)" = "$TOP" ]; then
+  PKGREL=$(git -C "$PKG" rev-parse --show-prefix)
+  PKGREL=\${PKGREL%/}
+fi
+if [ -n "$PKGREL" ]; then
+  lower=$(printf '%s' "$PKGREL" | tr 'A-Z' 'a-z')
+  while IFS= read -r changed; do
+    [ -n "$changed" ] || continue
+    folded=$(printf '%s/' "$changed" | tr 'A-Z' 'a-z')
+    case $folded in
+      "$lower"/*) die 4 "the change touches $changed, which is inside this package folder ($PKGREL): rename or move the package folder, then run again" ;;
+    esac
+  done <<QM_PATHS
+$QM_PATHS
+QM_PATHS
+  [ -z "$(g ls-files -- "$PKGREL")" ] || die 4 "this package folder ($PKGREL) contains files that your repository tracks: it was committed by mistake, or it is a folder of your project. Remove it from the repository ('git rm -r --cached $PKGREL' and commit, or reset), or keep the package outside the repository and use --repo DIR"
+  say "the package folder $PKGREL stays untracked and is never committed"
+fi
 ORIG=$(g rev-parse --verify -q HEAD) || die 4 "the repository has no commit yet"
 if [ -z "$(g config --get user.name)" ] || [ -z "$(g config --get user.email)" ]; then
   die 4 "git does not know who you are: run git config user.name and git config user.email first (you become the author and the committer of the commit)"
@@ -341,6 +373,7 @@ else
   say "  review: git log -1 --stat     git show"
   say "  undo, only while the commit is not pushed (this script never pushes): git reset --keep $ORIG"
 fi
+say "The package folder $PKG is no longer needed and can be deleted (this script never deletes anything)."
 say "Nothing was pushed. Push in your usual way when you are satisfied."
 exit 0
 `;
@@ -365,5 +398,6 @@ export function renderApplyScript(data: ScriptData, manifestBlob?: string): stri
       [r.status, r.mode, r.sha256, r.baseBlob, r.payload, quote(r.path, "a repository path").slice(1, -1)].join("\t"),
     )
     .join("\n");
-  return `${head.join("\n")}\nQM_PACKAGE_FILES='${files}'\nQM_LFS_FILES='${lfs}'\n${BODY}`;
+  const paths = data.paths.map((path) => quote(path, "a repository path").slice(1, -1)).join("\n");
+  return `${head.join("\n")}\nQM_PACKAGE_FILES='${files}'\nQM_LFS_FILES='${lfs}'\nQM_PATHS='${paths}'\n${BODY}`;
 }

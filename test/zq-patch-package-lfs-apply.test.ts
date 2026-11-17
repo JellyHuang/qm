@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { PatchPackageError } from "../src/zq/patch-package/settings.ts";
 import type { XlsxDiffResult } from "../src/zq/patch-package/xlsx.ts";
 import { git, put, scratchDir } from "./support/patch-package-fixture.ts";
-import { buildFrom, makeApplier, makeClone, makeLfsRepo, snapshot } from "./support/patch-package-apply.ts";
+import {
+  buildFrom,
+  makeApplier,
+  makeClone,
+  makeLfsRepo,
+  placePackage,
+  snapshot,
+} from "./support/patch-package-apply.ts";
 
 const ITEMS = "tables/items.xlsx";
 const HERO = "资源/新 英雄[1].xlsx";
@@ -100,14 +107,15 @@ test("a mixed change builds one package with a text part and an LFS part, determ
     sha256(readFileSync(join(pkg.dir, "files", "0001.dat"))),
     manifest.changes.find((c) => c.payload === "files/0001.dat")?.lfs?.oid,
   );
-  const readme = readFileSync(join(pkg.dir, "README.txt"), "utf8");
-  assert.match(readme, /ENGLISH/);
-  assert.match(readme, /中文/);
-  assert.match(readme, /UNTESTED/);
-  assert.match(readme, /git reset --keep/);
-  assert.ok(!/--hard/.test(readme + readFileSync(join(pkg.dir, "apply.sh"), "utf8")));
+  const english = readFileSync(join(pkg.dir, "README_EN.txt"), "utf8");
+  const chinese = readFileSync(join(pkg.dir, "README_CN.txt"), "utf8");
+  assert.match(english, /UNTESTED/);
+  assert.match(chinese, /未经测试/);
+  for (const readme of [english, chinese]) assert.match(readme, /git reset --keep/);
+  assert.ok(!/--hard/.test(english + chinese + readFileSync(join(pkg.dir, "apply.sh"), "utf8")));
   assert.ok(!/^\s*#(?!!)/m.test(readFileSync(join(pkg.dir, "apply.sh"), "utf8").replace(/^#!.*\n/, "")));
   assert.ok(!/^\s*#/m.test(readFileSync(join(pkg.dir, "apply.ps1"), "utf8")));
+  assert.ok(!/^\s*(rem\b|::)/im.test(readFileSync(join(pkg.dir, "apply.cmd"), "utf8")));
 
   const again = await buildFrom(t, fixture);
   resetWorktree(fixture.repo);
@@ -148,6 +156,24 @@ test("a mixed package becomes ONE commit with real pointers, authored and commit
   assert.equal(git(clone, "status", "--porcelain=v1", "-uall"), "");
   assert.equal(existsSync(join(clone, HERO)), false);
   assert.equal(git(clone, "rev-parse", "HEAD"), before);
+});
+
+test("a mixed package inside the repository root commits the change and never the package folder", async (t) => {
+  const { fixture, pkg } = await mixedPackage(t);
+  const clone = makeClone(t, fixture.repo, { lfs: true });
+  const dir = placePackage(pkg.dir, clone);
+  const name = basename(dir);
+  const app = makeApplier(t);
+  expectCode(app.run(dir, ["--dry-run"], { cwd: clone }), 0);
+  assert.equal(git(clone, "status", "--porcelain=v1"), `?? ${name}/`);
+  expectCode(app.run(dir, [], { cwd: clone }), 0);
+  assert.deepEqual(
+    git(clone, "-c", "core.quotePath=false", "show", "--name-only", "--format=", "HEAD").split("\n").sort(),
+    [ITEMS, HERO, "readme.txt"].sort(),
+  );
+  assert.equal(git(clone, "show", `HEAD:${ITEMS}`), pointerOf(NEW_ITEMS).trimEnd());
+  assert.equal(git(clone, "status", "--porcelain=v1"), `?? ${name}/`);
+  assert.deepEqual(readdirSync(app.tmp), []);
 });
 
 test("--keep-bot-author on a mixed package keeps the bot as author and the applier as committer", async (t) => {
@@ -432,7 +458,8 @@ test("workbooks: a comparison table only for the non-LFS one, the note for the L
   assert.equal(byPath.get("plain/book.xlsx")?.comparison?.file, "comparison/book.diff.md");
   assert.deepEqual(readdirSync(join(pkg.dir, "comparison")), ["book.diff.md"]);
   assert.match(readFileSync(join(pkg.dir, "comparison", "book.diff.md"), "utf8"), /cell_changed/);
-  assert.match(readFileSync(join(pkg.dir, "README.txt"), "utf8"), /comparison not available for LFS files/);
+  assert.match(readFileSync(join(pkg.dir, "README_EN.txt"), "utf8"), /comparison not available for LFS files/);
+  assert.match(readFileSync(join(pkg.dir, "README_CN.txt"), "utf8"), /LFS 文件无法生成对比表/);
   assert.ok(pkg.files.some((f) => f.name === "comparison/book.diff.md"));
 
   await expectRefusal(

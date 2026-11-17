@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, cpSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import type { TestContext } from "node:test";
 import { git, makeRepo, put, scratchDir, testSettings, type Fixture } from "./patch-package-fixture.ts";
 import { buildPatchPackage, type PatchPackage, type PatchPackageInput } from "../../src/zq/patch-package/package.ts";
@@ -118,6 +118,12 @@ export function makeClone(t: TestContext, source: string, options: { identity?: 
     git(dest, "config", "user.email", "dana@example.invalid");
   }
   if (options.lfs) enableLfsFilter(dest);
+  return dest;
+}
+
+export function placePackage(pkgDir: string, into: string, name: string = basename(pkgDir)): string {
+  const dest = join(into, name);
+  cpSync(pkgDir, dest, { recursive: true });
   return dest;
 }
 
