@@ -7,13 +7,13 @@ export interface DeliveryResult {
 
 export async function deliverDue(opts: {
   reminders: ZqReminderStore;
-  send: (mmUserId: string, text: string) => Promise<void>;
+  send: (mmUserId: string, text: string, rule: string) => Promise<void>;
   now: number;
 }): Promise<DeliveryResult> {
   const result: DeliveryResult = { sent: 0, failed: 0 };
   for (const reminder of await opts.reminders.due(opts.now)) {
     try {
-      await opts.send(reminder.recipientMmUserId, reminder.text);
+      await opts.send(reminder.recipientMmUserId, reminder.text, reminder.rule);
       await opts.reminders.markSent(reminder.id);
       result.sent++;
     } catch {

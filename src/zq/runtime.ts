@@ -26,7 +26,7 @@ export const GIT_KEY_SLUG = "gitlab-qm-readonly-key";
 const OPENPROJECT_SERVER = "openproject";
 
 export interface ZqChat {
-  sendDm(mmUserId: string, text: string): Promise<void>;
+  sendDm(mmUserId: string, text: string, why?: string): Promise<void>;
   sendButtons(
     mmUserId: string,
     text: string,
@@ -38,6 +38,7 @@ export interface ZqChat {
       ref: string;
       approve: boolean;
     }>,
+    why?: string,
   ): Promise<void>;
   mmUserIdOf(principalId: string): Promise<string | undefined>;
   principalOf(mmUserId: string): Promise<string | undefined>;
@@ -180,17 +181,22 @@ export function createZqRuntime(deps: {
     people,
     reminders,
     state: deps.map<ZqRunState>("zq_run_state"),
-    send: (to, text) => chat.sendDm(to, text),
+    send: (to, text, why) => chat.sendDm(to, text, why),
     ...(config.reports.enabled && reportSource
       ? {
           reports: {
             store: reports,
             source: { build: reportSource },
             sendCard: (to: string, draftId: string, text: string) =>
-              chat.sendButtons(to, text, [
-                { id: "approve", name: "没问题,提交", style: "good", op: "report", ref: draftId, approve: true },
-                { id: "discard", name: "放弃", op: "report", ref: draftId, approve: false },
-              ]),
+              chat.sendButtons(
+                to,
+                text,
+                [
+                  { id: "approve", name: "没问题,提交", style: "good", op: "report", ref: draftId, approve: true },
+                  { id: "discard", name: "放弃", op: "report", ref: draftId, approve: false },
+                ],
+                "report-draft",
+              ),
           },
         }
       : {}),
@@ -204,10 +210,15 @@ export function createZqRuntime(deps: {
           mmUserIdOf: (principalId) => chat.mmUserIdOf(principalId),
           ...(contract.tools.createChildOrders ? { tool: contract.tools.createChildOrders } : {}),
           sendCard: (to, draftId, text) =>
-            chat.sendButtons(to, text, [
-              { id: "approve", name: "确认创建", style: "good", op: "children", ref: draftId, approve: true },
-              { id: "discard", name: "放弃", op: "children", ref: draftId, approve: false },
-            ]),
+            chat.sendButtons(
+              to,
+              text,
+              [
+                { id: "approve", name: "确认创建", style: "good", op: "children", ref: draftId, approve: true },
+                { id: "discard", name: "放弃", op: "children", ref: draftId, approve: false },
+              ],
+              "child-orders",
+            ),
         })
       : undefined;
 
@@ -291,10 +302,15 @@ export function createZqRuntime(deps: {
         proposedBy: principalId,
       });
       if (link.status === "pending")
-        await chat.sendButtons(mmUserId, `把这个 Mattermost 账号关联到 OpenProject 用户 ${me.login} 吗?`, [
-          { id: "link", name: "是我本人", style: "good", op: "link", ref: mmUserId, approve: true },
-          { id: "unlink", name: "不是我", op: "link", ref: mmUserId, approve: false },
-        ]);
+        await chat.sendButtons(
+          mmUserId,
+          `把这个 Mattermost 账号关联到 OpenProject 用户 ${me.login} 吗?`,
+          [
+            { id: "link", name: "是我本人", style: "good", op: "link", ref: mmUserId, approve: true },
+            { id: "unlink", name: "不是我", op: "link", ref: mmUserId, approve: false },
+          ],
+          "OpenProject 登录完成,需要确认账号绑定",
+        );
     },
   };
 }

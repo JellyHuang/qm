@@ -56,7 +56,7 @@ export interface ZqServiceDeps {
   people: () => Promise<ScanPerson[]>;
   reminders: ZqReminderStore;
   state: DurableMap<ZqRunState>;
-  send: (mmUserId: string, text: string) => Promise<void>;
+  send: (mmUserId: string, text: string, why?: string) => Promise<void>;
   reports?: {
     store: ZqReports;
     source: ReportSource;
@@ -285,11 +285,15 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
           await deps.state.merge("scanner", { lastReport: out.scanned });
         }
         if (config.deliverReminders)
-          out.delivered = await deliverDue({ reminders: deps.reminders, send: deps.send, now: at });
+          out.delivered = await deliverDue({
+            reminders: deps.reminders,
+            send: (to, text, rule) => deps.send(to, text, rule),
+            now: at,
+          });
         if (config.deliverReminders && deps.changes)
           out.changes = await deps.changes.store.flush(deps.groups?.store, {
             channel: deps.changes.channel,
-            dm: deps.send,
+            dm: (to, text) => deps.send(to, text, "change-digest"),
             ...(deps.changes.lineLabel ? { lineLabel: deps.changes.lineLabel } : {}),
           });
       }

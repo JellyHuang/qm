@@ -12,6 +12,7 @@ Setting one without the other fails at startup. The tester must have a confirmed
 ## What changes
 
 - Every OpenProject user resolves to a stand-in recipient `rp:<opUserId>` instead of a real Mattermost account. The chat boundary turns each stand-in into a message to the tester, so one change covers reminders, change digests, group creation, report cards and sub-order cards.
+- Every direct message and card carries three header lines: `当前你扮演:<角色> <姓名>`, `本应推送给:<角色> <姓名>` (who would have received it outside the mode) and `推送理由:<规则 id>(<原因>)`. Change-digest bullets carry the same in one line, and the group's first message states why it was created. The reasons are the rule ids of the scanner plus `change-digest`, `report-draft`, `child-orders` and the group creation.
 - A recipient that is neither the tester nor a stand-in is refused with an error. Nothing can reach a real person.
 - Every direct message starts with `当前你扮演:<角色> <姓名>`. Every line of a change digest carries its own label, taken from the person the change is about (the assignee of an order, the planner of a feature), so "assigned to X" switches the role from that line on.
 - Roles come from the ticket fields (planner, PM, reviewer, QA owner, acceptor, regression owner) and from the duty that owns an order's type (client, server, art, ...). A person holding several roles shows all of them.

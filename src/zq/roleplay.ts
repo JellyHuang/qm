@@ -3,7 +3,7 @@ import type { ZqChangeCursor, ZqChangeLine, ZqSnapshot } from "./changes.ts";
 import type { PersonField, ZqContract } from "./contract.ts";
 import type { ZqGroup } from "./groups.ts";
 import type { ZqReminder } from "./reminders.ts";
-import type { FeatureFacts, OpUserRef } from "./rules.ts";
+import type { FeatureFacts, OpUserRef, RuleId } from "./rules.ts";
 import type { OpReader, ScanPerson } from "./scanner.ts";
 
 export interface RoleplayPersona {
@@ -13,8 +13,8 @@ export interface RoleplayPersona {
 }
 
 export interface RoleplayChat {
-  sendDm(mmUserId: string, text: string): Promise<void>;
-  sendButtons: (mmUserId: string, text: string, buttons: never) => Promise<void>;
+  sendDm(mmUserId: string, text: string, why?: string): Promise<void>;
+  sendButtons: (mmUserId: string, text: string, buttons: never, why?: string) => Promise<void>;
   createGroup?: (feature: { id: number; subject: string; url?: string }, members: string[]) => Promise<string>;
   postToChannel?: (channelId: string, text: string) => Promise<void>;
 }
@@ -28,6 +28,34 @@ const DUTY_ROLES: Record<string, string> = {
   planning_lead: "策划负责人",
   qa_lead: "QA 负责人",
   ui_lead: "UI 负责人",
+};
+
+const WHY: Record<RuleId, string> = {
+  "planner-unassigned": "功能还在待分配策划阶段,需要指定负责策划",
+  "review-pending": "策划案等待审核",
+  "staffing-trades": "人员安排阶段还没有专业执行单",
+  "briefing-meeting-missing": "宣讲对齐阶段还没有宣讲会议",
+  "meeting-follow-up": "宣讲会议已过计划结束时间还没有关闭",
+  "production-missing-plan": "研发制作中的执行单缺少预计工时或计划时间",
+  "task-overdue": "执行单已超过计划结束时间",
+  "task-overdue-escalation": "执行单超期已满升级天数",
+  "task-unassigned": "有执行单还没有指定执行人",
+  "optimization-unassigned": "优化单还没有指派",
+  "optimization-children-done": "优化单的子单都已完成,等待策划关闭",
+  "optimization-completion-submitted": "优化单执行人已提交完成确认,等待策划验收",
+  "production-missing-planned-end": "研发制作中的总单没有计划结束时间",
+  "blocking-bug-open": "阻断 BUG 还没有关闭",
+  "delay-notice": "功能被标记延期",
+  "exit-ready": "功能已满足当前阶段的出口条件",
+  "formal-assets-pending": "待正式资源阶段还有执行单未完成",
+  "responsibility-not-set": "阶段需要的负责人字段还没有设置",
+};
+
+const OTHER_WHY: Record<string, string> = {
+  "change-digest": "变更摘要:功能或执行单发生了变化",
+  "report-draft": "日报/周报草稿需要确认",
+  "child-orders": "加子单预览需要请求人确认",
+  "group-created": "功能进入宣讲对齐且所有在制执行单都已指定执行人,自动建群",
 };
 
 const PREFIX = "rp:";
@@ -85,6 +113,18 @@ export function createRoleplay(opts: {
     for (const fact of facts) await opts.features.put(String(fact.feature.id), { featureId: fact.feature.id });
   }
 
+  const whyText = (why: string | undefined): string => {
+    if (why === undefined) return "未标明";
+    if (why in WHY) return `${why}(${WHY[why as RuleId]})`;
+    return OTHER_WHY[why] ?? why;
+  };
+
+  async function header(to: string, why: string | undefined): Promise<string> {
+    const label = await labelOf(to);
+    const who = label.replace("当前你扮演:", "");
+    return `${label}\n本应推送给:${who}\n推送理由:${whyText(why)}`;
+  }
+
   async function labelOf(to: string): Promise<string> {
     if (to === mmUserId) return "当前你扮演:你本人";
     const id = to.slice(PREFIX.length);
@@ -104,7 +144,8 @@ export function createRoleplay(opts: {
 
     async lineLabel(line: ZqChangeLine): Promise<string> {
       const about = line.aboutOpUserId ? roleplayRecipient(line.aboutOpUserId) : line.fallbackMmUserId;
-      return labelOf(about ?? mmUserId);
+      const label = await labelOf(about ?? mmUserId);
+      return `${label}(本应通知:${label.replace("当前你扮演:", "")};理由:${OTHER_WHY["change-digest"]})`;
     },
 
     people: (all: readonly ScanPerson[]): ScanPerson[] => all.filter((p) => p.mmUserId === mmUserId),
@@ -134,13 +175,13 @@ export function createRoleplay(opts: {
     chat<C extends RoleplayChat>(base: C): C {
       return {
         ...base,
-        sendDm: async (to, text) => {
-          const r = await recipient(to);
-          await base.sendDm(r.to, `${r.label}\n${text}`);
+        sendDm: async (to, text, why) => {
+          await recipient(to);
+          await base.sendDm(mmUserId, `${await header(to, why)}\n${text}`);
         },
-        sendButtons: async (to: string, text: string, buttons: never) => {
-          const r = await recipient(to);
-          await base.sendButtons(r.to, `${r.label}\n${text}`, buttons);
+        sendButtons: async (to: string, text: string, buttons: never, why?: string) => {
+          await recipient(to);
+          await base.sendButtons(mmUserId, `${await header(to, why)}\n${text}`, buttons);
         },
         ...(base.createGroup
           ? {
@@ -154,7 +195,7 @@ export function createRoleplay(opts: {
                 ]);
                 await base.postToChannel?.(
                   channel,
-                  `角色扮演验收群:本群只有你和 QM,以下角色都由你扮演。\n${roster.map((r) => `- ${r}`).join("\n")}`,
+                  `角色扮演验收群:本群只有你和 QM,以下角色都由你扮演。\n建群理由:${OTHER_WHY["group-created"]}\n${roster.map((r) => `- ${r}`).join("\n")}`,
                 );
                 return channel;
               },

@@ -46,6 +46,7 @@ const view = (id: number, over: Partial<WorkView>): WorkView => ({
 });
 
 const label = (role: string, name: string) => `当前你扮演:${role} ${name}`;
+const bullet = (role: string, name: string) => `- ${label(role, name)}\\(本应通知:${role} ${name};理由:[^)]+\\)`;
 
 function harness() {
   const clock = { now: WEDNESDAY_10AM_SHANGHAI };
@@ -171,7 +172,7 @@ test("role-play acceptance script: create, assign, develop, hand in, QA, finish,
 
   h.world.feature = { ...h.world.feature, statusKey: "feature.planning", responsiblePlanner: PLANNER };
   const assigned = await h.step(10);
-  assert.match(assigned.sent.map((m) => m.text).join("\n"), new RegExp(`- ${label("策划", "策划小A")} 功能 \\[#1\\]`));
+  assert.match(assigned.sent.map((m) => m.text).join("\n"), new RegExp(`${bullet("策划", "策划小A")} 功能 \\[#1\\]`));
 
   h.world.feature = { ...h.world.feature, statusKey: "feature.briefing" };
   h.world.children = [view(41, { parentId: 1, assignee: DEV, typeKey: "backend" })];
@@ -179,21 +180,22 @@ test("role-play acceptance script: create, assign, develop, hand in, QA, finish,
   assert.deepEqual(h.channels, [[JELLY]], "the group holds only the tester");
   const roster = briefing.posts.find((p) => p.text.includes("角色扮演验收群"))!.text;
   assert.match(roster, /策划小A/);
+  assert.match(roster, /建群理由:/);
   assert.match(roster, /服务端负责人 服务端小B/);
 
   h.world.feature = { ...h.world.feature, statusKey: "feature.development" };
   h.world.children = [...h.world.children, view(43, { parentId: 1, assignee: DEV2, typeKey: "backend" })];
   const developing = await h.step(10);
   const lines = developing.posts.map((p) => p.text).join("\n");
-  assert.match(lines, new RegExp(`- ${label("策划", "策划小A")} 功能 \\[#1\\]`));
-  assert.match(lines, new RegExp(`- ${label("服务端负责人", "服务端小D")} 新增执行单「单43」`));
+  assert.match(lines, new RegExp(`${bullet("策划", "策划小A")} 功能 \\[#1\\]`));
+  assert.match(lines, new RegExp(`${bullet("服务端负责人", "服务端小D")} 新增执行单「单43」`));
 
   h.world.children = h.world.children.map((c) => (c.id === 41 ? { ...c, statusKey: "execution.done" } : c));
   const handedIn = await h.step(10);
   assert.match(
     handedIn.posts.map((p) => p.text).join("\n"),
     new RegExp(
-      `- ${label("服务端负责人", "服务端小B")} 执行单「单41」 \\[#41\\]|- ${label("服务端负责人", "服务端小B")} 执行单「单41」`,
+      `${bullet("服务端负责人", "服务端小B")} 执行单「单41」 \\[#41\\]|${bullet("服务端负责人", "服务端小B")} 执行单「单41」`,
     ),
   );
 
@@ -203,9 +205,11 @@ test("role-play acceptance script: create, assign, develop, hand in, QA, finish,
   const qaText = qa.sent.map((m) => m.text);
   assert.ok(qaText.some((t) => t.startsWith(label("服务端负责人/BUG 处理人", "服务端小B")) && t.includes("阻断 BUG")));
   assert.ok(qaText.some((t) => t.startsWith(label("QA", "QA小C")) && t.includes("阻断 BUG")));
+  const qaMessage = qaText.find((t) => t.startsWith(label("QA", "QA小C")))!;
+  assert.match(qaMessage, /\n本应推送给:QA QA小C\n推送理由:blocking-bug-open\(阻断 BUG 还没有关闭\)\n/);
   assert.match(
     qa.posts.map((p) => p.text).join("\n"),
-    new RegExp(`- ${label("策划", "策划小A")} 功能 \\[#1\\].*QA 测试中`),
+    new RegExp(`${bullet("策划", "策划小A")} 功能 \\[#1\\].*QA 测试中`),
   );
 
   h.world.bugs = [];

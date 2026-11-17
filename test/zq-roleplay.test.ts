@@ -136,7 +136,7 @@ test("every notice and group for a test feature reaches only the tester, labelle
   assert.ok(delivered.sent > 0);
   assert.deepEqual([...new Set(h.sent.map((s) => s.to))], [JELLY]);
   const bodies = h.sent.map((s) => s.text);
-  assert.ok(bodies.every((t) => t.startsWith("当前你扮演:")));
+  assert.ok(bodies.every((t) => t.startsWith("当前你扮演:") && /\n本应推送给:.+\n推送理由:.+\n/.test(t)));
   assert.ok(bodies.some((t) => t.startsWith("当前你扮演:") && t.includes("服务端小B")));
 });
 
