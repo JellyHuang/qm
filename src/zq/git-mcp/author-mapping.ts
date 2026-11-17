@@ -62,7 +62,7 @@ interface AuthorMapper {
   handle(batches: CommitBatch[]): Promise<void>;
 }
 
-export function createAuthorMapper(deps: {
+function createAuthorMapper(deps: {
   resolver: AuthorResolver;
   queue: Pick<UnmappedQueue, "record">;
   sink: AuthorNotificationSink;
