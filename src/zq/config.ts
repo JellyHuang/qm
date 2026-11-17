@@ -1,18 +1,24 @@
-import { readFileSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, resolve } from "node:path";
 import { Cron } from "croner";
 import { JENKINS_JOBS } from "./jenkins/client.ts";
 import {
   DEFAULT_AUTHOR_EMAIL,
   DEFAULT_AUTHOR_NAME,
   DEFAULT_BODY_MAX,
+  DEFAULT_CLEANUP_BATCH,
   DEFAULT_MAX_PACKAGE_BYTES,
+  DEFAULT_RECORD_DAYS,
+  DEFAULT_RETAIN_DAYS,
   DEFAULT_SUBJECT_MAX,
   DEFAULT_TICKET_PATTERN,
   defaultOutputDir,
   validateIdentity,
   type PatchPackageSettings,
+  type PatchRetentionSettings,
 } from "./patch-package/settings.ts";
+import { pathUnder } from "../util/paths.ts";
 import { parseContract, type Duty, type ZqContract } from "./contract.ts";
 
 export interface ZqConfig {
@@ -32,6 +38,7 @@ export interface ZqConfig {
   gitMcp?: { url: string; secret: string };
   gitAuthors: { externalDomains: readonly string[]; botNames: readonly string[] };
   patchPackage: PatchPackageSettings;
+  patchRetention?: PatchRetentionSettings;
   jenkins: { url?: string; rerun: boolean; jobs: readonly string[]; rerunJobs: readonly string[]; hourlyCap: number };
 }
 
@@ -118,6 +125,23 @@ function patchPackageSettings(env: NodeJS.ProcessEnv): PatchPackageSettings {
   };
 }
 
+function patchRetentionSettings(env: NodeJS.ProcessEnv): PatchRetentionSettings {
+  const raw = env.ZQ_PATCH_RETAIN_DIR?.trim();
+  if (!raw) throw new Error("ZQ_PATCH_RETAIN=1 needs ZQ_PATCH_RETAIN_DIR, an absolute path");
+  if (!isAbsolute(raw) || raw.split(/[\\/]/).includes(".."))
+    throw new Error("ZQ_PATCH_RETAIN_DIR must be an absolute path without .. segments");
+  const dir = resolve(raw);
+  const temporary = [resolve(tmpdir()), realpathSync(tmpdir())];
+  if (temporary.some((root) => pathUnder(dir, root)))
+    throw new Error("ZQ_PATCH_RETAIN_DIR must not be under the temporary directory");
+  return {
+    dir,
+    days: integer("ZQ_PATCH_RETAIN_DAYS", env.ZQ_PATCH_RETAIN_DAYS, DEFAULT_RETAIN_DAYS, 1, 3650),
+    recordDays: integer("ZQ_PATCH_RECORD_DAYS", env.ZQ_PATCH_RECORD_DAYS, DEFAULT_RECORD_DAYS, 1, 3650),
+    cleanupBatch: integer("ZQ_PATCH_CLEANUP_BATCH", env.ZQ_PATCH_CLEANUP_BATCH, DEFAULT_CLEANUP_BATCH, 1, 1000),
+  };
+}
+
 export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   const cron = env.ZQ_SCANNER_CRON?.trim() || DEFAULT_CRON;
   const timezone = env.ZQ_SCANNER_TZ?.trim() || DEFAULT_TIMEZONE;
@@ -184,6 +208,7 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
       botNames: names(env.ZQ_GIT_BOT_NAMES),
     },
     patchPackage: patchPackageSettings(env),
+    ...(on(env.ZQ_PATCH_RETAIN) ? { patchRetention: patchRetentionSettings(env) } : {}),
     jenkins: {
       ...(jenkinsUrl ? { url: jenkinsUrl } : {}),
       rerun: jenkinsRerun,

@@ -30,7 +30,9 @@ export function tenantMap<T>(): DurableMap<T> & { reads: string[] } {
     select: unsupported,
     selectEntries: unsupported,
     claimIds: unsupported,
-    claimTenants: unsupported,
+    async claimTenants() {
+      return [...rows].filter(([, own]) => own.size > 0).map(([tenantId]) => ({ tenantId, id: "" }));
+    },
     deleteBefore: unsupported,
     claimTenantsWhere: unsupported,
     async get(id) {
