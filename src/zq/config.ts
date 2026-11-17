@@ -17,6 +17,8 @@ export interface ZqConfig {
   escalation: { duties: readonly Duty[]; afterDays: number };
   unsetResponsibilityDuties: readonly Duty[];
   reports: { enabled: boolean; dailyCron?: string; weeklyCron?: string };
+  gitMcp?: { url: string; secret: string };
+  gitAuthors: { externalDomains: readonly string[]; botNames: readonly string[] };
   jenkins: { url?: string; rerun: boolean; jobs: readonly string[]; rerunJobs: readonly string[]; hourlyCap: number };
 }
 
@@ -53,6 +55,13 @@ function duties(name: string, raw: string | undefined): Duty[] {
   return list;
 }
 
+function names(raw: string | undefined): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function jobNames(name: string, raw: string | undefined, fallback: readonly string[]): string[] {
   if (raw === undefined || !raw.trim()) return [...fallback];
   const list = raw
@@ -83,6 +92,10 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   if (opBaseUrl && !/^https?:\/\//.test(opBaseUrl)) throw new Error("ZQ_OP_BASE_URL must be an http(s) URL");
   const scannerEnabled = on(env.ZQ_SCANNER);
   if (scannerEnabled && !contractFile) throw new Error("ZQ_SCANNER needs ZQ_CONTRACT_FILE (the contract key table)");
+  const gitMcpUrl = env.ZQ_GIT_MCP_URL?.trim();
+  const gitMcpSecret = env.ZQ_GIT_MCP_SECRET?.trim();
+  if (gitMcpUrl && !/^https?:\/\//.test(gitMcpUrl)) throw new Error("ZQ_GIT_MCP_URL must be an http(s) URL");
+  if (Boolean(gitMcpUrl) !== Boolean(gitMcpSecret)) throw new Error("ZQ_GIT_MCP_URL and ZQ_GIT_MCP_SECRET go together");
   const jenkinsUrl = env.ZQ_JENKINS_URL?.trim().replace(/\/+$/, "");
   if (jenkinsUrl && !/^https?:\/\//.test(jenkinsUrl)) throw new Error("ZQ_JENKINS_URL must be an http(s) URL");
   const jenkinsRerun = on(env.ZQ_JENKINS_RERUN);
@@ -118,6 +131,11 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
       enabled: on(env.ZQ_REPORTS),
       ...(dailyCron ? { dailyCron } : {}),
       ...(weeklyCron ? { weeklyCron } : {}),
+    },
+    ...(gitMcpUrl && gitMcpSecret ? { gitMcp: { url: gitMcpUrl, secret: gitMcpSecret } } : {}),
+    gitAuthors: {
+      externalDomains: names(env.ZQ_GIT_EXTERNAL_DOMAINS),
+      botNames: names(env.ZQ_GIT_BOT_NAMES),
     },
     jenkins: {
       ...(jenkinsUrl ? { url: jenkinsUrl } : {}),

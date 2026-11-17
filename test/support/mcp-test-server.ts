@@ -19,6 +19,7 @@ interface McpRequest {
   rpc?: string;
   authorization?: string;
   actor?: string;
+  caller?: string;
   approval?: string;
 }
 
@@ -147,6 +148,7 @@ export async function startMcpTestServer(
       ...(parsed?.method ? { rpc: parsed.method } : {}),
       ...(authorization ? { authorization } : {}),
       ...(typeof req.headers["x-qm-actor"] === "string" ? { actor: req.headers["x-qm-actor"] } : {}),
+      ...(typeof req.headers["x-qm-caller"] === "string" ? { caller: req.headers["x-qm-caller"] } : {}),
       ...(typeof req.headers["x-qm-approval"] === "string" ? { approval: req.headers["x-qm-approval"] } : {}),
     });
     if (!authorized(authorization)) {
