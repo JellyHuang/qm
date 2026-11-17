@@ -454,7 +454,7 @@ Sources and precedence: `docs/zq/patch-package-retention.md` on `oa/zq-patch-pac
 
 - Id: retention doc `<ticket>-<first 12 characters of the commit id>`; phase 4 `<ticket>-<first 12 hex characters of the sha256 over the sorted lines "<name> <sha256>" of the patch and payload files>` (content addressed, section 2). The phase 4 id is used.
 - `kind`: retention doc `text-patch` or `xlsx`; phase 4 one value `patch-package` (section 2.2).
-- `files[]`: retention doc lists the patch and manifest; phase 4 lists every package file (patch, payloads, message, scripts, README, manifest, comparisons).
+- `files[]`: retention doc lists the patch and manifest; phase 4 lists every package file (patch, payloads, message, scripts, README_CN.txt, README_EN.txt, manifest, comparisons).
 - `recipient`: retention doc a user name string; phase 4 a resolved object written by the agent tool (13A.7).
 - Delivery fields (`delivery`, `attempts`, `deliveredAt`, `lastError`, `postId`) and the `delivery` value `expired`: in the retention doc, in this table; phase 4 moves them to `zq_patch_deliveries` (section 11).
 - Delivery behaviour in the retention doc (a stale `sending` row returns to `pending` after the probe, an unresolvable user goes to `failed`) is replaced by the at-most-once state machine of phase 4 13A.4 and 13A.5 (section 11).

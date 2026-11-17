@@ -18,9 +18,22 @@ This section overrides the drafts, tables and test records below wherever they d
 6. The remaining pre-launch check is decision 5 only (who tests `apply.ps1`, Windows and a real git-lfs). Nothing else of sections 1 to 14 changes; the effort table is unchanged.
 7. Differences in the implementation against the drafts of this document: payloads are `files/NNNN.dat` and the mbox is `patches/0001.patch` (not `parts/A`, `parts/B`); git blob ids are computed in process, so `hash-object` is not added to the git allowlist (only `check-attr` is); the package size cap is measured as an upper bound of an uncompressed zip, because no zip is built before the delivery step; the HEAD against base blob guard for LFS files applies to the default (current branch) mode, `--new-branch` builds from the base commit and only prints no warning about it.
 
+## Amendment 2 of 2026-11-17 (PM): the package folder goes into the repository root, two README files
+
+This section overrides the drafts, tables and test records below wherever they differ, in the same way as the amendment above. The implementation is on `oa/zq-patch-4a-builder`.
+
+1. Usage model. The user unzips the package, puts the WHOLE package folder into the ROOT of the target repository and runs the script with no folder argument: `sh <package folder>/apply.sh` (Linux, macOS, Git Bash) or `<package folder>\apply.cmd` (Windows, a double-click works). `--dry-run` first, then the same command without it. The package is no longer unzipped outside the repository, and `--repo` is no longer needed.
+2. Default repository rule. Without `--repo` the script treats the parent of the package folder as the repository and requires that it is the root of a working tree. The test is made by git itself, not by comparing paths, so symlinks and Windows-style paths from Git Bash need no `cygpath`: `rev-parse --is-bare-repository` must not be `true`, `rev-parse --show-toplevel` must succeed, and `rev-parse --show-cdup` must be empty. Otherwise the script exits 4 with a hint and touches nothing: the parent is not a repository, is a subdirectory of one (the hint names the real root), or is a bare repository. `--repo DIR` keeps the old meaning: the repository that contains DIR (any directory inside it is accepted), and the package folder may then be anywhere, also outside the repository or in a subfolder of it. No new exit code was added.
+3. Untracked package folder rules. The package folder is an untracked folder inside the repository, and it must stay that way. The dirty-tree check looks at tracked files only (as before). The commit never contains a file of the package folder: the text part goes through `git am`, the LFS files through an explicit `git add -- <path>`, and the script never uses `git add -A`, `git add .` or `git commit -a`. After a success, `--new-branch`, `--dry-run`, a rollback and the undo command, `git status --porcelain` shows only `?? <package folder>/`. `.gitignore` and `.git/info/exclude` are never edited: excluding would hide a package folder that was put in the wrong place, would leave a permanent line in a file the user owns, and the script would have to remove it again on every failure path; an ignored folder (the user's own `.gitignore`) works too and then shows nothing. The trade-off is that `git status` shows the folder until the user deletes it; after a success the script says that the folder can be deleted and that it never deletes anything.
+4. New refusals (exit 4, before anything is touched, both modes): the parent is not a repository, is a subdirectory of one, or is bare (item 2); any path of the change (old and new names, LFS paths included) is equal to or under the package folder name, compared case-insensitively because Windows and macOS file systems are (for example the change adds `docs/new.txt` and the package folder is called `docs`); the repository tracks any file under the package folder name (the package was committed by mistake, or the folder name is a project folder). The list of changed paths is embedded in the script and covered by the same self-check. A package folder with extra files (the user's notes) is tolerated as before: only the listed package files are checked against the manifest.
+5. Success output. Besides the review line and the undo line `git reset --keep <original HEAD>` (valid only before the commit is pushed), the script prints that the package folder can now be deleted and that this script never deletes anything. A dry run prints that everything was undone and deletes nothing.
+6. Windows wrappers. `apply.cmd` is trivial and holds no logic: it looks for the `sh.exe` of Git for Windows (the folder of `git` found on PATH, then `..\usr\bin\sh.exe` and `..\bin\sh.exe`; then `%ProgramFiles%\Git`, `%ProgramFiles(x86)%\Git`, `%LocalAppData%\Programs\Git`), changes to the package folder, runs `sh apply.sh %*`, passes the exit code out, and pauses before exiting only when it was started by a double-click (`%CMDCMDLINE%` contains `/c`; a console run does not pause). It prints a clear message and exits 4 when Git for Windows is not found. No new setting (no `GIT_EXE` override) was invented. `apply.ps1` does the same lookup, takes no required argument, and passes `-Repo` only when given. Both are UNTESTED on real Windows: neither `cmd.exe`, `wine` nor PowerShell was available, and the files carry the label in both READMEs and in the manifest.
+7. README split. `README.txt` (Chinese and English together) becomes `README_CN.txt` (Chinese only) and `README_EN.txt` (English only), each complete. In the demo, `DEMO.txt` becomes `DEMO_CN.txt` and `DEMO_EN.txt`. The manifest lists both with `role: readme` and `language: zh` or `en`, with their sha256 and blob ids; the README files are documentation and are not part of the script's self-check. The raw English builder warnings stay in `manifest.json` and are no longer pasted into the READMEs.
+8. Configuration and schema. No setting, flag or environment variable was added or changed. The manifest schema stays 2; changed fields: `files[]` has the two README entries instead of `README.txt` (new optional `language`), `applyDefaults` gains `repo` and `packageFolder` strings, and `instructions` describes the new commands. The script gains one data line `QM_PATHS` (the changed paths); the package layout is otherwise unchanged. No table, no persisted payload and no API changed.
+
 ## Plain summary for the PM (15 lines)
 
-1. A package stays one directory (one zip): a `git format-patch` mbox for the text changes, the real files for anything under Git LFS, a commit message file, `manifest.json`, a plain `README.txt`, and one apply script in two forms (`apply.sh`, `apply.ps1`).
+1. A package stays one directory (one zip): a `git format-patch` mbox for the text changes, the real files for anything under Git LFS, a commit message file, `manifest.json`, two plain READMEs (`README_CN.txt` and `README_EN.txt`, amendment 2), and apply scripts (`apply.sh`, plus the thin `apply.cmd` and `apply.ps1`). The package folder is put into the repository root and run with no folder argument (amendment 2).
 2. The builder decides which files are LFS by running git's own attribute engine on the repository's `.gitattributes` files, and also by looking at whether the base file is an LFS pointer. Any LFS file switches the package to "file plus script" for that file; the text files still travel as a patch.
 3. The result for the developer is always ONE commit: the patch is applied with `git am`, the LFS files are copied in and staged (git-lfs turns them into pointers and keeps the real file for the push), and the commit is amended once.
 4. The script checks everything before it changes anything (package intact, clean working tree, base commit present, git-lfs installed, nobody changed the LFS file since the base). If any later step fails, it puts the repository back exactly as it was.
@@ -54,7 +67,7 @@ This section overrides the drafts, tables and test records below wherever they d
 
 ```
 WP-123-0123456789ab/                 name: <ticket>-<12 hex characters, see below>
-  README.txt                         three steps, generated from the manifest, plain text, no secrets
+  README_CN.txt, README_EN.txt       three steps, generated from the manifest, plain text, no secrets, one language each (amendment 2)
   manifest.json                      schema 2
   COMMIT_MESSAGE.txt                 the exact commit message (UTF-8, LF)
   apply.sh                           POSIX sh, LF line endings
@@ -120,7 +133,22 @@ Why payload names are `0001.dat` and not the repository path: repository paths i
     { "name": "COMMIT_MESSAGE.txt", "role": "message", "bytes": 98, "sha256": "<64 hex>", "gitBlob": "<40 hex>" },
     { "name": "apply.sh", "role": "script", "bytes": 9300, "sha256": "<64 hex>", "gitBlob": "<40 hex>" },
     { "name": "apply.ps1", "role": "script", "bytes": 9100, "sha256": "<64 hex>", "gitBlob": "<40 hex>" },
-    { "name": "README.txt", "role": "readme", "bytes": 1500, "sha256": "<64 hex>", "gitBlob": "<40 hex>" }
+    {
+      "name": "README_CN.txt",
+      "role": "readme",
+      "language": "zh",
+      "bytes": 1500,
+      "sha256": "<64 hex>",
+      "gitBlob": "<40 hex>"
+    },
+    {
+      "name": "README_EN.txt",
+      "role": "readme",
+      "language": "en",
+      "bytes": 1400,
+      "sha256": "<64 hex>",
+      "gitBlob": "<40 hex>"
+    }
   ],
   "changes": [
     {
@@ -161,9 +189,9 @@ Why payload names are `0001.dat` and not the repository path: repository paths i
     }
   ],
   "instructions": {
-    "sh": "sh apply.sh --repo <dir-of-your-clone> [--dry-run] [--reset-author]",
+    "sh": "sh <package folder>/apply.sh [--dry-run] [--new-branch] [--keep-bot-author] [--repo <dir-of-your-clone>]",
     "powershell": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\apply.ps1 -Repo <dir-of-your-clone> [-DryRun] [-ResetAuthor]",
-    "manual": "see README.txt, section 'Without the script'"
+    "manual": "see the last section of README_EN.txt or README_CN.txt"
   },
   "verified": {
     "partA": "git am --3way --keep-cr onto a scratch repository holding the real base blobs gave the intended tree and message",
@@ -258,7 +286,7 @@ Why one commit and why this way:
 
 ## 5. Apply script design
 
-Parameters: `--repo DIR` (default the current directory, any directory inside the repository works), `--dry-run`, `--reset-author`, `--help`. PowerShell: `-Repo`, `-DryRun`, `-ResetAuthor`. Exit codes: 0 done, 2 usage, 3 package damaged, 4 precondition failed (nothing was touched), 5 apply failed (rolled back), 130 interrupted (rolled back).
+Parameters (amendment 2 replaces the default: without `--repo` the parent of the package folder is the repository and must be the root of its working tree; `--repo DIR` accepts any directory inside the repository): `--repo DIR` (draft: default the current directory, any directory inside the repository works), `--dry-run`, `--reset-author`, `--help`. PowerShell: `-Repo`, `-DryRun`, `-ResetAuthor`. Exit codes: 0 done, 2 usage, 3 package damaged, 4 precondition failed (nothing was touched), 5 apply failed (rolled back), 130 interrupted (rolled back).
 
 Steps, in order, each stops with an explanation:
 
@@ -673,7 +701,7 @@ try {
 
 The generated data block (`$QM`, `$PackageFiles`, `$LfsFiles`) must come after `param(...)`, which has to be the first statement of a script. Its values are the ones of the sh draft. In the real file the `<TAB>` markers are tab characters.
 
-### 5.3 README.txt (generated from the manifest; English draft, language is a PM decision)
+### 5.3 README_EN.txt (generated from the manifest; English draft; amendment 2 splits it into README_CN.txt and README_EN.txt, and its Step 1 and Step 2 are replaced by the folder-in-the-root usage)
 
 ```
 Patch package WP-123-0123456789ab  (repository: client, ticket: WP-123)
