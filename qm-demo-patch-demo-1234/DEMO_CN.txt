@@ -1,0 +1,30 @@
+QM 演示补丁包 WP-1234 - 怎么试一试
+演示里的姓名、邮箱和数据全部是虚构的。
+
+这个包是什么：一个现成的修改（工单 WP-1234，“Adjust skill level 3 cost”），包含 config/skill_levels.lua 的文本修改和被修改的 Excel 文件 data/skill_table.xlsx。由 QM 生成；QM 没有推送任何内容。你自己用 apply.sh（Windows 用 apply.cmd）应用，提交归你。README_CN.txt（自动生成）说明了所有选项，本文件只演示流程。自动生成的 README 用包编号（WP-1234-b0383898e73f）称呼补丁包文件夹；本演示里这个文件夹叫 qm-demo-patch-demo-1234，命令里请用这个名字。Windows：apply.cmd 和 apply.ps1 未经测试，尚未在任何真实的 Windows 机器上运行过；下面的步骤使用 sh。
+
+演示流程（约两分钟，需要 git 2.40 或更新版本；请在空的临时文件夹里运行，不要在真实仓库里）：
+  1. 生成一个一次性的演示仓库，内容正好是补丁包所基于的基准：
+       sh qm-demo-patch-demo-1234/make-demo-repo.sh ./qm-demo-repo
+     脚本用固定日期和虚构作者创建 3 个基准提交，只在这个一次性仓库里设置身份 Demo User <demo.user@example.invalid>，核对基准提交与 manifest.json 一致，并打印后续命令。目标目录不为空时脚本会拒绝运行。
+  2. 把整个补丁包文件夹复制到该仓库的根目录，然后进入仓库：
+       cp -R qm-demo-patch-demo-1234 qm-demo-repo/
+       cd qm-demo-repo
+  3. 试运行，不留任何痕迹（不需要任何目录参数：补丁包文件夹的上一级就是仓库）：
+       sh qm-demo-patch-demo-1234/apply.sh --dry-run
+  4. 正式应用。在当前分支（main）上创建一个提交，作者和提交者都是 Demo User，末尾带有 “AI-Generated: true”：
+       sh qm-demo-patch-demo-1234/apply.sh
+     脚本会打印原来的 HEAD 和撤销命令，并提示补丁包文件夹现在可以删除（脚本从不删除任何东西）。
+  5. 检查：
+       git log -1 --stat
+       git status
+     git status 只显示 “?? qm-demo-patch-demo-1234/”：补丁包文件夹保持未跟踪，不会进入提交。
+  6. 撤销（提交从未推送，脚本也从不推送）：
+       git reset --keep <apply.sh 打印的原 HEAD>
+     更安全的做法，完全不动你的分支：sh qm-demo-patch-demo-1234/apply.sh --new-branch（创建本地分支 qm/WP-1234-b0383898e73f）。
+
+在真实仓库里同样操作：解压补丁包，把整个文件夹放进你的仓库根目录（包含 .git 的那个文件夹），确认已设置你自己的 git 身份（git config user.name / user.email），已跟踪的文件没有未提交的修改，分支没有落后于上游。然后运行 sh <补丁包文件夹>/apply.sh --dry-run，满意后运行 sh <补丁包文件夹>/apply.sh。如果补丁包文件夹放在仓库的子文件夹里、仓库已经跟踪了补丁包文件夹里的文件、或者本次修改涉及补丁包文件夹内的路径，脚本会拒绝启动。基准提交必须存在于你的克隆里（脚本不会 fetch）。用 git log -1 --stat 和 git show 检查，满意后自己推送，然后删除补丁包文件夹。
+
+如果补丁包文件夹必须放在仓库之外，请使用 sh <补丁包路径>/apply.sh --repo /你的/克隆目录。
+
+用 Git LFS 存放的大文件在安装了 git-lfs 时由同一个脚本处理；本演示不含 LFS 文件。

@@ -23,7 +23,9 @@
     "role": "package marker; not the author of the commit unless --keep-bot-author is used"
   },
   "applyDefaults": {
-    "mode": "one commit on the current branch",
+    "mode": "one commit on the current branch of the repository whose root holds the package folder",
+    "repo": "the folder that contains the package folder, which must be the root of the working tree; --repo DIR applies to the repository that contains DIR instead and the package folder may then be anywhere",
+    "packageFolder": "stays untracked in the repository and is never committed; .gitignore and .git/info/exclude are never edited; the script refuses when files of it are tracked or when the change touches a path inside it; it can be deleted after a successful run, the script never deletes anything",
     "author": "the person who applies the package (local git user.name and user.email)",
     "committer": "the person who applies the package",
     "flags": {
@@ -62,34 +64,43 @@
       "gitBlob": "3f1dc3fedd2d4a3f756104bcb07e9e6f5f4d227a"
     },
     {
-      "name": "README.txt",
+      "name": "README_CN.txt",
       "role": "readme",
-      "bytes": 5405,
-      "sha256": "c245716e92e65db338fe94904d75d0753f6c1466dce742cc1f773612f4518cc1",
-      "gitBlob": "d0c6805237eb90ede49e11bae6d8c0008dbb1009"
+      "language": "zh",
+      "bytes": 4024,
+      "sha256": "23b09d9ab4c71158b4433cc24528fba208a9574e46570d7e309693fee4ec2659",
+      "gitBlob": "a2085a2b120d5151209baea658329391078a3965"
+    },
+    {
+      "name": "README_EN.txt",
+      "role": "readme",
+      "language": "en",
+      "bytes": 4129,
+      "sha256": "b308802c0400051732e1cdcb9bf987e8afa6c92bd1b173be9aae7808cef2d56e",
+      "gitBlob": "286abea834bcc3b3855793c10c9f70adb61daaaf"
     },
     {
       "name": "apply.ps1",
       "role": "script",
       "untested": true,
-      "bytes": 986,
-      "sha256": "df516ee8899f29b37e4e94345435ed96059bfc06136155fc710f98903e68d855",
-      "gitBlob": "4b0b666766b7850b0431752eefc93aeb8db974fc"
+      "bytes": 987,
+      "sha256": "d61a7a4dd4f112d0045d6b91c115c0362162c48e0a7c2eb7c26a1318f15c28ab",
+      "gitBlob": "94419291d6216dd6d45a9c97ef406ee3bf9a48b0"
     },
     {
       "name": "apply.cmd",
       "role": "script",
       "untested": true,
-      "bytes": 262,
-      "sha256": "81df37efa404fd2831bacee5ab34b8b09c1c4c9287ded65aaa8d5d4319758dc2",
-      "gitBlob": "71db92f43783892d36119f89838425842ba6d9d0"
+      "bytes": 817,
+      "sha256": "427cb6deac724e4904303fc01b1cc81ad658b4f817d2dd11d4cfd74ceabc7f8e",
+      "gitBlob": "2c40e95d8f01ade7e51ece97fac473d052019806"
     },
     {
       "name": "apply.sh",
       "role": "script",
-      "bytes": 14720,
-      "sha256": "6c0edf9c3ed1257ad17ee800df0dd6fa79f1fff5805f0e6fe846a20032b524f6",
-      "gitBlob": "687da9817b68df060b0fbebf931370c8c976dd9c",
+      "bytes": 16636,
+      "sha256": "14d05bb50d6697375dcde8fb74309f7bdaa351e2f995e788862c1f1b9f9d85e9",
+      "gitBlob": "c0395dad8cae404057ab27cbb511c9e73407a863",
       "hashExcludes": "the line that starts with QM_MANIFEST_BLOB="
     }
   ],
@@ -116,16 +127,16 @@
     }
   ],
   "selfCheck": {
-    "scriptGitBlob": "687da9817b68df060b0fbebf931370c8c976dd9c",
-    "scriptSha256": "6c0edf9c3ed1257ad17ee800df0dd6fa79f1fff5805f0e6fe846a20032b524f6",
+    "scriptGitBlob": "c0395dad8cae404057ab27cbb511c9e73407a863",
+    "scriptSha256": "14d05bb50d6697375dcde8fb74309f7bdaa351e2f995e788862c1f1b9f9d85e9",
     "scriptExcludes": "the line that starts with QM_MANIFEST_BLOB=, which holds the git blob id of this manifest",
     "limits": "apply.sh checks this manifest and itself against each other and the other files against their blob ids. That detects damage and incomplete downloads. It does not stop someone who changes the files and the script together."
   },
   "instructions": {
-    "sh": "sh apply.sh --repo <dir-of-your-clone> [--dry-run] [--new-branch] [--keep-bot-author]",
-    "cmd": "apply.cmd --repo <absolute clone dir> [--dry-run] [--new-branch] [--keep-bot-author] (UNTESTED)",
-    "powershell": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\apply.ps1 -Repo <absolute clone dir> [-DryRun] [-NewBranch] [-KeepBotAuthor] (UNTESTED)",
-    "manual": "see README.txt, section 'Without the script'"
+    "sh": "sh <package folder>/apply.sh [--dry-run] [--new-branch] [--keep-bot-author] [--repo <dir-of-your-clone>], run with the package folder inside the root of your repository",
+    "cmd": "<package folder>\\apply.cmd [--dry-run] [--new-branch] [--keep-bot-author] (UNTESTED); a double-click works and waits for a key at the end",
+    "powershell": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\<package folder>\\apply.ps1 [-DryRun] [-NewBranch] [-KeepBotAuthor] [-Repo <absolute clone dir>] (UNTESTED)",
+    "manual": "see the last section of README_EN.txt (English) or README_CN.txt (Chinese)"
   },
   "verified": {
     "partA": "git am --3way --keep-cr --keep-non-patch onto a scratch repository at the base commit gave the intended tree and message",

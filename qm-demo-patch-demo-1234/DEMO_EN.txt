@@ -1,0 +1,30 @@
+QM demo patch package WP-1234 - how to try it
+All names, e-mail addresses and data in this demo are invented.
+
+What this package is: a ready-made change (ticket WP-1234, "Adjust skill level 3 cost") made of a text change in config/skill_levels.lua and a modified Excel file data/skill_table.xlsx. QM prepared it; QM pushed nothing. You apply it yourself with apply.sh (Windows: apply.cmd) and the commit is yours. README_EN.txt (generated) explains every option. This file only walks you through the demo. The generated README names the package folder by its id (WP-1234-b0383898e73f); in this demo the folder is called qm-demo-patch-demo-1234, so use that name in the commands. Windows: apply.cmd and apply.ps1 are UNTESTED, nobody has run them on a real Windows machine; the steps below use sh.
+
+Demo flow (about two minutes, needs git 2.40 or newer; run it in an empty temporary folder, never inside a real repository):
+  1. Make a throwaway repository that is exactly the base the package was made against:
+       sh qm-demo-patch-demo-1234/make-demo-repo.sh ./qm-demo-repo
+     It creates 3 base commits with fixed dates and invented authors, sets the identity Demo User <demo.user@example.invalid> ONLY inside that throwaway repository, checks that the base commit equals the one in manifest.json, and prints the next commands. It refuses a target directory that is not empty.
+  2. Copy the WHOLE package folder into the ROOT of that repository and go there:
+       cp -R qm-demo-patch-demo-1234 qm-demo-repo/
+       cd qm-demo-repo
+  3. Dry run, nothing is left behind (no folder argument is needed: the folder that contains the package folder is the repository):
+       sh qm-demo-patch-demo-1234/apply.sh --dry-run
+  4. Apply for real. This makes ONE commit on the branch you are on (main), authored and committed by Demo User, with the trailer "AI-Generated: true":
+       sh qm-demo-patch-demo-1234/apply.sh
+     The script prints the original HEAD and the undo line, and says that the package folder can be deleted (the script never deletes anything).
+  5. Review:
+       git log -1 --stat
+       git status
+     git status shows only "?? qm-demo-patch-demo-1234/": the package folder stays untracked and is never part of the commit.
+  6. Undo (the commit was never pushed; the script never pushes):
+       git reset --keep <original HEAD printed by apply.sh>
+     Safer variant that does not touch your branch at all: sh qm-demo-patch-demo-1234/apply.sh --new-branch (creates the local branch qm/WP-1234-b0383898e73f).
+
+The same on a real repository: unzip the package, put the whole folder into the ROOT of your repository (the folder that contains .git), make sure your own git identity is set (git config user.name / user.email), the tracked files have no uncommitted changes, and the branch is not behind its upstream. Then run sh <package folder>/apply.sh --dry-run and, if you are happy, sh <package folder>/apply.sh. The script refuses to start if the package folder is in a subfolder of the repository, if the repository tracks files of the package folder, or if the change touches a path inside the package folder. The base commit must exist in your clone (the script never fetches). Review with git log -1 --stat and git show, push yourself when you are happy, then delete the package folder.
+
+If the package folder must stay outside the repository, use sh <path-to-package>/apply.sh --repo /path/to/your/clone.
+
+Large files stored with Git LFS are handled by the same script when git-lfs is installed. This demo contains no LFS file.

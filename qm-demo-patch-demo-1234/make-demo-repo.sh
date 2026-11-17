@@ -101,7 +101,8 @@ if [ "$actual" != "$expected" ]; then
   exit 1
 fi
 
-pkg=$here
+name=$(basename "$here")
+
 cat <<EOF
 
 Demo repository created in $target
@@ -110,12 +111,15 @@ This throwaway repository has a LOCAL identity only inside it:
   Demo User <demo.user@example.invalid>
 Your global git identity is not touched. In a real repository the commit uses YOUR git identity.
 
-Next steps:
-  cd $target
-  sh $pkg/apply.sh --dry-run
-  sh $pkg/apply.sh
+Next steps (the package folder goes INTO the root of the repository):
+  cp -R "$here" "$target/"
+  cd "$target"
+  sh $name/apply.sh --dry-run
+  sh $name/apply.sh
   git log -1 --stat
-  git show
+  git status
+On Windows, copy the folder $name into the repository root, then run $name\\apply.cmd with --dry-run first, or double-click it (UNTESTED).
+git status shows only the package folder as untracked ($name/): it is never committed. You can delete it after a successful run.
 Undo (put the repository back as it was):
   git reset --keep $actual
 EOF
