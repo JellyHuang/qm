@@ -9,6 +9,7 @@ export interface ZqReminderDraft {
   subjectId: string;
   subjectTitle?: string;
   recipientMmUserId: string;
+  target?: string;
   text: string;
   dayKey: string;
   dueAt: number;

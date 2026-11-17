@@ -438,3 +438,14 @@ test("the child orders of an optimization order under a feature are not chased a
   const kid = work(77, { parentId: 76, statusKey: "execution.active", assignee: BOB });
   assert.deepEqual(rules({ feature: attachedFeature(), children: [parent, kid] }), []);
 });
+
+test("an order still in the unassigned stage that already has an executor is not reported as having none", () => {
+  const assigned = work(2, { typeKey: "backend", statusKey: "execution.unassigned", assignee: BOB });
+  const open = work(3, { typeKey: "backend", statusKey: "execution.unassigned" });
+  const out = rules({ feature: feature("feature.development", PLANNED), children: [assigned, open] }).filter(
+    (a) => a.rule === "task-unassigned",
+  );
+  assert.equal(out.length, 1);
+  assert.match(out[0]!.text, /#3/);
+  assert.doesNotMatch(out[0]!.text, /#2/);
+});

@@ -13,7 +13,7 @@ export interface RoleplayPersona {
 }
 
 export interface RoleplayChat {
-  sendDm(mmUserId: string, text: string, why?: string): Promise<void>;
+  sendDm(mmUserId: string, text: string, why?: string, target?: string): Promise<void>;
   sendButtons: (mmUserId: string, text: string, buttons: never, why?: string) => Promise<void>;
   createGroup?: (feature: { id: number; subject: string; url?: string }, members: string[]) => Promise<string>;
   postToChannel?: (channelId: string, text: string) => Promise<void>;
@@ -121,8 +121,16 @@ export function createRoleplay(opts: {
     return OTHER_WHY[why] ?? why;
   };
 
-  async function header(to: string, why: string | undefined): Promise<string> {
-    const label = await labelOf(to);
+  const targetRole = (target: string | undefined): string | undefined => {
+    if (target?.startsWith("field:")) return FIELD_ROLES[target.slice("field:".length) as PersonField];
+    if (target?.startsWith("duty:")) return DUTY_ROLES[target.slice("duty:".length)];
+    return undefined;
+  };
+
+  async function header(to: string, why: string | undefined, target?: string): Promise<string> {
+    const persona = to.startsWith(PREFIX) ? await personas.get(to.slice(PREFIX.length)) : undefined;
+    const role = targetRole(target);
+    const label = persona && role ? `当前你扮演:${role} ${persona.name}` : await labelOf(to);
     const who = label.replace("当前你扮演:", "");
     return `${label}\n本应推送给:${who}\n推送理由:${whyText(why)}`;
   }
@@ -177,9 +185,9 @@ export function createRoleplay(opts: {
     chat<C extends RoleplayChat>(base: C): C {
       return {
         ...base,
-        sendDm: async (to, text, why) => {
+        sendDm: async (to, text, why, target) => {
           await recipient(to);
-          await base.sendDm(mmUserId, `${await header(to, why)}\n${text}`);
+          await base.sendDm(mmUserId, `${await header(to, why, target)}\n${text}`);
         },
         sendButtons: async (to: string, text: string, buttons: never, why?: string) => {
           await recipient(to);

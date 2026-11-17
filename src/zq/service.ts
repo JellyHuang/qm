@@ -56,7 +56,7 @@ export interface ZqServiceDeps {
   people: () => Promise<ScanPerson[]>;
   reminders: ZqReminderStore;
   state: DurableMap<ZqRunState>;
-  send: (mmUserId: string, text: string, why?: string) => Promise<void>;
+  send: (mmUserId: string, text: string, why?: string, target?: string) => Promise<void>;
   reports?: {
     store: ZqReports;
     source: ReportSource;

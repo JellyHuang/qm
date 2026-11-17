@@ -75,6 +75,11 @@ export interface ScanReport {
   problemSamples: string[];
 }
 
+function targetKey(t: Target): string {
+  if (t.kind === "user") return "user";
+  return t.kind === "duty" ? `duty:${t.duty}` : `field:${t.field}`;
+}
+
 export function dayKeyIn(timezone: string, at: number): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone,
@@ -163,14 +168,15 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
       report.featuresSeen++;
       for (const action of evaluateRules(fact, opts.contract, ruleOptions)) {
         if (action.rule === "responsibility-not-set") report.unsetResponsibility++;
-        const users = (await Promise.all(action.to.map((t) => usersOf(t, fact)))).flat();
-        const recipients = new Set<string>();
-        for (const u of users) {
-          const mm = await opts.mmUserIdOfOpUser(u.id);
-          if (mm) recipients.add(mm);
-          else report.unlinked++;
+        const recipients = new Map<string, string>();
+        for (const target of action.to) {
+          for (const u of await usersOf(target, fact)) {
+            const mm = await opts.mmUserIdOfOpUser(u.id);
+            if (!mm) report.unlinked++;
+            else if (!recipients.has(mm)) recipients.set(mm, targetKey(target));
+          }
         }
-        for (const mm of recipients) {
+        for (const [mm, target] of recipients) {
           const id = reminderId(action.rule, action.subjectId, mm, action.once ? "once" : dayKey);
           if (!(await opts.reminders.has(id)) && (await opts.reminders.countForDay(mm, dayKey)) >= opts.dailyCeiling) {
             report.ceilingHit++;
@@ -183,6 +189,7 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
               subjectId: action.subjectId,
               subjectTitle: action.subjectTitle,
               recipientMmUserId: mm,
+              target,
               text: action.text,
               dayKey,
               dueAt: opts.now,

@@ -143,7 +143,9 @@ function unassignedDispatch(
   contract: ZqContract,
 ): Array<{ to: Target; list: WorkView[] }> {
   const dispatch = new Map<string, { to: Target; list: WorkView[] }>();
-  for (const c of children.filter((c) => active(c) && c.statusKey === contract.stageRoles.taskUnassigned)) {
+  for (const c of children.filter(
+    (c) => active(c) && c.statusKey === contract.stageRoles.taskUnassigned && !c.assignee,
+  )) {
     const owner = contract.typeOwners[c.typeKey];
     const person = owner?.kind === "taskField" ? c[owner.field] : undefined;
     const to: Target | undefined =

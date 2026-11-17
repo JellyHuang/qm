@@ -26,7 +26,7 @@ export const GIT_KEY_SLUG = "gitlab-qm-readonly-key";
 const OPENPROJECT_SERVER = "openproject";
 
 export interface ZqChat {
-  sendDm(mmUserId: string, text: string, why?: string): Promise<void>;
+  sendDm(mmUserId: string, text: string, why?: string, target?: string): Promise<void>;
   sendButtons(
     mmUserId: string,
     text: string,
@@ -186,7 +186,7 @@ export function createZqRuntime(deps: {
     people,
     reminders,
     state: deps.map<ZqRunState>("zq_run_state"),
-    send: (to, text, why) => chat.sendDm(to, text, why),
+    send: (to, text, why, target) => chat.sendDm(to, text, why, target),
     ...(config.reports.enabled && reportSource
       ? {
           reports: {

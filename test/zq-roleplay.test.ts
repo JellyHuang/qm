@@ -171,3 +171,32 @@ test("role-play needs both the tester and the test projects, and is off by defau
   });
   assert.throws(() => zqConfigFromEnv({ ZQ_ROLEPLAY_MM_USER: "u" }), /set together/);
 });
+
+test("a message names the role it is for, not every role the same person holds", async () => {
+  const h = harness();
+  const reminders = createZqReminderStore({ map: h.reminderMap });
+  const both = { id: "11", login: "a", name: "策划小A" };
+  const reader = h.roleplay.reader({
+    features: async () => ({
+      facts: [{ feature: { ...feature, pm: both, qaOwner: both }, children: [], meetings: [] }],
+      problems: [],
+    }),
+    dutyHolders: async () => undefined,
+  });
+  await scanOnce({
+    reader,
+    contract,
+    people: h.roleplay.people([person]),
+    mmUserIdOfOpUser: h.roleplay.mmUserIdOfOpUser,
+    reminders,
+    mode: "live",
+    now: NOON,
+    timezone: "Asia/Shanghai",
+    dailyCeiling: 100,
+    escalation: { duties: [], afterDays: 2 },
+  });
+  await deliverDue({ reminders, send: h.chat.sendDm, now: NOON });
+  const meeting = h.sent.find((s) => s.text.includes("briefing-meeting-missing"))!;
+  assert.match(meeting.text, /^当前你扮演:策划 策划小A\n/);
+  assert.doesNotMatch(meeting.text.split("\n")[0]!, /项目经理|QA/);
+});
