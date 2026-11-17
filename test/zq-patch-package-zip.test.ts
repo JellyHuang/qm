@@ -92,14 +92,21 @@ test(
       assert.deepEqual(readFileSync(join(root, file.name)), readFileSync(file.path), file.name);
       assert.equal(statSync(join(root, file.name)).mode & 0o777, file.name === "apply.sh" ? 0o755 : 0o644, file.name);
     }
+    assert.deepEqual(
+      pkg.files.map((file) => file.name).filter((name) => name.startsWith("README")),
+      ["README_CN.txt", "README_EN.txt"],
+    );
     assert.ok(readFileSync(join(root, "apply.cmd"), "utf8").includes("\r\n"));
     assert.ok(readFileSync(join(root, "apply.sh"), "utf8").startsWith("#!"));
     assert.ok(!readFileSync(join(root, "apply.sh"), "utf8").includes("\r"));
 
     const clone = makeClone(t, fixture.repo, { lfs: true });
     const before = git(clone, "rev-parse", "HEAD");
-    const result = makeApplier(t).run(root, ["--repo", clone]);
+    execFileSync("unzip", ["-q", "-d", clone, zipPath]);
+    const result = makeApplier(t).run(pkg.id, [], { cwd: clone });
     assert.equal(result.code, 0, result.out + result.err);
+    assert.equal(git(clone, "status", "--porcelain"), `?? ${pkg.id}/`);
+    assert.ok(!git(clone, "show", "--name-only", "--format=", "HEAD").includes(pkg.id));
     assert.equal(git(clone, "rev-list", "--count", `${before}..HEAD`), "1");
     const blob = (path: string) => execFileSync("git", ["-C", clone, "cat-file", "blob", `HEAD:${path}`]);
     assert.deepEqual(blob("crlf.txt"), Buffer.from("first\r\nsecond\r\n"));
