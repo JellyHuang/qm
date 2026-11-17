@@ -1,0 +1,200 @@
+{
+  "version": "0.4",
+  "featureType": "feature",
+  "optimizationType": "optimization",
+  "typeDuties": {
+    "planning": "planning_lead",
+    "acceptance": "planning_lead",
+    "configuration": {
+      "kind": "field",
+      "field": "planner",
+      "on": "task"
+    },
+    "character_concept": "art_lead",
+    "scene_concept": "art_lead",
+    "ui": "ui_lead",
+    "character_model": "art_lead",
+    "scene_model": "art_lead",
+    "level_art": "art_lead",
+    "animation": "art_lead",
+    "vfx": "art_lead",
+    "fgui": "ui_lead",
+    "frontend": "client_lead",
+    "backend": "server_lead",
+    "qa_test": "qa_lead"
+  },
+  "stages": {
+    "feature": {
+      "feature.planning_unassigned": "待分配策划",
+      "feature.planning": "策划编写中",
+      "feature.review": "待审核",
+      "feature.staffing": "人员安排",
+      "feature.briefing": "宣讲对齐",
+      "feature.development": "研发制作中",
+      "feature.acceptance": "策划验收",
+      "feature.qa": "QA 测试中",
+      "feature.resources": "待正式资源",
+      "feature.done": "已完成"
+    },
+    "task": {
+      "execution.unassigned": "待分配",
+      "execution.waiting": "等待开发",
+      "execution.active": "进行中",
+      "program.integration": "联调中",
+      "execution.done": "已完成"
+    },
+    "bug": {
+      "bug.new": "新建",
+      "bug.unassigned": "待分派",
+      "bug.fixing": "修复中",
+      "bug.retest": "待 QA 复测",
+      "bug.closed": "已关闭"
+    }
+  },
+  "stageOwners": {
+    "feature.planning_unassigned": ["duty:producer", "duty:pm"],
+    "feature.planning": ["field:responsiblePlanner"],
+    "feature.review": ["field:reviewer"],
+    "feature.staffing": ["field:responsiblePlanner", "duty:pm"],
+    "feature.briefing": ["field:responsiblePlanner", "duty:pm"],
+    "feature.development": ["field:responsiblePlanner", "duty:pm"],
+    "feature.acceptance": ["field:acceptor"],
+    "feature.qa": ["field:qaOwner"],
+    "feature.resources": ["duty:art_lead", "duty:pm", "duty:qa_lead"],
+    "feature.done": ["field:responsiblePlanner", "duty:pm", "duty:producer"]
+  },
+  "fields": {
+    "responsiblePlanner": "planner",
+    "estimate": "estimated_hours",
+    "plannedStart": "start_date",
+    "plannedEnd": "due_date",
+    "pm": "pm",
+    "reviewer": "reviewer",
+    "qaOwner": "qa_owner",
+    "acceptor": "acceptor",
+    "regressionOwner": "regression_owner",
+    "delayMarked": "delay_marked",
+    "delayMarkedAt": "delay_marked_at",
+    "delayMarkedBy": "delay_marked_by",
+    "delayReason": "delay_reason",
+    "computedOverdue": "computed_overdue",
+    "delaySource": "delay_source",
+    "delayedSince": "delayed_since",
+    "delayClearedAt": "delay_cleared_at",
+    "qaPassed": "qa_passed",
+    "awaitedChildren": "awaited_children",
+    "awaitingNote": "awaiting_note"
+  },
+  "duties": {
+    "producer": "producer",
+    "pm": "pm",
+    "art_lead": "lead_artist",
+    "client_lead": "lead_frontend",
+    "server_lead": "lead_backend",
+    "planning_lead": "lead_planner",
+    "qa_lead": "qa_lead",
+    "ui_lead": "lead_ui"
+  },
+  "tools": {
+    "exitCheck": "zq_check_exit",
+    "meetingsForFeature": "zq_meetings_for_feature",
+    "dutyHolders": "zq_duty_holders",
+    "bugsForFeature": "zq_bugs_for_feature",
+    "addSystemRemark": "zq_add_system_remark",
+    "changesSince": "zq_changes_since",
+    "createBug": "zq_create_bug",
+    "workingDays": "zq_working_days",
+    "createChildOrders": "zq_create_child_orders"
+  },
+  "stageRoles": {
+    "plannerUnassigned": "feature.planning_unassigned",
+    "reviewPending": "feature.review",
+    "staffing": "feature.staffing",
+    "briefing": "feature.briefing",
+    "inProduction": "feature.development",
+    "formalAssets": "feature.resources",
+    "taskUnassigned": "execution.unassigned",
+    "taskDone": "execution.done"
+  },
+  "lifecycleValues": ["normal", "suspended", "cancelled"],
+  "bugType": "bug",
+  "typeFlags": {
+    "feature": {
+      "artResource": false
+    },
+    "planning": {
+      "artResource": false
+    },
+    "acceptance": {
+      "artResource": false
+    },
+    "configuration": {
+      "artResource": false
+    },
+    "character_concept": {
+      "artResource": true
+    },
+    "scene_concept": {
+      "artResource": true
+    },
+    "ui": {
+      "artResource": true
+    },
+    "character_model": {
+      "artResource": true
+    },
+    "scene_model": {
+      "artResource": true
+    },
+    "level_art": {
+      "artResource": true
+    },
+    "animation": {
+      "artResource": true
+    },
+    "vfx": {
+      "artResource": true
+    },
+    "fgui": {
+      "artResource": true
+    },
+    "frontend": {
+      "artResource": false
+    },
+    "backend": {
+      "artResource": false
+    },
+    "qa_test": {
+      "artResource": false
+    },
+    "bug": {
+      "artResource": false
+    }
+  },
+  "defaultTypeFlags": {
+    "artResource": false
+  },
+  "typeCreationStage": {
+    "acceptance": "feature.acceptance",
+    "qa_test": "feature.qa"
+  },
+  "autoAdvanceStages": ["feature.development", "feature.resources"],
+  "proposalOnly": false,
+  "revision": "signed-off-test-implementation",
+  "compatibility": "breaking-draft-only; do not load with v0.3.1",
+  "approvedReminderRules": [
+    "development-missing-planned-end-reminder",
+    "delay-marked-one-time-notice",
+    "task-unassigned-any-nonterminal-stage",
+    "blocking-bug-open-owner-qa",
+    "stage-entered-notice",
+    "execution-every-business-change"
+  ],
+  "notificationPolicy": {
+    "notifications": "feature_private_channel",
+    "missingChannel": "pm_dm",
+    "actionRequests": "personal_dm",
+    "digestSeconds": 300,
+    "retainEveryChange": true
+  }
+}
