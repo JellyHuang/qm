@@ -2,10 +2,18 @@
 
 Status: APPROVED by the PM on 2026-11-16 for the decisions marked APPROVED below (tenant scoped tables, the role grants, no redaction, audit retention, serve on audit failure). Sections 8 (author mapping tables) and 9 (Jenkins tables) were APPROVED by the PM on 2026-11-17; that approval does not enable anything, see those sections. Nothing here is applied: no database was contacted, "current" shapes are derived from repo code, and the migrations and the role SQL are still to be written and reviewed.
 
+## Who creates which table (read first, by design)
+
+- `zq_git_branch_tips` and `zq_git_blob_meta` are NOT created by any QM core migration, durable-map call or start of QM core, now or later. The zq-git-mcp service never creates tables either (no CREATE privilege, no table creation code) and refuses to start if one is missing. A DBA creates both by hand, as the database owner, from the DDL in sections 2 and 3, together with the role of section 4 and its tenant binding, BEFORE the service starts with `ZQ_GIT_MCP_TIPS`, `ZQ_GIT_MCP_AUDIT` or `ZQ_GIT_MCP_BLOB_META` set to `postgres`. With all three at `memory` (the default) no table is needed.
+- `zq_git_audit` is different: it is the existing durable-map table (generic JSON document table, section 1). Be exact about who creates it: the only code that ever built it was the old in-process git module of QM core (`deps.map("zq_git_audit")`, `src/zq/runtime.ts:197` on `oa/dev`), and the removal commit `7f8eab470` on `oa/zq-git-mcp` deleted that code. A database where the old module ran has the table; a database where it never ran does not, and after the removal nothing creates it. The DBA checks `SELECT to_regclass('zq_git_audit')` and, if NULL, creates it in the form of section 1a before the service starts. The service requires all three tables.
+- Order: core has migrated the database (`tenants`, `qm_bound_tenant()` exist); the DBA creates the tables and the role with the tenant binding; the operator sets the stores to `postgres` and the connection string; only then the service starts.
+- The refusal message (one line on stderr, exit code 1): `zq-git-mcp failed to start: the database lacks the tables zq_git_branch_tips, zq_git_blob_meta; the service never creates tables` (the names are those that are absent). It only proves that the names exist; a wrong grant or an unbound tenant shows up at the first write.
+- Operator documents: `plugins/zq-git-mcp/docs/ops/database.md`, `install.md`, `checks.md`, `checklist.md`, `handoff.md` on `oa/zq-git-mcp`.
+
 ## 0. How this repo does tables and roles (facts from the code)
 
 - No .sql files. Migrations are TS objects `{id, statements[]}` registered via `pg.registerMigration` and run by `pg.migrate` (src/persistence/pg-pool.ts), recorded in a ledger table, ids like `durable-map/<table>/0001`.
-- `zq_git_audit` is NOT a hand-written typed table. `deps.map<GitAuditRow>("zq_git_audit")` (src/zq/runtime.ts:197) creates it lazily through `createPostgresMap` (src/persistence/durable-map.ts) as a generic JSON document table, then adds tenancy via `durableMapTenancy` (src/tenants/migrations.ts).
+- `zq_git_audit` is NOT a hand-written typed table. `deps.map<GitAuditRow>("zq_git_audit")` (src/zq/runtime.ts:197) creates it (when that code runs, see "Who creates which table" above) through `createPostgresMap` (src/persistence/durable-map.ts) as a generic JSON document table, then adds tenancy via `durableMapTenancy` (src/tenants/migrations.ts).
 - Postgres: CI uses pgvector/pgvector:0.8.1-pg16 (Postgres 16). No other version statement found.
 - Roles: no migration creates roles. `qm db grant <role>` (scripts/db.ts, src/persistence/app-role-grants.ts) is an operator step run as the DB owner, and grants SELECT/INSERT/UPDATE/DELETE/TRUNCATE on ALL tables plus default privileges. It is far too broad for the new service role and must NOT be used for it.
 
@@ -61,7 +69,7 @@ PRIMARY KEY (tenant_id, repo, branch)
 );
 ALTER TABLE zq_git_branch_tips ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON zq_git_branch_tips USING (tenant_id = qm_bound_tenant()) WITH CHECK (tenant_id = qm_bound_tenant());
-Migration id proposal: `zq/zq_git_branch_tips/0001`.
+No migration id: this table is created by hand by a DBA, not by a QM core migration.
 
 Deleted branches are never removed (the service role has no DELETE). A deleted branch is a tombstone row: `tip_sha` = '0000000000000000000000000000000000000000' with `seen_at` updated, written by `UPDATE ... WHERE repo = $1 AND branch = $2 AND tip_sha = $3` (the tip that was reported). A tombstone means "deleted and already reported": it is not a current branch and is not reported again. A branch that returns is a NEW branch; its acknowledgement is the same compare-and-set with `tip_sha = <tombstone>`. Rows are written only by acknowledged polls: first observation `INSERT ... ON CONFLICT (tenant_id, repo, branch) DO NOTHING`, then `UPDATE ... SET tip_sha = $to, seen_at = now() WHERE repo = $1 AND branch = $2 AND tip_sha = $from`. See plugins/zq-git-mcp/docs/check-updates.md.
 
@@ -78,7 +86,7 @@ PRIMARY KEY (tenant_id, repo, oid)
 );
 ALTER TABLE zq_git_blob_meta ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON zq_git_blob_meta USING (tenant_id = qm_bound_tenant()) WITH CHECK (tenant_id = qm_bound_tenant());
-Migration id proposal: `zq/zq_git_blob_meta/0001`. sha256 stays nullable (unknown until the content was hashed). The code-only "binary" flag is not stored; it is derived again when a file is read. The service writes `INSERT ... ON CONFLICT (tenant_id, repo, oid) DO UPDATE SET size_bytes = EXCLUDED.size_bytes, sha256 = COALESCE(EXCLUDED.sha256, zq_git_blob_meta.sha256), seen_at = now()`.
+No migration id: this table is created by hand by a DBA, not by a QM core migration. sha256 stays nullable (unknown until the content was hashed). The code-only "binary" flag is not stored; it is derived again when a file is read. The service writes `INSERT ... ON CONFLICT (tenant_id, repo, oid) DO UPDATE SET size_bytes = EXCLUDED.size_bytes, sha256 = COALESCE(EXCLUDED.sha256, zq_git_blob_meta.sha256), seen_at = now()`.
 
 ### Tenancy (decided)
 
@@ -96,7 +104,7 @@ GRANT SELECT, INSERT, UPDATE ON zq_git_branch_tips, zq_git_blob_meta TO zq_git_m
 ALTER ROLE zq_git_mcp SET qm.tenant_id = '<tenant uuid>';
 The approved grants are exactly: INSERT only on zq_git_audit; SELECT, INSERT, UPDATE on zq_git_branch_tips and zq_git_blob_meta. UPDATE is required by the acknowledgement compare-and-set and by the tombstones. No DELETE, no TRUNCATE, no REFERENCES, no TRIGGER, no default privileges, no sequences needed, no grant on tenants or durable_map_versions. The foreign key to tenants is checked as the table owner, so no REFERENCES grant is needed.
 RLS on zq_git_audit: INSERT must satisfy WITH CHECK tenant_id = qm_bound_tenant(), which reads setting qm.tenant_id; the ALTER ROLE above provides it and the service omits tenant_id so the DEFAULT applies. Raw INSERTs do not bump durable_map_versions, so core's cached zq_git_audit reads may lag up to 15 s (CACHE_MAX_AGE_MS); acceptable for audit.
-Table owner/ordering: grants must run after the tables exist (first QM start after deploy creates audit lazily; new tables via migration).
+Table owner/ordering: grants must run after the tables exist (the DBA creates the two new tables by hand and checks that `zq_git_audit` exists, see "Who creates which table").
 Can migrations carry roles? No: no precedent, roles are cluster-level, passwords must not be in Git, and the app's own role may lack CREATEROLE. Needs an operator step.
 Connection string: service-only config, e.g. env/file `ZQ_GIT_MCP_DATABASE_URL=postgres://zq_git_mcp:<password>@host:5432/<db>` in the service account's private environment file (mode 0600, owned by the service account) or its keychain item; never in Git, never given to QM core, agents or sandboxes, never logged. The exact delivery mechanism is still open.
 
@@ -113,18 +121,18 @@ zq_git_blob_meta: ('gameconfig','e69de29b...40hex',18874368,'9f86d081...64hex','
 
 ### Rollout
 
-1. Merge code with migrations for the two tables (idempotent CREATE TABLE IF NOT EXISTS, row level security and policy). 2. Operator runs the role SQL, including the ALTER ROLE tenant binding. 3. Put the connection string in the service's private config. 4. Start the service; it refuses to start if one of the three tables is missing. 5. Check as the role: own tenant rows only, no SELECT on zq_git_audit, no DELETE, an insert without a bound tenant fails.
+1. The DBA creates the two tables by hand from sections 2 and 3 (idempotent CREATE TABLE IF NOT EXISTS, row level security and policy) and checks that `zq_git_audit` exists; no QM core migration does this. 2. Operator runs the role SQL, including the ALTER ROLE tenant binding. 3. Put the connection string in the service's private config. 4. Set the three stores to `postgres` and start the service; it refuses to start if one of the three tables is missing (message above). 5. Check as the role: own tenant rows only, no SELECT on zq_git_audit, no DELETE, an insert without a bound tenant fails.
 
 ### Rollback
 
 DROP TABLE IF EXISTS zq_git_blob_meta;
 DROP TABLE IF EXISTS zq_git_branch_tips;
 REVOKE ALL ON zq_git_audit FROM zq_git_mcp; DROP OWNED BY zq_git_mcp; DROP ROLE zq_git_mcp;
-zq_git_audit is left alone (rows kept; the extra JSON keys are harmless). Migration ledger rows stay; remove the ids if re-adding.
+zq_git_audit is left alone (rows kept; the extra JSON keys are harmless). No migration ledger rows exist for the two new tables (created by hand).
 
 ### Tables missing at run time
 
-The service must not create tables (no CREATE privilege). On start it checks the three tables exist and refuses to start with a clear message. If an audit insert fails mid-run (APPROVED): the default is ZQ_GIT_MCP_AUDIT_ON_FAILURE=serve, so a read tool is never failed by the audit; the row goes to a bounded local on-disk spool (write-ahead buffer, not a system of record) that is replayed into zq_git_audit in order, with a structured error log line, a counter, a degraded health state and an injectable alert hook. `fail` stays available only as an explicit opt-in.
+The service must not create tables (no CREATE privilege). On start (only with a postgres store) it checks the three tables exist and refuses to start with the message `zq-git-mcp failed to start: the database lacks the tables <missing names>; the service never creates tables`. If an audit insert fails mid-run (APPROVED): the default is ZQ_GIT_MCP_AUDIT_ON_FAILURE=serve, so a read tool is never failed by the audit; the row goes to a bounded local on-disk spool (write-ahead buffer, not a system of record) that is replayed into zq_git_audit in order, with a structured error log line, a counter, a degraded health state and an injectable alert hook. `fail` stays available only as an explicit opt-in.
 
 ### Compatibility / retention (APPROVED)
 
@@ -168,7 +176,7 @@ Still open:
 4. `zq_git_audit` keeps logging every call. Each row gains two optional items: the call arguments (stored as given, not redacted) and whether the cache was hit. File content, diffs and commit messages are never stored.
 5. Who can read and write: one new database account used only by this service. It can only add rows to the audit table, can read, add and update rows in the two new tables, can never delete, and cannot touch any other table.
 6. Both new tables are tenant scoped with row-level security like every other table, so there is no exception. The service account is bound to its tenant once, by an ALTER ROLE statement.
-7. Operations: run the role-creation SQL (including the tenant binding), put the connection string in the service's own configuration, and confirm the service sees all three tables at start. The tables come from migrations; the role cannot be created by a migration.
+7. Operations: run the role-creation SQL (including the tenant binding), put the connection string in the service's own configuration, and confirm the service sees all three tables at start. The two new tables are created by hand by the DBA and the role is created by hand too; no migration does either.
 8. A failed audit write never fails a read; rows wait in a bounded local buffer and are replayed, with an alarm. Audit rows older than 180 days are pruned by the table owner or by QM core, in batches.
 9. Rollback: drop the two new tables, then drop the database account, five statements in total, at any time. Existing tables and data are unaffected, and old rows stay valid.
 10. Still open: how the connection string is delivered, how the role is bound to the tenant in a multi-tenant deployment, and pruning of tombstones.
@@ -271,6 +279,23 @@ The durable-map layer registers a table's migrations the moment the map object i
 - `src/zq/runtime.ts` calls `deps.map("zq_jenkins_builds")`, `deps.map("zq_jenkins_audit")` and `deps.map("zq_jenkins_notices")` only inside the branch that creates the poller, which needs `ZQ_JENKINS_POLL=1`, `ZQ_JENKINS_URL` and the bot credential. With the default configuration no `deps.map` call is made for these names.
 - A test (`test/zq-jenkins-config.test.ts`) puts a spy on the map factory: zero requests for `zq_jenkins_*` under default configuration and with only a URL and credential set; exactly the three names when the poll switch is on.
 - `src/wiring.ts` creates the runtime when the poll switch is on, in addition to the existing switches. With the poll switch off its condition is unchanged.
+
+### WARNING: ZQ_JENKINS_POLL=1 alone also creates four existing zq tables
+
+Not part of the three tables approved above, and it must be weighed when the enablement of `ZQ_JENKINS_POLL=1` is approved. The three Jenkins maps are built inside `createZqRuntime` (`src/zq/runtime.ts`), and `createZqRuntime` builds four base maps unconditionally at its top, before any switch is looked at: `zq_identity_map`, `zq_reminders`, `zq_report_drafts` and `zq_run_state`. `src/wiring.ts` builds the runtime when Mattermost is configured and any of `config.zq.scanner.enabled`, `config.zq.reports.enabled`, `config.zq.identityMap`, `config.zq.childOrders` or `config.zq.jenkins.poll.enabled` is true. So in an environment with Mattermost where no other zq switch is on, `ZQ_JENKINS_POLL=1` creates seven tables at the next start: the three Jenkins tables of this section and these four. With `ZQ_JENKINS_POLL` off and the other switches off nothing changes (the runtime is not built).
+
+These four tables are existing (not new) tables of the zq line: they are created today by switching on any of the other zq features, and are documented in `docs/zq/SEAMS.md` (on `oa/dev`). They are not new schema introduced by the Jenkins branch, but enabling the poller creates them in an environment that never had them. DDL as the durable-map layer creates it: the same statements as in "DDL the durable-map layer would create" below, with `<table>` replaced by each of the four names (no secondary index fields are declared for any of them; the maps are requested as `deps.map<T>("<name>")`, and `src/wiring.ts` passes only the table name):
+
+| Table              | Key (`id`)                                                                                  | JSON value (from `docs/zq/SEAMS.md`)                                                                                                                                                                             |
+| ------------------ | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `zq_identity_map`  | `mmUserId`                                                                                  | `{ mmUserId, opUserId, opLogin, opName?, emailHint?, source: "signin" or "admin", status: "pending" or "confirmed", proposedAt, proposedBy, confirmedAt?, confirmedBy? }`                                        |
+| `zq_reminders`     | `<rule>:<subjectId>:<recipientMmUserId>:<dayKey>`                                           | `{ id, rule, subjectId, subjectTitle?, recipientMmUserId, text, dayKey, dueAt, mode: "dry-run" or "live", status: "pending", "sent" or "cancelled", createdAt, sentAt? }`                                        |
+| `zq_report_drafts` | `<mmUserId>:<period>:<until>` (weekly project drafts `project:<projectId>:weekly:<Monday>`) | `{ id, mmUserId, period: "daily" or "weekly", since, until, text, status: "pending", "confirmed" or "discarded", kind?, projectId?, addressees?, createdAt, decidedAt?, decidedBy?, claimToken?, writtenBack? }` |
+| `zq_run_state`     | `scanner`, `report:daily`, `report:weekly`                                                  | `{ lastRunAt, lastReport? }`                                                                                                                                                                                     |
+
+Per table, what the layer creates (same as for every durable map): `id TEXT NOT NULL`, `json JSONB NOT NULL`, `tenant_id UUID NOT NULL DEFAULT qm_bound_tenant()`, primary key `(tenant_id, id)`, a foreign key `<table>_tenant` to `tenants(id)`, row level security with the `tenant_isolation` policy, the functions `claim_<table>` and `claim_<table>_tenants`, and a row per tenant in `durable_map_versions` on every write. Migration ids `durable-map/<table>/0001`, `0010-tenants/*`, `0020-claim-ids`, `0021-claim-tenants`. The tables are created empty; with only the poller on, the scanner, reports and identity code do not run, so no row is written to them (the scanner sweeper starts only when `scanner` or `reports` is on, see `start()` in `src/zq/runtime.ts`). They are inert but present. Nothing in them is read by the poller.
+
+What to decide when approving enablement: (1) accept that seven tables appear, or (2) have the Jenkins poller built without the base maps first (options, effort and tests in `docs/zq-jenkins-wiring-options.md`; no code change is made by this document). Verify in staging after the first start with only `ZQ_JENKINS_POLL=1` (and Mattermost configured): `SELECT tablename FROM pg_tables WHERE tablename LIKE 'zq\_%' ORDER BY 1;` lists the three Jenkins tables and these four, and nothing else. Rollback is the same as below; to remove the four as well: `DROP TABLE IF EXISTS zq_run_state, zq_report_drafts, zq_reminders, zq_identity_map;` only if no other zq feature was ever used in that database (otherwise they hold real data).
 
 ### DDL the durable-map layer would create (per table, three times)
 
