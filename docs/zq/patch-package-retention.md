@@ -2,7 +2,7 @@
 
 Status: DESIGN ONLY. Nothing in this document is implemented, wired, scheduled or enabled. The table described here is NOT approved and must not be created. No code reads any setting named here, and no environment sets one. This follows the PM decisions of 2026-11-17: packages are kept 30 days in a persistent directory with a database record, and are delivered by Mattermost direct message with a zip attachment.
 
-Context: `docs/zq/patch-package.md` describes how a package (a verified text patch directory, or an xlsx package) is built into `ZQ_PATCH_OUTPUT_DIR`, which defaults to a temporary directory. That directory is neither persistent nor cleaned, and nothing is delivered.
+Context: `docs/zq/patch-package.md` describes how a package (one kind, `patch-package`, manifest schema 2: a verified text patch, Git LFS files, workbook comparisons, `apply.sh`, README) is built into `ZQ_PATCH_OUTPUT_DIR`, which defaults to a temporary directory. That directory is neither persistent nor cleaned, and nothing is delivered.
 
 ## Storage
 
@@ -17,7 +17,7 @@ Id: `<ticket>-<first 12 characters of the commit id>` (the directory name). The 
 ```json
 {
   "id": "WP-123-0123456789ab",
-  "kind": "text-patch",
+  "kind": "patch-package",
   "ticket": "WP-123",
   "recipient": "mm-zhang",
   "baseCommit": "<40 hex characters>",
@@ -41,7 +41,7 @@ Optional keys, absent when unset: `deliveredAt`, `lastError` (an error code, nev
 Invented example rows (INVENTED, for illustration only):
 
 1. A delivered package: id `WP-123-0123456789ab`, `recipient` `mm-zhang`, `delivery` `delivered`, `attempts` 1, `deliveredAt` 1763000090000, `postId` `p4x9`, `createdAt` 1763000000000, `expiresAt` 1765592000000.
-2. A package whose delivery failed: id `456-ba9876543210`, `kind` `xlsx`, `ticket` `456`, `recipient` `mm-li`, `delivery` `failed`, `attempts` 5, `lastError` `mattermost_rejected`.
+2. A package whose delivery failed: id `456-ba9876543210`, `kind` `patch-package`, `ticket` `456`, `recipient` `mm-li`, `delivery` `failed`, `attempts` 5, `lastError` `mattermost_rejected`.
 
 Before and after: a new table. No existing table, column, index, constraint or JSON key changes. There is no migration, backfill or compatibility effect, because nothing exists yet.
 
