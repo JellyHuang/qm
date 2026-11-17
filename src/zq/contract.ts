@@ -56,7 +56,6 @@ export interface ZqContract {
     plannedEnd: string;
     delayMarked: string;
     delayedSince: string;
-    qaPassed: string;
     awaitedChildren: string;
     awaitingNote: string;
     completionSubmitted: string;
@@ -216,7 +215,6 @@ export function parseContract(value: unknown): ZqContract {
       ...personFieldNames,
       delayMarked: fields["delayMarked"] ?? "delay_marked",
       delayedSince: fields["delayedSince"] ?? "delayed_since",
-      qaPassed: fields["qaPassed"] ?? "qa_passed",
       awaitedChildren: fields["awaitedChildren"] ?? "awaited_children",
       awaitingNote: fields["awaitingNote"] ?? "awaiting_note",
       completionSubmitted: fields["completionSubmitted"] ?? "completion_submitted",
