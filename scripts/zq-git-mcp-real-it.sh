@@ -17,6 +17,13 @@ version_at_least() {
   [ "$major" -gt "$want_major" ] || { [ "$major" -eq "$want_major" ] && [ "$minor" -ge "$want_minor" ]; }
 }
 
+scrubbed_tail() {
+  K="$GITLAB_QM_READONLY_SSH_KEY_B64" awk '
+    BEGIN { key = ENVIRON["K"] }
+    { line = $0; while (key != "" && (at = index(line, key)) > 0) line = substr(line, 1, at - 1) "[key]" substr(line, at + length(key)); print line }
+  ' "$1" | tail -n 40
+}
+
 [ -f "$plugin_dir/$test_file" ] || { echo "FAIL: $plugin_dir/$test_file not found" >&2; exit 2; }
 [ -d "$plugin_dir/node_modules" ] || { echo "FAIL: run npm ci in $plugin_dir first" >&2; exit 2; }
 
@@ -31,15 +38,31 @@ mkdir -m 700 "$work"
 trap 'rm -rf "$work"' EXIT
 log="$work/output.log"
 
-diag_env=()
-if [ "$mode" = "diag" ]; then
-  : "${ZQ_MCP_IT_DIAG_PAIRS:?set ZQ_MCP_IT_DIAG_PAIRS to path:baseBlob:headBlob[,path:baseBlob:headBlob...] (blob ids of at least 7 hex digits, or full 40 hex)}"
-  diag_env=(
-    ZQ_GIT_MCP_IT_DIAG_REPO="${ZQ_MCP_IT_DIAG_REPO:-gameconfig}"
-    ZQ_GIT_MCP_IT_DIAG_PAIRS="$ZQ_MCP_IT_DIAG_PAIRS"
-    ZQ_GIT_MCP_IT_DIAG_REF="${ZQ_MCP_IT_DIAG_REF:-main}"
-  )
-fi
+mode_env=()
+case "$mode" in
+  full) ;;
+  diag)
+    : "${ZQ_MCP_IT_DIAG_PAIRS:?set ZQ_MCP_IT_DIAG_PAIRS to ref:<path>:<baseRef>:<headRef> or blob:<path>:<baseOid>:<headOid>, comma separated (a path:base:head entry means ref)}"
+    mode_env=(
+      ZQ_GIT_MCP_IT_DIAG_REPO="${ZQ_MCP_IT_DIAG_REPO:-gameconfig}"
+      ZQ_GIT_MCP_IT_DIAG_PAIRS="$ZQ_MCP_IT_DIAG_PAIRS"
+      ZQ_GIT_MCP_IT_DIAG_REF="${ZQ_MCP_IT_DIAG_REF:-main}"
+    )
+    ;;
+  override)
+    : "${ZQ_MCP_IT_OVERRIDE_PATH:?set ZQ_MCP_IT_OVERRIDE_PATH, ZQ_MCP_IT_OVERRIDE_BASE_REF and ZQ_MCP_IT_OVERRIDE_HEAD_REF}"
+    : "${ZQ_MCP_IT_OVERRIDE_BASE_REF:?set ZQ_MCP_IT_OVERRIDE_BASE_REF}"
+    : "${ZQ_MCP_IT_OVERRIDE_HEAD_REF:?set ZQ_MCP_IT_OVERRIDE_HEAD_REF}"
+    mode_env=(
+      ZQ_GIT_MCP_IT_OVERRIDE_REPO="${ZQ_MCP_IT_OVERRIDE_REPO:-gameconfig}"
+      ZQ_GIT_MCP_IT_OVERRIDE_PATH="$ZQ_MCP_IT_OVERRIDE_PATH"
+      ZQ_GIT_MCP_IT_OVERRIDE_BASE_REF="$ZQ_MCP_IT_OVERRIDE_BASE_REF"
+      ZQ_GIT_MCP_IT_OVERRIDE_HEAD_REF="$ZQ_MCP_IT_OVERRIDE_HEAD_REF"
+      ZQ_GIT_MCP_IT_OVERRIDE_KEY_COLUMNS="${ZQ_MCP_IT_OVERRIDE_KEY_COLUMNS:-}"
+    )
+    ;;
+  *) echo "FAIL: ZQ_MCP_IT_MODE is full, diag or override" >&2; exit 2 ;;
+esac
 
 status=0
 env -u GITLAB_QM_READONLY_SSH_KEY_B64 \
@@ -48,19 +71,23 @@ env -u GITLAB_QM_READONLY_SSH_KEY_B64 \
   ZQ_GIT_MCP_IT_HOST_FINGERPRINT="$fingerprint" \
   ${ZQ_GIT_MCP_GIT_BIN:+ZQ_GIT_MCP_GIT_BIN="$ZQ_GIT_MCP_GIT_BIN"} \
   ${ZQ_GIT_MCP_PATH:+ZQ_GIT_MCP_PATH="$ZQ_GIT_MCP_PATH"} \
-  "${diag_env[@]}" \
+  ${mode_env[@]+"${mode_env[@]}"} \
   timeout --kill-after=30 1800 \
   npm test --prefix "$plugin_dir" -- "$test_file" >"$log" 2>&1 || status=$?
 
-if [ "$mode" = "diag" ]; then
-  grep -E '^\{"suite":"xlsx-diag"' "$log" || true
-  lines="$(grep -c '^{"suite":"xlsx-diag"' "$log" || true)"
-  if [ "$status" -eq 0 ] && [ "$lines" -ge 1 ]; then
-    echo "PASS: $lines structure lines (counts, letters and sheet names only)"
+if [ "$mode" != "full" ]; then
+  suite="xlsx-diag"
+  [ "$mode" = "override" ] && suite="xlsx-override"
+  grep -E "^\{\"suite\":\"$suite\"" "$log" || true
+  lines="$(grep -c "^{\"suite\":\"$suite\"" "$log" || true)"
+  errors="$(grep -c "^{\"suite\":\"$suite\",\"type\":\"error\"" "$log" || true)"
+  if [ "$status" -eq 0 ] && [ "$lines" -ge 1 ] && [ "$errors" -eq 0 ]; then
+    echo "PASS: $lines $suite lines (counts, letters and sheet names only)"
     exit 0
   fi
-  grep -E '^\s*(✖|error:|message:)' "$log" | head -20 || true
-  echo "FAIL: exit $status, $lines structure lines"
+  echo "---- last lines of the run output (the key is removed) ----"
+  scrubbed_tail "$log"
+  echo "FAIL: exit $status, $lines $suite lines, $errors errors"
   exit 1
 fi
 
@@ -73,6 +100,7 @@ if [ "$status" -eq 0 ] && [ "$gameconfig" -ge 1 ] && [ "$psd" -ge 1 ]; then
   exit 0
 fi
 
-grep -E '^\s*(✖|error:|message:)' "$log" | head -20 || true
+echo "---- last lines of the run output (the key is removed) ----"
+scrubbed_tail "$log"
 echo "FAIL: exit $status, $gameconfig xlsx diffs, $psd psd read"
 exit 1
