@@ -1,6 +1,7 @@
 import { openAgentsTools } from "./agent-tools/openagents.ts";
 import { zqTools } from "./agent-tools/zq.ts";
 import { zqChildren } from "../zq/children.ts";
+import { gitAgent } from "../zq/git-mcp/agent.ts";
 import { openAgentsService } from "../integrations/openagents/service.ts";
 import type { DocumentInput } from "../core/documents.ts";
 import type { TurnHandoff } from "./runtime-types.ts";
@@ -122,7 +123,15 @@ export function coreToolOptions(config: Config): CoreToolOptions {
   };
 }
 
-const READ_ONLY_TOOL_NAMES = new Set(["memory", "history", "finish_silently", "runtime", "sessions", "subagents"]);
+const READ_ONLY_TOOL_NAMES = new Set([
+  "memory",
+  "history",
+  "finish_silently",
+  "runtime",
+  "sessions",
+  "subagents",
+  "zq_git",
+]);
 const SCHEDULING_TOOL_NAMES = new Set(["cron", "webhook", "goal"]);
 
 export function endedOnPurpose(ref: {
@@ -157,7 +166,7 @@ export function createAgentTools(ref: ToolContextRef, opts?: AgentToolsOptions):
   const { clientTools } = pageClientTools(kit);
   const { attach, finishSilently, context, runtime, withdrawApproval } = turnTools(kit);
   const { openagents } = openAgentsTools(kit);
-  const { zqAddChildOrders } = zqTools(kit);
+  const { zqAddChildOrders, zqGit } = zqTools(kit);
 
   const tools = [
     ...(!delegateWork ? [{ ...execute, handlesAbort: true }] : []),
@@ -201,6 +210,7 @@ export function createAgentTools(ref: ToolContextRef, opts?: AgentToolsOptions):
     // Offered on any non-read-only turn; the service itself only accepts turns started from Mattermost.
     ...(!opts?.readOnly && openAgentsService() ? [openagents] : []),
     ...(!opts?.readOnly && zqChildren() ? [zqAddChildOrders] : []),
+    ...(gitAgent() ? [zqGit] : []),
     finishSilently,
     withdrawApproval,
     { ...resourceTool("goal", { create: createGoal, get: getGoal, update: updateGoal }), handlesAbort: true },

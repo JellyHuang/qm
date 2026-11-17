@@ -28,6 +28,7 @@
         "scripts/migrate-principals-to-email.mjs",
         "scripts/mine-slack-scenarios.ts",
         "scripts/skills-materialize-smoke.ts",
+        "scripts/zq-git-agent-smoke.ts",
         "scripts/slack-user-token.ts",
         "scripts/tenant.ts",
         "superserve/templates/qm-agent.ts",

@@ -18,6 +18,7 @@ export interface ZqConfig {
   unsetResponsibilityDuties: readonly Duty[];
   reports: { enabled: boolean; dailyCron?: string; weeklyCron?: string };
   gitMcp?: { url: string; secret: string };
+  gitAgent: boolean;
   gitAuthors: { externalDomains: readonly string[]; botNames: readonly string[] };
   jenkins: { url?: string; rerun: boolean; jobs: readonly string[]; rerunJobs: readonly string[]; hourlyCap: number };
 }
@@ -96,6 +97,8 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   const gitMcpSecret = env.ZQ_GIT_MCP_SECRET?.trim();
   if (gitMcpUrl && !/^https?:\/\//.test(gitMcpUrl)) throw new Error("ZQ_GIT_MCP_URL must be an http(s) URL");
   if (Boolean(gitMcpUrl) !== Boolean(gitMcpSecret)) throw new Error("ZQ_GIT_MCP_URL and ZQ_GIT_MCP_SECRET go together");
+  const gitAgent = on(env.ZQ_GIT_AGENT);
+  if (gitAgent && !gitMcpUrl) throw new Error("ZQ_GIT_AGENT needs ZQ_GIT_MCP_URL and ZQ_GIT_MCP_SECRET");
   const jenkinsUrl = env.ZQ_JENKINS_URL?.trim().replace(/\/+$/, "");
   if (jenkinsUrl && !/^https?:\/\//.test(jenkinsUrl)) throw new Error("ZQ_JENKINS_URL must be an http(s) URL");
   const jenkinsRerun = on(env.ZQ_JENKINS_RERUN);
@@ -133,6 +136,7 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
       ...(weeklyCron ? { weeklyCron } : {}),
     },
     ...(gitMcpUrl && gitMcpSecret ? { gitMcp: { url: gitMcpUrl, secret: gitMcpSecret } } : {}),
+    gitAgent,
     gitAuthors: {
       externalDomains: names(env.ZQ_GIT_EXTERNAL_DOMAINS),
       botNames: names(env.ZQ_GIT_BOT_NAMES),

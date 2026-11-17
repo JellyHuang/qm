@@ -1,4 +1,5 @@
 import { zqChildren, type ProposeInput } from "../zq/children.ts";
+import { gitAgent } from "../zq/git-mcp/agent.ts";
 import { openAgentsService } from "../integrations/openagents/service.ts";
 import { trialCronScript, type CronScriptTrial } from "../cron/script.ts";
 import type { AdminToolAccess } from "./admin.ts";
@@ -255,6 +256,7 @@ export interface ToolContext extends SurfaceToolDeps {
   callMcpTool(name: string, args: Record<string, unknown>, approval?: string): Promise<string>;
   callOpenAgents?(args: Record<string, unknown>): Promise<string>;
   proposeZqChildren?(input: ProposeInput): Promise<string>;
+  callZqGit?(input: Record<string, unknown>): Promise<string>;
   mcpToolNeedsApproval(name: string, args: Record<string, unknown>): Promise<boolean>;
   awaitClientResult(
     callId: string,
@@ -1202,6 +1204,12 @@ export function createToolContext(deps: ToolContextDeps): ToolContext {
       if (!service) throw new Error("adding execution orders is not enabled on this deployment");
       if (!deps.createdBy) throw new Error("no requester for this turn");
       return service.propose(input, deps.createdBy);
+    },
+
+    async callZqGit(input: Record<string, unknown>): Promise<string> {
+      const agent = gitAgent();
+      if (!agent) throw new Error("git access is not enabled on this deployment");
+      return agent.call(input, deps.createdBy);
     },
 
     async mcpToolNeedsApproval(name: string, args: Record<string, unknown>): Promise<boolean> {

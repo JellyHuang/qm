@@ -1,4 +1,6 @@
 import { setZqChildren } from "./zq/children.ts";
+import { createGitAgent, setGitAgent } from "./zq/git-mcp/agent.ts";
+import { createGitMcpClient } from "./zq/git-mcp/client.ts";
 import { createZqRuntime, type ZqIdentityAdmin, type ZqRuntime } from "./zq/runtime.ts";
 import { setLogOutboundTools } from "./agent/diagnostics.ts";
 import { createOaClient } from "./integrations/openagents/client.ts";
@@ -2683,6 +2685,11 @@ export function buildApp(
         })
       : null;
   setZqChildren(zq?.children);
+  setGitAgent(
+    config.zq.gitAgent && config.zq.gitMcp
+      ? createGitAgent({ client: createGitMcpClient(config.zq.gitMcp) })
+      : undefined,
+  );
   setLogOutboundTools(config.logOutboundTools === true);
   const webhookDelivery = createDeliveryRelay(deliveries, {
     type: "webhook",
