@@ -1,0 +1,6 @@
+[WP-1234] Adjust skill level 3 cost
+
+Lower the level 3 cost from 600 to 550, speed up the level 5 cooldown
+to 2.8 and add a level 6 row.
+
+AI-Generated: QM

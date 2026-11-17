@@ -1,0 +1,135 @@
+{
+  "schema": 1,
+  "kind": "patch-package",
+  "id": "demo-1234",
+  "repo": "demo-game-config",
+  "ticket": "WP-1234",
+  "base": {
+    "commit": "0fd2d63c466ae61fdec86f670a5f681f0c075a0c"
+  },
+  "message": {
+    "file": "COMMIT_MESSAGE.txt",
+    "subject": "[WP-1234] Adjust skill level 3 cost"
+  },
+  "author": {
+    "name": "QM Bot",
+    "email": "qm-bot@invalid",
+    "date": "2026-11-17T10:00:00+00:00",
+    "settings": {
+      "name": "ZQ_PATCH_AUTHOR_NAME",
+      "email": "ZQ_PATCH_AUTHOR_EMAIL"
+    }
+  },
+  "branch": "qm/demo-1234",
+  "commits": 1,
+  "generatedAt": "2026-11-17T06:54:20Z",
+  "parts": [
+    {
+      "id": "A",
+      "kind": "mbox",
+      "files": [
+        "patches/0001-WP-1234-Adjust-skill-level-3-cost.mbox"
+      ],
+      "applyWith": "git am --keep-non-patch --3way --keep-cr"
+    },
+    {
+      "id": "B",
+      "kind": "binary-files",
+      "files": [
+        "files/data/skill_table.xlsx"
+      ],
+      "applyWith": "copy, git add, git commit --amend --no-edit"
+    }
+  ],
+  "files": [
+    {
+      "name": "patches/0001-WP-1234-Adjust-skill-level-3-cost.mbox",
+      "role": "patch",
+      "kind": "text",
+      "bytes": 1148,
+      "sha256": "600b8734bd64498d91da84e881363ff5010f80a5f8a1d1a25036b4876d62796e",
+      "gitBlob": "8bc120c3e55e11b178db62201b780571af773beb"
+    },
+    {
+      "name": "files/data/skill_table.xlsx",
+      "role": "payload",
+      "kind": "binary",
+      "bytes": 1622,
+      "sha256": "ec56e25f2d24541d19d0b6a71e59f2a595da56beda544335edd287da10429078",
+      "gitBlob": "d71bcab81fe6823c3a2c12b34cc97abab03c5a0f"
+    },
+    {
+      "name": "COMMIT_MESSAGE.txt",
+      "role": "message",
+      "kind": "text",
+      "bytes": 155,
+      "sha256": "ad2a67ef7847186754ce25d16668f7224302914d2d5a920b6a4d2a7bd012874a",
+      "gitBlob": "ec61d37d77ed3e147dfbab664496baf4345a8e82"
+    },
+    {
+      "name": "README.txt",
+      "role": "readme",
+      "kind": "text",
+      "bytes": 1510,
+      "sha256": "f30211ecd27feb583210ca2fa4af31419c7d0291dcc72ec87af9876770f7b7aa",
+      "gitBlob": "b4fc856d57faedb26fea3f308f37ca8b58301b28"
+    },
+    {
+      "name": "apply.ps1",
+      "role": "script",
+      "kind": "text",
+      "bytes": 910,
+      "sha256": "4638d8d375540ea05ca0d8019be18e7791281f0790575aee9fd22c6c01cc8b43",
+      "gitBlob": "98afdab5df9c380c59a867e862cb5af7f6c0b470"
+    },
+    {
+      "name": "apply.cmd",
+      "role": "script",
+      "kind": "text",
+      "bytes": 262,
+      "sha256": "81df37efa404fd2831bacee5ab34b8b09c1c4c9287ded65aaa8d5d4319758dc2",
+      "gitBlob": "71db92f43783892d36119f89838425842ba6d9d0"
+    },
+    {
+      "name": "apply.sh",
+      "role": "script",
+      "kind": "text"
+    }
+  ],
+  "selfCheck": "apply.sh embeds the git blob ids of the other files and cannot contain its own hash; compare its sha256 with the delivery message",
+  "changes": [
+    {
+      "path": "config/skill_levels.lua",
+      "status": "M",
+      "kind": "text",
+      "part": "A"
+    },
+    {
+      "path": "data/skill_table.xlsx",
+      "status": "M",
+      "kind": "binary",
+      "part": "B",
+      "baseGitBlob": "61259be1d755ffe78ae0e37bb2c2a440c087a2fd",
+      "newGitBlob": "d71bcab81fe6823c3a2c12b34cc97abab03c5a0f",
+      "newSha256": "ec56e25f2d24541d19d0b6a71e59f2a595da56beda544335edd287da10429078",
+      "deliveredAs": "files/data/skill_table.xlsx"
+    }
+  ],
+  "apply": {
+    "sh": "sh apply.sh --repo <your clone dir> [--dry-run] [--reset-author]",
+    "cmd": "apply.cmd --repo <absolute clone dir> [--dry-run] [--reset-author]",
+    "powershell": "powershell -ExecutionPolicy Bypass -File apply.ps1 -Repo <absolute clone dir> [-DryRun] [-ResetAuthor]",
+    "untested": [
+      "apply.cmd",
+      "apply.ps1"
+    ]
+  },
+  "review": [
+    "git log qm/demo-1234",
+    "git diff 0fd2d63c466ae61fdec86f670a5f681f0c075a0c..qm/demo-1234"
+  ],
+  "undo": [
+    "git switch -  (only if you switched to the branch)",
+    "git branch -D qm/demo-1234"
+  ]
+}

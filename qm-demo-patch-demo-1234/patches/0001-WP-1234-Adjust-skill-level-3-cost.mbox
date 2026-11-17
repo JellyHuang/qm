@@ -1,0 +1,39 @@
+From 42a8b653ebef4a0cf95f18df0b07a8cee8837bc2 Mon Sep 17 00:00:00 2001
+From: QM Bot <qm-bot@invalid>
+Date: Tue, 17 Nov 2026 10:00:00 +0000
+Subject: [PATCH] [WP-1234] Adjust skill level 3 cost
+
+Lower the level 3 cost from 600 to 550, speed up the level 5 cooldown
+to 2.8 and add a level 6 row.
+
+AI-Generated: QM
+---
+ config/skill_levels.lua | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/config/skill_levels.lua b/config/skill_levels.lua
+index a831fe7..0f89e91 100644
+--- a/config/skill_levels.lua
++++ b/config/skill_levels.lua
+@@ -4,12 +4,13 @@ local M = {}
+ M.levels = {
+   { level = 1, cost = 100,  cooldown = 5.0 },
+   { level = 2, cost = 250,  cooldown = 4.5 },
+-  { level = 3, cost = 600,  cooldown = 4.0 },
++  { level = 3, cost = 550,  cooldown = 4.0 },
+   { level = 4, cost = 1200, cooldown = 3.5 },
+-  { level = 5, cost = 2500, cooldown = 3.0 },
++  { level = 5, cost = 2500, cooldown = 2.8 },
++  { level = 6, cost = 5000, cooldown = 2.5 },
+ }
+ 
+-M.max_level = 5
++M.max_level = 6
+ 
+ function M.cost_of(level)
+   for _, row in ipairs(M.levels) do
+
+base-commit: 0fd2d63c466ae61fdec86f670a5f681f0c075a0c
+-- 
+2.52.0
+
