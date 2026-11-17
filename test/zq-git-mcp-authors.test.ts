@@ -2,14 +2,17 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { classifyAuthor, createAuthorResolver, unmappedAuthors, type AuthorClass } from "../src/zq/git-mcp/authors.ts";
 
-const rules = { externalDomains: ["@yizhu", "partner.example"], botNames: ["ZQBot.compiler", "jenkins"] };
+const rules = {
+  externalDomains: ["@pipeline.invalid", "partner.example"],
+  botNames: ["ExampleBot.compiler", "jenkins"],
+};
 
 test("bot names listed in the rules are bots by author name or by the part before the at sign", () => {
-  assert.deepEqual(classifyAuthor({ name: "ZQBot.compiler", email: "bot@corp.example" }, rules), {
+  assert.deepEqual(classifyAuthor({ name: "ExampleBot.compiler", email: "bot@corp.example" }, rules), {
     kind: "bot",
-    name: "ZQBot.compiler",
+    name: "ExampleBot.compiler",
   });
-  assert.deepEqual(classifyAuthor({ name: "Someone", email: "zqbot.compiler@corp.example" }, rules), {
+  assert.deepEqual(classifyAuthor({ name: "Someone", email: "examplebot.compiler@corp.example" }, rules), {
     kind: "bot",
     name: "Someone",
   });
@@ -20,7 +23,10 @@ test("bot names listed in the rules are bots by author name or by the part befor
 });
 
 test("authors from listed non-company domains are external, including subdomains and any letter case", () => {
-  assert.deepEqual(classifyAuthor({ name: "Wang", email: "wang@yizhu" }, rules), { kind: "external", domain: "yizhu" });
+  assert.deepEqual(classifyAuthor({ name: "Wang", email: "wang@pipeline.invalid" }, rules), {
+    kind: "external",
+    domain: "pipeline.invalid",
+  });
   assert.deepEqual(classifyAuthor({ name: "Li", email: "Li@Dev.Partner.Example" }, rules), {
     kind: "external",
     domain: "dev.partner.example",
@@ -44,11 +50,14 @@ test("the stub resolver maps nobody and the real mapper is only asked about comp
     },
   });
   assert.deepEqual(await resolver.resolve({ email: " Zhang@Corp.Example " }), { kind: "person", mmUserId: "u1" });
-  assert.deepEqual(await resolver.resolve({ name: "ZQBot.compiler", email: "bot@corp.example" }), {
+  assert.deepEqual(await resolver.resolve({ name: "ExampleBot.compiler", email: "bot@corp.example" }), {
     kind: "bot",
-    name: "ZQBot.compiler",
+    name: "ExampleBot.compiler",
   });
-  assert.deepEqual(await resolver.resolve({ email: "wang@yizhu" }), { kind: "external", domain: "yizhu" });
+  assert.deepEqual(await resolver.resolve({ email: "wang@pipeline.invalid" }), {
+    kind: "external",
+    domain: "pipeline.invalid",
+  });
   assert.deepEqual(asked, ["zhang@corp.example"]);
   assert.deepEqual(await createAuthorResolver({ rules }).resolve({ email: "zhang@corp.example" }), {
     kind: "unmapped",
