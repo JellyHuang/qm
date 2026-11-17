@@ -1,6 +1,6 @@
 # DDL proposal: GitLab read-only MCP service (for human review)
 
-Status: PROPOSAL ONLY. Nothing here is applied or implemented. No database was contacted; "current" shapes are derived from repo code.
+Status: APPROVED by the PM on 2026-11-16 for the decisions marked APPROVED below (tenant scoped tables, the role grants, no redaction, audit retention, serve on audit failure). Nothing here is applied: no database was contacted, "current" shapes are derived from repo code, and the migrations and the role SQL are still to be written and reviewed.
 
 ## 0. How this repo does tables and roles (facts from the code)
 
@@ -49,34 +49,42 @@ Unused: `rate_limited` result value.
 DDL change: NONE. json is schemaless; the two new keys need no ALTER. Columns, indexes, constraints: unchanged. No existing column or key is dropped or changed. Content, diffs, commit messages are never stored (args hold names/refs/paths/line ranges/patterns only; `search` pattern is an argument, flag in open questions).
 Statement: zq_git_audit is UNCHANGED at the DDL level.
 
-## 2. NEW zq_git_branch_tips
+## 2. NEW zq_git_branch_tips (APPROVED, tenant scoped)
 
 CREATE TABLE IF NOT EXISTS zq_git_branch_tips (
+tenant_id uuid NOT NULL DEFAULT qm_bound_tenant() REFERENCES tenants(id),
 repo text NOT NULL,
 branch text NOT NULL,
 tip_sha text NOT NULL,
 seen_at timestamptz NOT NULL DEFAULT now(),
-PRIMARY KEY (repo, branch)
+PRIMARY KEY (tenant_id, repo, branch)
 );
+ALTER TABLE zq_git_branch_tips ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON zq_git_branch_tips USING (tenant_id = qm_bound_tenant()) WITH CHECK (tenant_id = qm_bound_tenant());
 Migration id proposal: `zq/zq_git_branch_tips/0001`.
 
-## 3. NEW zq_git_blob_meta
+Deleted branches are never removed (the service role has no DELETE). A deleted branch is a tombstone row: `tip_sha` = '0000000000000000000000000000000000000000' with `seen_at` updated, written by `UPDATE ... WHERE repo = $1 AND branch = $2 AND tip_sha = $3` (the tip that was reported). A tombstone means "deleted and already reported": it is not a current branch and is not reported again. A branch that returns is a NEW branch; its acknowledgement is the same compare-and-set with `tip_sha = <tombstone>`. Rows are written only by acknowledged polls: first observation `INSERT ... ON CONFLICT (tenant_id, repo, branch) DO NOTHING`, then `UPDATE ... SET tip_sha = $to, seen_at = now() WHERE repo = $1 AND branch = $2 AND tip_sha = $from`. See plugins/zq-git-mcp/docs/check-updates.md.
+
+## 3. NEW zq_git_blob_meta (APPROVED, tenant scoped)
 
 CREATE TABLE IF NOT EXISTS zq_git_blob_meta (
+tenant_id uuid NOT NULL DEFAULT qm_bound_tenant() REFERENCES tenants(id),
 repo text NOT NULL,
 oid text NOT NULL,
 size_bytes bigint NOT NULL,
 sha256 text,
 seen_at timestamptz NOT NULL DEFAULT now(),
-PRIMARY KEY (repo, oid)
+PRIMARY KEY (tenant_id, repo, oid)
 );
-Migration id proposal: `zq/zq_git_blob_meta/0001`. sha256 nullable (an over-cap blob is aborted before it can be hashed); drop NULL-ability if you want it required.
+ALTER TABLE zq_git_blob_meta ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON zq_git_blob_meta USING (tenant_id = qm_bound_tenant()) WITH CHECK (tenant_id = qm_bound_tenant());
+Migration id proposal: `zq/zq_git_blob_meta/0001`. sha256 stays nullable (unknown until the content was hashed). The code-only "binary" flag is not stored; it is derived again when a file is read. The service writes `INSERT ... ON CONFLICT (tenant_id, repo, oid) DO UPDATE SET size_bytes = EXCLUDED.size_bytes, sha256 = COALESCE(EXCLUDED.sha256, zq_git_blob_meta.sha256), seen_at = now()`.
 
-### Tenancy gap (decision needed)
+### Tenancy (decided)
 
-Every table in this repo is tenant-scoped (tenant_id + RLS + `qm_bound_tenant()`). The two plain tables above, as specified, are not. Variant if you want them tenanted: add `tenant_id uuid NOT NULL DEFAULT qm_bound_tenant() REFERENCES tenants(id)`, PK (tenant_id, repo, branch) / (tenant_id, repo, oid), ENABLE ROW LEVEL SECURITY and the same tenant_isolation policy.
+Every table in this repo is tenant scoped, so the two new tables are too, with the same pattern as src/tenants/migrations.ts (column default `qm_bound_tenant()`, foreign key to `tenants`, row level security, `tenant_isolation` policy with USING and WITH CHECK). The tenant is bound to the service role once: `ALTER ROLE zq_git_mcp SET qm.tenant_id = '<tenant uuid>'`. The service never names a tenant in a statement; inserts use the column default and reads are filtered by the policy. For development and tests only, the service has the optional setting ZQ_GIT_MCP_TENANT_ID, applied as a session setting on each connection. An unbound connection fails with "No tenant is bound to this query". `zq_git_audit` is unchanged.
 
-## 4. Service role
+## 4. Service role (APPROVED)
 
 Proposed operator-run SQL (as DB owner; NOT carried by migrations):
 CREATE ROLE zq_git_mcp LOGIN PASSWORD '<from operator, never in Git>' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
@@ -85,11 +93,12 @@ GRANT CONNECT ON DATABASE <qm_db> TO zq_git_mcp;
 GRANT USAGE ON SCHEMA public TO zq_git_mcp;
 GRANT INSERT ON zq_git_audit TO zq_git_mcp;
 GRANT SELECT, INSERT, UPDATE ON zq_git_branch_tips, zq_git_blob_meta TO zq_git_mcp;
-No DELETE, TRUNCATE, REFERENCES, TRIGGER, no default privileges, no sequences needed (no serial columns), no grant on tenants or durable_map_versions.
-RLS wrinkle on zq_git_audit: INSERT must satisfy WITH CHECK tenant_id = qm_bound_tenant(), which reads setting qm.tenant_id. Without it the insert fails ("No tenant is bound"). Proposal: `ALTER ROLE zq_git_mcp SET qm.tenant_id = '<tenant uuid>'` (single-tenant deployment), and the service omits tenant_id so the DEFAULT applies. The FK to tenants is checked as table owner, so no REFERENCES grant is needed. Also, raw INSERTs do not bump durable_map_versions, so core's cached zq_git_audit reads may lag up to 15 s (CACHE_MAX_AGE_MS); acceptable for audit.
+ALTER ROLE zq_git_mcp SET qm.tenant_id = '<tenant uuid>';
+The approved grants are exactly: INSERT only on zq_git_audit; SELECT, INSERT, UPDATE on zq_git_branch_tips and zq_git_blob_meta. UPDATE is required by the acknowledgement compare-and-set and by the tombstones. No DELETE, no TRUNCATE, no REFERENCES, no TRIGGER, no default privileges, no sequences needed, no grant on tenants or durable_map_versions. The foreign key to tenants is checked as the table owner, so no REFERENCES grant is needed.
+RLS on zq_git_audit: INSERT must satisfy WITH CHECK tenant_id = qm_bound_tenant(), which reads setting qm.tenant_id; the ALTER ROLE above provides it and the service omits tenant_id so the DEFAULT applies. Raw INSERTs do not bump durable_map_versions, so core's cached zq_git_audit reads may lag up to 15 s (CACHE_MAX_AGE_MS); acceptable for audit.
 Table owner/ordering: grants must run after the tables exist (first QM start after deploy creates audit lazily; new tables via migration).
 Can migrations carry roles? No: no precedent, roles are cluster-level, passwords must not be in Git, and the app's own role may lack CREATEROLE. Needs an operator step.
-Connection string: service-only config, e.g. env/file `ZQ_GIT_MCP_DATABASE_URL=postgres://zq_git_mcp:<password>@host:5432/<db>` in the service account's private environment file (mode 0600, owned by the service account) or its keychain item; never in Git, never given to QM core, agents or sandboxes, never logged. Exact mechanism is open (same open point as the SSH key source).
+Connection string: service-only config, e.g. env/file `ZQ_GIT_MCP_DATABASE_URL=postgres://zq_git_mcp:<password>@host:5432/<db>` in the service account's private environment file (mode 0600, owned by the service account) or its keychain item; never in Git, never given to QM core, agents or sandboxes, never logged. The exact delivery mechanism is still open.
 
 ## 5. Examples (INVENTED, for illustration)
 
@@ -104,7 +113,7 @@ zq_git_blob_meta: ('gameconfig','e69de29b...40hex',18874368,'9f86d081...64hex','
 
 ### Rollout
 
-1. Merge code with migrations for the two tables (idempotent CREATE TABLE IF NOT EXISTS). 2. Operator runs the role SQL. 3. Put the connection string in the service's private config. 4. Start the service.
+1. Merge code with migrations for the two tables (idempotent CREATE TABLE IF NOT EXISTS, row level security and policy). 2. Operator runs the role SQL, including the ALTER ROLE tenant binding. 3. Put the connection string in the service's private config. 4. Start the service; it refuses to start if one of the three tables is missing. 5. Check as the role: own tenant rows only, no SELECT on zq_git_audit, no DELETE, an insert without a bound tenant fails.
 
 ### Rollback
 
@@ -115,38 +124,51 @@ zq_git_audit is left alone (rows kept; the extra JSON keys are harmless). Migrat
 
 ### Tables missing at run time
 
-Proposal: the service must not create tables (no CREATE privilege). On start it checks the three tables exist and refuses to serve (fail closed with a clear message) rather than serve unaudited calls. If audit insert fails mid-run: open question (fail the call vs serve and log to stderr).
+The service must not create tables (no CREATE privilege). On start it checks the three tables exist and refuses to start with a clear message. If an audit insert fails mid-run (APPROVED): the default is ZQ_GIT_MCP_AUDIT_ON_FAILURE=serve, so a read tool is never failed by the audit; the row goes to a bounded local on-disk spool (write-ahead buffer, not a system of record) that is replayed into zq_git_audit in order, with a structured error log line, a counter, a degraded health state and an injectable alert hook. `fail` stays available only as an explicit opt-in.
 
-### Compatibility / retention
+### Compatibility / retention (APPROVED)
 
-Only audit.ts, limits.ts (to be deleted), scripts/zq-git-verify.ts read zq_git_audit; old rows stay valid since new keys are optional. `GitAuditResult` type needs no new variants. Retention: none today (rows kept forever); design doc leaves it open. deleteBefore("at", cutoff) exists in DurableMap for a future sweep run by core, not by the service role (it has no DELETE).
+Only audit.ts, limits.ts (to be deleted), scripts/zq-git-verify.ts read zq_git_audit; old rows stay valid since new keys are optional. `GitAuditResult` type needs no new variants. The service's audit row has exactly the table's names: at, principal, tool, repo, ref, path, args, bytes, truncated, result (ok, error, denied:<reason>), ms, cache_hit.
+
+Retention for zq_git_audit is 180 days. The service role has no DELETE, so pruning is a job of the table owner or of QM core. Exact statement (owner, in batches until it deletes nothing; the owner bypasses row level security so it prunes every tenant):
+DELETE FROM zq_git_audit WHERE ctid IN (SELECT ctid FROM zq_git_audit WHERE (json->>'at')::double precision < extract(epoch FROM now() - interval '180 days') * 1000 LIMIT 10000);
+QM core has an unscheduled helper `pruneGitAudit` (src/zq/git-mcp/audit-retention.ts) that applies the same rule through the durable map's deleteBefore("at", cutoff) under the bound tenant.
+
+No redaction (APPROVED): logged args are stored as they are, including search patterns and workbook header and key names. File content, diffs and commit messages are never stored.
 
 ### Explicit statements
 
 No existing column, index, constraint, or JSON key is dropped or changed. Configuration: adds service-only connection string and a DB role; no existing setting changes.
 
-## 6. Open questions
+## 6. Decisions and open questions
 
-1. Typed tables as specified vs the repo convention (JSON map tables via createPostgresMap) and tenant_id+RLS: which?
-2. Single tenant binding via ALTER ROLE ... SET qm.tenant_id acceptable?
-3. May QM core (poll job) also read/write branch_tips? Then core needs grants, or only the service writes it. Who deletes branch tips of removed branches (no DELETE grant)?
-4. blob_meta: sha256 nullable? Any pruning when LRU evicts blobs (no DELETE for the service)?
-5. Is `args` safe to store for `search` (pattern may be sensitive) and `diff_xlsx` (header/key names)? Redact or omit?
-6. Fail closed vs serve when audit insert fails.
-7. Audit retention period and who prunes.
-8. Is the caller label (X-QM-Caller) trusted, or just a self-declared label? Stored in `principal` either way.
-9. Postgres version for production (CI is 16; production not verified).
-10. Password/connection string delivery mechanism.
+Decided by the PM on 2026-11-16 (APPROVED):
 
-## 7. Plain-language summary for the reviewer
+1. Both new tables are tenant scoped (tenant_id, composite primary keys, row level security, tenant_isolation policy). Typed tables, not JSON map tables.
+2. The role is bound to the tenant with ALTER ROLE ... SET qm.tenant_id; ZQ_GIT_MCP_TENANT_ID is only an optional per-connection setting for development and tests.
+3. Exact grants: INSERT on zq_git_audit; SELECT, INSERT, UPDATE on the two new tables; no DELETE anywhere.
+4. Logged args are not redacted.
+5. An audit write failure never fails a read tool by default (serve, with a spool and alarms); fail is an explicit opt-in.
+6. zq_git_audit is kept 180 days, pruned by the table owner or by QM core, not by the service role.
+7. blob_meta: sha256 is nullable; the binary flag is not stored; no pruning when the blob cache evicts.
+8. The caller label X-QM-Caller (or the actor header) is a self-declared label, stored in `principal` as given.
 
-1. Two new tables are created. The existing `zq_git_audit` table keeps its structure.
-2. `zq_git_branch_tips` records, per repository and branch, the latest commit last seen, so the service can tell whether anything new arrived.
+Still open:
+
+1. How the connection string is delivered to the service (private env file or keychain item).
+2. The mechanics of binding the role to the tenant in a multi-tenant deployment (one role per tenant, or one tenant per deployment).
+3. Pruning of tombstone rows in zq_git_branch_tips and of old zq_git_blob_meta rows (the service role cannot delete; an owner or core job would).
+4. Postgres version for production (CI is 16; production not verified).
+
+## 7. Plain-language summary for the reviewer (APPROVED decisions applied)
+
+1. Two new tables are created. The existing `zq_git_audit` table keeps its structure; no existing table, column, index or constraint is changed.
+2. `zq_git_branch_tips` records, per repository and branch, the latest commit last acknowledged, so the service can tell whether anything new arrived. A deleted branch is marked in place with an all-zero commit and is never removed.
 3. `zq_git_blob_meta` records the size and fingerprint of files already downloaded, so asking whether a file changed does not need a new download.
-4. `zq_git_audit` keeps logging every call. Each row gains two optional items: the call arguments and whether the cache was hit. File content, diffs and commit messages are never stored.
-5. Who can read and write: one new database account used only by this service. It can only add rows to the audit table, can read, add and update rows in the two new tables, cannot delete, and cannot touch any other table.
-6. Tenant isolation, recommended: make both new tables tenant-scoped with row-level security, like every other table, so there is no exception. The cost is that the service account must be bound to that tenant.
-7. Operations has three steps: run the role-creation SQL, put the connection string in the service's own configuration, and confirm the service sees all three tables at start. The tables themselves come from migrations; the role cannot be created by a migration.
-8. Rollback: drop the two new tables, then drop the database account, five statements in total, at any time.
-9. Existing tables and data are unaffected: no column, index or constraint is changed or removed, and old rows stay valid.
-10. Open for the reviewer: redact search patterns in logged arguments or not, whether a failed audit write fails the call, audit retention, how the service account is bound to the tenant, and how the connection string is delivered.
+4. `zq_git_audit` keeps logging every call. Each row gains two optional items: the call arguments (stored as given, not redacted) and whether the cache was hit. File content, diffs and commit messages are never stored.
+5. Who can read and write: one new database account used only by this service. It can only add rows to the audit table, can read, add and update rows in the two new tables, can never delete, and cannot touch any other table.
+6. Both new tables are tenant scoped with row-level security like every other table, so there is no exception. The service account is bound to its tenant once, by an ALTER ROLE statement.
+7. Operations: run the role-creation SQL (including the tenant binding), put the connection string in the service's own configuration, and confirm the service sees all three tables at start. The tables come from migrations; the role cannot be created by a migration.
+8. A failed audit write never fails a read; rows wait in a bounded local buffer and are replayed, with an alarm. Audit rows older than 180 days are pruned by the table owner or by QM core, in batches.
+9. Rollback: drop the two new tables, then drop the database account, five statements in total, at any time. Existing tables and data are unaffected, and old rows stay valid.
+10. Still open: how the connection string is delivered, how the role is bound to the tenant in a multi-tenant deployment, and pruning of tombstones.
