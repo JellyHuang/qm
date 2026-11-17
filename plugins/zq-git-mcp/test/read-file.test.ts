@@ -139,6 +139,7 @@ describe("special entries", () => {
     assert.equal(out.body.kind, "lfs_pointer");
     assert.equal(out.body.lfsOid, LFS_OID_ONE);
     assert.equal(out.body.lfsSize, 123456);
+    assert.equal(out.body.path, "pointer.bin");
     assert.equal(out.body.oid, ff.pointerOneOid);
     assert.equal("content" in out.body, false);
   });
@@ -147,6 +148,14 @@ describe("special entries", () => {
     const out = await read({ ref: ff.c1, path: "real.bin" });
     assert.equal(out.body.kind, "text");
     assert.equal(out.body.content, "real content under an lfs attributed path");
+  });
+
+  test("a large file that merely starts like a pointer is content and the decision never uses the path", async () => {
+    const out = await read({ ref: ff.c1, path: "fake-pointer.dat", startLine: 1, endLine: 1 });
+    assert.equal(out.body.kind, "text");
+    assert.equal(out.body.content, "version https://git-lfs.github.com/spec/v1");
+    const plain = await read({ ref: ff.c1, path: "app.txt" });
+    assert.equal(plain.body.kind, "text");
   });
 
   test("a submodule entry is reported as a submodule and never fetched", async () => {

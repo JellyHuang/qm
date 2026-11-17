@@ -35,6 +35,8 @@ interface DiffFile {
   newCommit?: string;
   oldSize?: number;
   newSize?: number;
+  lfsOid?: string;
+  lfsSize?: number;
   oldLfs?: { oid: string; size: number };
   newLfs?: { oid: string; size: number };
   binary?: boolean;
@@ -165,6 +167,8 @@ describe("unified diff for requested paths", () => {
   test("changed LFS pointers are reported as lfs_pointer changes and not as a text patch", async () => {
     const { body, files } = await diff({ range: ff.c2, paths: ["pointer.bin"] });
     assert.equal(files[0]?.kind, "lfs_pointer");
+    assert.equal(files[0]?.lfsOid, LFS_OID_TWO);
+    assert.equal(files[0]?.lfsSize, 654321);
     assert.deepEqual(files[0]?.oldLfs, { oid: LFS_OID_ONE, size: 123456 });
     assert.deepEqual(files[0]?.newLfs, { oid: LFS_OID_TWO, size: 654321 });
     assert.equal(body.diff, "");

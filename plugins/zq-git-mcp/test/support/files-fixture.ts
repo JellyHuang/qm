@@ -37,6 +37,7 @@ export function buildFilesFixture(fx: Fixture): FilesFixture {
   writeFileSync(join(dir, "real.bin"), "real content under an lfs attributed path\n");
   writeFileSync(join(dir, "pic.png"), pngBytes());
   writeFileSync(join(dir, "crlf.txt"), "a\r\nb\r\n");
+  writeFileSync(join(dir, "fake-pointer.dat"), `${pointerFor(LFS_OID_ONE, 5)}${"padding line\n".repeat(200)}`);
   writeFileSync(join(dir, "notes.txt"), Array.from({ length: 10 }, (_, i) => `note number ${i + 1}`).join("\n") + "\n");
   const c1 = commitAll(dir, "first batch", ALICE, "2024-02-01T10:00:00Z");
   writeFileSync(join(dir, "app.txt"), "alpha\nBETA\ngamma\n");

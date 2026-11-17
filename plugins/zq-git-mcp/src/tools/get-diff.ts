@@ -24,6 +24,8 @@ interface DiffFile {
   newCommit?: string;
   oldSize?: number;
   newSize?: number;
+  lfsOid?: string;
+  lfsSize?: number;
   oldLfs?: { oid: string; size: number };
   newLfs?: { oid: string; size: number };
   binary?: boolean;
@@ -113,6 +115,7 @@ export const getDiff = defineTool({
             ...(file.newOid ? { newOid: file.newOid } : {}),
             ...(file.oldOid && sizes.has(file.oldOid) ? { oldSize: sizes.get(file.oldOid) } : {}),
             ...(file.newOid && sizes.has(file.newOid) ? { newSize: sizes.get(file.newOid) } : {}),
+            ...(oldLfs || newLfs ? { lfsOid: (newLfs ?? oldLfs)?.oid, lfsSize: (newLfs ?? oldLfs)?.size } : {}),
             ...(oldLfs ? { oldLfs } : {}),
             ...(newLfs ? { newLfs } : {}),
             ...(lost ? { unavailable: problems.get(lost) ?? "unavailable" } : {}),

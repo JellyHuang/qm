@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { z } from "zod";
 import { GitDenied, checkLine, checkOffset, checkPath, checkRepo } from "../validate.ts";
 import { detectType } from "./file-type.ts";
-import { LFS_POINTER_MAX_BYTES, parseLfsPointer } from "./lfs.ts";
+import { readLfsPointer } from "./lfs.ts";
 import { readRange, scanText, sha256Of, sniff } from "./text-scan.ts";
 import { lookupEntry, resolveCommit } from "./tree.ts";
 import { defineTool } from "./types.ts";
@@ -52,11 +52,9 @@ export const readFile = defineTool({
         const binary = head.includes(0);
         ctx.ledger.record(repo, entry.oid, { size, binary });
         const common = { ...where, oid: entry.oid, size };
-        if (!binary && size <= LFS_POINTER_MAX_BYTES) {
-          const pointer = parseLfsPointer(head);
-          if (pointer)
-            return { ...common, kind: "lfs_pointer", lfsOid: pointer.oid, lfsSize: pointer.size, truncated: false };
-        }
+        const pointer = binary ? undefined : await readLfsPointer(file);
+        if (pointer)
+          return { ...common, kind: "lfs_pointer", lfsOid: pointer.oid, lfsSize: pointer.size, truncated: false };
         if (binary) {
           if (lineMode) throw new GitDenied("binary_file", "line ranges need a text file; use offset and length");
           const base = {
