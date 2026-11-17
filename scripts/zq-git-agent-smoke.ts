@@ -1,7 +1,14 @@
 import { GIT_AGENT_OPERATIONS, createGitAgent } from "../src/zq/git-mcp/agent.ts";
 import { createGitMcpClient } from "../src/zq/git-mcp/client.ts";
 
-const REPO = "gameconfig";
+const REPOS = ["client", "clientcode", "CommonMessage", "gameconfig", "jenkinstasks", "server", "zq-ui"];
+const USAGE = `usage: ZQ_GIT_MCP_URL=<url> ZQ_GIT_MCP_SECRET=<secret> node scripts/zq-git-agent-smoke.ts
+optional:
+  ZQ_SMOKE_REPO          repository for list_commits, search, get_commit, get_diff, blame and read_file (default gameconfig; one of ${REPOS.join(", ")})
+  ZQ_SMOKE_TEXT_PATH     a small text file in that repository at its default branch: adds read_file, and blame and get_diff run on it
+  ZQ_SMOKE_XLSX_REPO     repository for diff_xlsx (default gameconfig, independent of ZQ_SMOKE_REPO)
+  ZQ_SMOKE_XLSX_PATH     workbook path (default ${"designer_config/behavior/1.xlsx"})
+  ZQ_SMOKE_XLSX_BASE, ZQ_SMOKE_XLSX_HEAD   refs to compare, set together (default: the two newest commits touching the path)`;
 const LABEL_PERSON = "internal:smoke";
 
 function required(name: string): string {
@@ -34,7 +41,20 @@ function envRef(name: string): string | undefined {
   return process.env[name]?.trim() || undefined;
 }
 
+function envRepo(name: string): string {
+  const value = envRef(name) ?? "gameconfig";
+  if (!REPOS.includes(value)) throw new Error(`${name} must be one of ${REPOS.join(", ")}`);
+  return value;
+}
+
 async function main(): Promise<void> {
+  if (process.argv.includes("--help")) {
+    console.log(USAGE);
+    return;
+  }
+  const REPO = envRepo("ZQ_SMOKE_REPO");
+  const XLSX_REPO = envRepo("ZQ_SMOKE_XLSX_REPO");
+  const textPath = envRef("ZQ_SMOKE_TEXT_PATH");
   const client = createGitMcpClient({ url: required("ZQ_GIT_MCP_URL"), secret: required("ZQ_GIT_MCP_SECRET") });
   const agent = createGitAgent({ client });
   const ask = async (input: Record<string, unknown>) =>
@@ -117,6 +137,25 @@ async function main(): Promise<void> {
         return "rejected at the agent entry before any request was made";
       },
     },
+    ...(textPath
+      ? [
+          {
+            name: "read_file text path",
+            run: async () => {
+              const out = await ask({
+                operation: "read_file",
+                repo: REPO,
+                ref: defaultBranch,
+                path: textPath,
+                startLine: 1,
+                endLine: 5,
+              });
+              if (out.kind !== "text") throw new Skip(`the file is ${String(out.kind)}, not text`);
+              return `${count(out.totalBytes)} bytes, ${count(out.totalLines)} lines`;
+            },
+          },
+        ]
+      : []),
     {
       name: "get_commit",
       run: async () => {
@@ -140,9 +179,18 @@ async function main(): Promise<void> {
     {
       name: "get_diff with one path",
       run: async () => {
-        const file = latestFiles.find(isSmallText);
-        if (!latestSha || !file) throw new Skip("no small text file in the latest commit");
-        const out = await ask({ operation: "get_diff", repo: REPO, range: latestSha, paths: [file.path] });
+        let sha = latestSha;
+        let path = latestFiles.find(isSmallText)?.path;
+        if (textPath) {
+          path = textPath;
+          const touched = (await ask({ operation: "list_commits", repo: REPO, path: textPath, limit: 1 })).commits as {
+            sha: string;
+          }[];
+          sha = touched[0]?.sha;
+          if (!sha) throw new Skip(`no commit touches ${textPath}`);
+        }
+        if (!sha || !path) throw new Skip("no small text file in the latest commit");
+        const out = await ask({ operation: "get_diff", repo: REPO, range: sha, paths: [path] });
         if (!Array.isArray(out.files)) throw new Error("files is not an array");
         const entry = (out.files as { kind?: string }[])[0];
         if (entry?.kind !== "file") throw new Skip(`the selected file is ${entry?.kind ?? "not reported"}`);
@@ -152,7 +200,8 @@ async function main(): Promise<void> {
     {
       name: "blame",
       run: async () => {
-        const path = latestFiles.find(isSmallText)?.path ?? searchPaths.find((entry) => TEXT_FILE.test(entry));
+        const path =
+          textPath ?? latestFiles.find(isSmallText)?.path ?? searchPaths.find((entry) => TEXT_FILE.test(entry));
         if (!path) throw new Skip("no small text file found");
         const out = await ask({
           operation: "blame",
@@ -174,14 +223,14 @@ async function main(): Promise<void> {
         let head = envRef("ZQ_SMOKE_XLSX_HEAD");
         if (Boolean(base) !== Boolean(head)) throw new Error("set ZQ_SMOKE_XLSX_BASE and ZQ_SMOKE_XLSX_HEAD together");
         if (!base || !head) {
-          const commits = (await ask({ operation: "list_commits", repo: REPO, path, limit: 2 })).commits as {
+          const commits = (await ask({ operation: "list_commits", repo: XLSX_REPO, path, limit: 2 })).commits as {
             sha: string;
           }[];
           if (commits.length < 2) throw new Skip(`fewer than two commits touch ${path}`);
           head = commits[0]!.sha;
           base = commits[1]!.sha;
         }
-        const out = await ask({ operation: "diff_xlsx", repo: REPO, path, base, head });
+        const out = await ask({ operation: "diff_xlsx", repo: XLSX_REPO, path, base, head });
         const sheets = ((out.summary as { sheets?: Record<string, unknown>[] } | undefined)?.sheets ?? []).filter(
           (sheet) => typeof sheet === "object",
         );
