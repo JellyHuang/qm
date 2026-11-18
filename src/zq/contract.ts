@@ -33,6 +33,7 @@ interface StageRoles {
   taskUnassigned: string;
   taskDone: string;
   bugClosed?: string;
+  featureDone?: string;
 }
 
 export interface ZqContract {
@@ -211,6 +212,7 @@ export function parseContract(value: unknown): ZqContract {
       taskUnassigned: stageRole("taskUnassigned", task),
       taskDone: stageRole("taskDone", task),
       ...(bugClosed ? { bugClosed } : {}),
+      ...(roles["featureDone"] ? { featureDone: stageRole("featureDone", feature) } : {}),
     },
     stageOwners,
     fields: {

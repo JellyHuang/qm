@@ -92,7 +92,7 @@ export function createRoleplay(opts: {
     for (const [field, role] of Object.entries(FIELD_ROLES) as Array<[PersonField, string]>) {
       for (const user of peopleOn(fact.feature, field)) out.push([user, role]);
     }
-    for (const user of fact.feature.participants ?? []) out.push([user, "参与人员"]);
+    for (const user of fact.feature.participants ?? []) out.push([user, "开发人员"]);
     if (fact.feature.typeKey === opts.contract?.optimizationType && fact.feature.assignee)
       out.push([fact.feature.assignee, "优化单执行人"]);
     for (const child of fact.children) {

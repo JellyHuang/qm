@@ -502,3 +502,11 @@ test("a feature with responsible planners and no assignee asks the producer once
     0,
   );
 });
+
+test("a finished or closed feature is not asked who its assignee is", () => {
+  const open = feature("feature.development", { assignee: undefined, reviewer: { id: "22", name: "Rev R" } });
+  const asked = (f: WorkView) => rules({ feature: f, children: [] }).filter((a) => a.rule === "assignee-unconfirmed");
+  assert.equal(asked(open).length, 1);
+  assert.equal(asked({ ...open, statusKey: "feature.done" }).length, 0);
+  assert.equal(asked({ ...open, closed: true }).length, 0);
+});

@@ -201,7 +201,7 @@ test("a message names the role it is for, not every role the same person holds",
   assert.doesNotMatch(meeting.text.split("\n")[0]!, /项目经理|QA/);
 });
 
-test("every responsible planner is reminded, and the group takes the participants too", async () => {
+test("every responsible planner is reminded, and the group takes the participants and no longer the order executors", async () => {
   const h = harness();
   const reminders = createZqReminderStore({ map: h.reminderMap });
   const groups = createZqGroups({ map: h.groupMap });
@@ -230,5 +230,5 @@ test("every responsible planner is reminded, and the group takes the participant
   });
   const meeting = (await reminders.pendingFor("rp:11")).concat(await reminders.pendingFor("rp:15"));
   assert.deepEqual(meeting.map((r) => r.recipientMmUserId).sort(), ["rp:11", "rp:15"]);
-  assert.deepEqual([...h.channels[0]!.members].sort(), ["rp:11", "rp:12", "rp:15", "rp:16"]);
+  assert.deepEqual([...h.channels[0]!.members].sort(), ["rp:11", "rp:15", "rp:16"]);
 });

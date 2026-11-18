@@ -287,8 +287,8 @@ async function ensureGroup(
   if (feature.statusKey !== contract.stageRoles.briefing || !live.length || live.some((c) => !c.assignee)) return false;
   const people = [
     ...peopleOn(feature, "responsiblePlanner"),
+    ...peopleOn(feature, "reviewer"),
     ...(feature.participants ?? []),
-    ...live.flatMap((c) => c.assignee ?? []),
   ];
   const members = (await Promise.all(people.map((u) => mmUserIdOfOpUser(u.id)))).flatMap((m) => m ?? []);
   if (!members.length) return false;

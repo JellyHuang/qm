@@ -352,7 +352,13 @@ test("a person whose OpenProject read fails is skipped without stopping the rest
 
 test("the group for a feature in the briefing stage is made once, only when every live order has an assignee", async () => {
   const feature = parseWork(
-    detail(40, { type_key: "feature", status_key: "feature.briefing", planner: ALICE_OP, assignee: asUser(ALICE_OP) }),
+    detail(40, {
+      type_key: "feature",
+      status_key: "feature.briefing",
+      planner: ALICE_OP,
+      assignee: asUser(ALICE_OP),
+      participants: [BOB_OP, CAROL_OP],
+    }),
   );
   const ready = [
     parseWork(detail(41, { parent_id: 40, assignee: asUser(BOB_OP) })),
@@ -402,7 +408,13 @@ test("the group for a feature in the briefing stage is made once, only when ever
 
 test("the channel receipt is written to OpenProject once after the channel exists, retried while it fails, and never repeated", async () => {
   const feature = parseWork(
-    detail(40, { type_key: "feature", status_key: "feature.briefing", planner: ALICE_OP, assignee: asUser(ALICE_OP) }),
+    detail(40, {
+      type_key: "feature",
+      status_key: "feature.briefing",
+      planner: ALICE_OP,
+      assignee: asUser(ALICE_OP),
+      participants: [BOB_OP],
+    }),
   );
   const children = [parseWork(detail(41, { parent_id: 40, assignee: asUser(BOB_OP) }))];
   const groups = createZqGroups({ map: testMap<ZqGroup>() });

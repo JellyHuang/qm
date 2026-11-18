@@ -113,7 +113,8 @@
     "inProduction": "feature.development",
     "formalAssets": "feature.resources",
     "taskUnassigned": "execution.unassigned",
-    "taskDone": "execution.done"
+    "taskDone": "execution.done",
+    "featureDone": "feature.done"
   },
   "lifecycleValues": ["normal", "suspended", "cancelled"],
   "bugType": "bug",

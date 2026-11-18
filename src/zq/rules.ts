@@ -36,6 +36,7 @@ export interface WorkView {
   awaitingNote?: string;
   completionSubmitted?: boolean;
   completionSubmittedAt?: number;
+  closed?: boolean;
 }
 
 export interface AwaitedChild {
@@ -266,7 +267,8 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
   const out: RuleAction[] = [];
 
   const planners = peopleOn(feature, "responsiblePlanner");
-  if (planners.length > 0 && !feature.assignee)
+  const finished = feature.closed === true || feature.statusKey === contract.stageRoles.featureDone;
+  if (planners.length > 0 && !feature.assignee && !finished)
     out.push({
       ...at(
         "assignee-unconfirmed",

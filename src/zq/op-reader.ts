@@ -145,6 +145,7 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
   const delayMarked = item[contract.fields.delayMarked];
   const delayedSince = time(item[contract.fields.delayedSince]);
   const blocking = item["blocking"];
+  const closed = item["is_closed"];
   const awaited = awaitedChildren(item[contract.fields.awaitedChildren]);
   const awaitingNote = str(item[contract.fields.awaitingNote]);
   const completionSubmitted = item[contract.fields.completionSubmitted];
@@ -175,6 +176,7 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
     ...(typeof delayMarked === "boolean" ? { delayMarked } : {}),
     ...(delayedSince !== undefined ? { delayedSince } : {}),
     ...(typeof blocking === "boolean" ? { blocking } : {}),
+    ...(closed === true ? { closed } : {}),
     ...(awaited ? { awaited } : {}),
     ...(awaitingNote ? { awaitingNote } : {}),
     ...(completionSubmitted === true || completionSubmitted === "pass" ? { completionSubmitted: true } : {}),

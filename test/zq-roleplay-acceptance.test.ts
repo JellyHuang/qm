@@ -33,6 +33,7 @@ const PLANNER = user("11", "策划小A");
 const DEV = user("12", "服务端小B");
 const DEV2 = user("14", "服务端小D");
 const QA = user("13", "QA小C");
+const ARTIST = user("17", "美术小E");
 
 const view = (id: number, over: Partial<WorkView>): WorkView => ({
   id,
@@ -174,14 +175,14 @@ test("role-play acceptance script: create, assign, develop, hand in, QA, finish,
   const assigned = await h.step(10);
   assert.match(assigned.sent.map((m) => m.text).join("\n"), new RegExp(`${bullet("策划", "策划小A")} 功能 \\[#1\\]`));
 
-  h.world.feature = { ...h.world.feature, statusKey: "feature.briefing" };
+  h.world.feature = { ...h.world.feature, statusKey: "feature.briefing", participants: [ARTIST] };
   h.world.children = [view(41, { parentId: 1, assignee: DEV, typeKey: "backend" })];
   const briefing = await h.step(10);
   assert.deepEqual(h.channels, [[JELLY]], "the group holds only the tester");
   const roster = briefing.posts.find((p) => p.text.includes("角色扮演验收群"))!.text;
   assert.match(roster, /策划小A/);
   assert.match(roster, /建群理由:/);
-  assert.match(roster, /服务端负责人 服务端小B/);
+  assert.match(roster, /开发人员 美术小E/);
 
   h.world.feature = { ...h.world.feature, statusKey: "feature.development" };
   h.world.children = [...h.world.children, view(43, { parentId: 1, assignee: DEV2, typeKey: "backend" })];
