@@ -514,10 +514,6 @@ test("a work package whose status is closed carries the closed flag, an open one
     parseWorkView(wp({ start_date: "2026-11-09" }), contract)!.startAt,
     Date.parse("2026-11-09T00:00:00+08:00"),
   );
-  assert.equal(
-    parseWorkView(wp({ updated_at: "2026-11-17T08:00:00Z" }), contract)!.updatedAt,
-    Date.parse("2026-11-17T08:00:00Z"),
-  );
   assert.deepEqual(parseWorkView(wp({ author: { id: 7, name: "Rep R" } }), contract)!.author, {
     id: "7",
     name: "Rep R",

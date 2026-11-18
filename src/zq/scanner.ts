@@ -9,6 +9,7 @@ import {
   peopleOn,
   type FeatureFacts,
   type OpUserRef,
+  type RuleId,
   type RuleOptions,
   type Target,
 } from "./rules.ts";
@@ -55,6 +56,7 @@ export interface ScanOptions {
   dailyCeiling: number;
   escalation: { duties: readonly Duty[]; afterDays: number };
   unsetDuties?: readonly Duty[];
+  baseline?: readonly RuleId[];
 }
 
 export interface ScanReport {
@@ -198,8 +200,10 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
             },
             opts.mode,
           );
-          if (created) report.created++;
-          else report.alreadyKnown++;
+          if (created) {
+            report.created++;
+            if (opts.baseline?.includes(action.rule)) await opts.reminders.markSent(id);
+          } else report.alreadyKnown++;
         }
       }
       if (opts.changes && opts.mode === "live" && !opts.reader.changes) {

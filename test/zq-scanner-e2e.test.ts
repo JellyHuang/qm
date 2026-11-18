@@ -587,3 +587,71 @@ test("the weekly brief goes out once on Wednesday at the configured time, only t
   const off = h.service({ ZQ_SCANNER: "1", ZQ_REMINDER_DELIVERY: "1" });
   assert.equal((await off.tick()).weeklyBriefsSent, undefined);
 });
+
+test("verified bugs found by the first scan are recorded as known and never announced, later ones are announced once", async () => {
+  const { scanOnce } = await import("../src/zq/scanner.ts");
+  const reporter = { id: "41", name: "Rep R" };
+  const bug = (id: number) => ({
+    id,
+    subject: `缺陷${id}`,
+    typeKey: "bug",
+    statusKey: "bug.closed",
+    author: reporter,
+  });
+  const feature = {
+    id: 1,
+    subject: "功能",
+    typeKey: "feature",
+    statusKey: "feature.qa",
+    assignee: { id: "11", name: "Alice A" },
+    responsiblePlanner: { id: "11", name: "Alice A" },
+  };
+  let bugs = [bug(7)];
+  const reader = {
+    features: async () => ({ facts: [{ feature, children: [], bugs }], problems: [] }),
+    dutyHolders: async () => undefined,
+  } as never;
+  const reminders = createZqReminderStore({ map: testMap<ZqReminder>(), now: () => NOON_SHANGHAI });
+  const scan = (baseline: boolean) =>
+    scanOnce({
+      reader,
+      contract,
+      people: [ALICE],
+      mmUserIdOfOpUser: async (id) => (id === "41" ? "mm-rep" : MM_OF[id]),
+      reminders,
+      mode: "live",
+      now: NOON_SHANGHAI,
+      timezone: "Asia/Shanghai",
+      dailyCeiling: 100,
+      escalation: { duties: [], afterDays: 2 },
+      ...(baseline ? { baseline: ["bug-verified-notice" as const] } : {}),
+    });
+  await scan(true);
+  assert.deepEqual(await reminders.pendingFor("mm-rep"), []);
+  bugs = [bug(7), bug(8)];
+  await scan(false);
+  const pending = await reminders.pendingFor("mm-rep");
+  assert.deepEqual(
+    pending.map((r) => r.subjectId),
+    ["wp:8:verified"],
+  );
+  await scan(false);
+  assert.equal((await reminders.pendingFor("mm-rep")).length, 1, "announced once");
+});
+
+test("the first scan with a verified stage named writes the baseline once, and a scanner without that stage writes none", async (t) => {
+  const h = await harness(t);
+  await h.service({ ZQ_SCANNER: "1" }).tick();
+  const first = await h.state.get("bug-verified-baseline");
+  assert.ok(first, "baseline written");
+  h.clock.now += 5 * 60_000;
+  await h.service({ ZQ_SCANNER: "1" }).tick();
+  assert.deepEqual(await h.state.get("bug-verified-baseline"), first, "not rewritten");
+  const bare = await harness(t);
+  const without = bare.service(
+    { ZQ_SCANNER: "1" },
+    { contract: { ...contract, stageRoles: { ...contract.stageRoles, bugVerified: undefined } } },
+  );
+  await without.tick();
+  assert.equal(await bare.state.get("bug-verified-baseline"), null);
+});

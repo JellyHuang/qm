@@ -27,7 +27,6 @@ export interface WorkView {
   regressionOwner?: OpUserRef;
   dueAt?: number;
   startAt?: number;
-  updatedAt?: number;
   author?: OpUserRef;
   percent?: number;
   estimateHours?: number;
@@ -114,7 +113,6 @@ export interface RuleOptions {
   day: (at: number) => string;
   meetingGraceMs: number;
   meetingLeadMs: number;
-  freshMs: number;
   escalateAfterMs: number;
   escalationDuties: readonly Duty[];
   unsetDuties: readonly Duty[];
@@ -125,7 +123,6 @@ export const DEFAULT_RULE_OPTIONS = {
   day: (at: number) => new Date(at).toISOString().slice(0, 10),
   meetingGraceMs: 10 * 60_000,
   meetingLeadMs: 30 * 60_000,
-  freshMs: 2 * DAY,
   escalateAfterMs: 2 * DAY,
   escalationDuties: [] as readonly Duty[],
   unsetDuties: [] as readonly Duty[],
@@ -474,11 +471,12 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
         ? [{ kind: "user", user: (bug.qaOwner ?? feature.qaOwner)! } as Target]
         : []),
     ];
+    const waiting = bug.statusKey === contract.stageRoles.bugRetest;
     out.push(
       at(
         "blocking-bug-open",
         to,
-        `阻断 BUG ${where(bug)}(功能${where(feature)})还没有关闭,功能不能推进到验收通过。请跟进修复和验证(QM 只提醒,不会拦截)。`,
+        `阻断 BUG ${where(bug)}(功能${where(feature)})还没有关闭,功能不能推进到验收通过。${waiting ? `它已修好,等 QA 确认人复测:通过请关闭,不通过请退回给${bug.assignee ? ` ${bug.assignee.name} ` : "原处理人"}继续修。` : "请跟进修复和验证"}(QM 只提醒,不会拦截)。`,
         bug,
       ),
     );
@@ -492,7 +490,7 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
   }
 
   const retest = contract.stageRoles.bugRetest;
-  for (const bug of (facts.bugs ?? []).filter((b) => retest && active(b) && b.statusKey === retest)) {
+  for (const bug of (facts.bugs ?? []).filter((b) => retest && active(b) && b.statusKey === retest && !b.blocking)) {
     const qa = bug.qaOwner ?? feature.qaOwner;
     if (!qa) continue;
     out.push({
@@ -509,7 +507,7 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
 
   const verified = contract.stageRoles.bugVerified;
   for (const bug of (facts.bugs ?? []).filter((b) => verified && active(b) && b.statusKey === verified)) {
-    if (!bug.author || bug.updatedAt === undefined || opts.now - bug.updatedAt > opts.freshMs) continue;
+    if (!bug.author) continue;
     out.push({
       ...at(
         "bug-verified-notice",

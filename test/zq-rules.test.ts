@@ -658,24 +658,13 @@ test("a bug waiting for retest asks its QA owner once, and nobody when there is 
   assert.equal(asked({ ...base, bugs: [bug(7)] }, unnamed).length, 0);
 });
 
-test("a bug just verified tells the person who reported it once, and stays silent for old, unreported or unnamed ones", () => {
+test("a verified bug tells the person who reported it once, and stays silent without a reporter or a named stage", () => {
   const REPORTER = { id: "41", name: "Rep R" };
   const bug = (id: number, over: Partial<WorkView> = {}) =>
-    work(id, {
-      typeKey: "bug",
-      statusKey: "bug.closed",
-      author: REPORTER,
-      updatedAt: NOW - 3_600_000,
-      ...over,
-    });
+    work(id, { typeKey: "bug", statusKey: "bug.closed", author: REPORTER, ...over });
   const told = (bugs: WorkView[], c: ZqContract = contract) =>
     rules({ feature: feature("feature.qa"), children: [], bugs }, c).filter((a) => a.rule === "bug-verified-notice");
-  const hit = told([
-    bug(7),
-    bug(8, { updatedAt: NOW - 3 * DAY }),
-    bug(9, { author: undefined }),
-    bug(10, { updatedAt: undefined }),
-  ]);
+  const hit = told([bug(7), bug(9, { author: undefined })]);
   assert.equal(hit.length, 1);
   assert.deepEqual(hit[0]!.to, [{ kind: "user", user: REPORTER }]);
   assert.equal(hit[0]!.subjectId, "wp:7:verified");
@@ -684,4 +673,23 @@ test("a bug just verified tells the person who reported it once, and stays silen
   assert.equal(told([bug(11, { statusKey: "bug.fixing" }), bug(12, { lifecycle: "cancelled" })]).length, 0);
   const unnamed = { ...contract, stageRoles: { ...contract.stageRoles, bugVerified: undefined } };
   assert.equal(told([bug(7)], unnamed).length, 0);
+});
+
+test("a blocking bug waiting for retest gets one message that says both, and a non-blocking one gets the retest message", () => {
+  const QA = { id: "31", name: "Qa Q" };
+  const bug = (id: number, over: Partial<WorkView> = {}) =>
+    work(id, { typeKey: "bug", statusKey: "bug.retest", assignee: BOB, ...over });
+  const out = rules({
+    feature: feature("feature.qa", { qaOwner: QA }),
+    children: [],
+    bugs: [bug(7, { blocking: true }), bug(8)],
+  }).filter((a) => a.rule === "blocking-bug-open" || a.rule === "bug-awaiting-retest");
+  assert.deepEqual(
+    out.map((a) => [a.rule, a.subjectId]),
+    [
+      ["blocking-bug-open", "wp:7"],
+      ["bug-awaiting-retest", "wp:8:retest"],
+    ],
+  );
+  assert.match(out[0]!.text, /还没有关闭.*等 QA 确认人复测.*退回给 Bob B/);
 });

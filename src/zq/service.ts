@@ -342,6 +342,8 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
       if (config.scanner.enabled && deps.contract) {
         if (await claim("scanner", config.scanner.cron, at, true)) {
           const mode: ReminderMode = config.deliverReminders ? "live" : "dry-run";
+          const announces = deps.contract.stageRoles.bugVerified !== undefined;
+          const baselined = (await deps.state.get("bug-verified-baseline")) !== null;
           out.scanned = await scanOnce({
             reader: deps.reader,
             contract: deps.contract,
@@ -357,7 +359,9 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
             dailyCeiling: config.reminderDailyCeiling,
             escalation: config.escalation,
             unsetDuties: config.unsetResponsibilityDuties,
+            ...(announces && !baselined ? { baseline: ["bug-verified-notice" as const] } : {}),
           });
+          if (announces && !baselined) await deps.state.put("bug-verified-baseline", { lastRunAt: at });
           await deps.state.merge("scanner", { lastReport: out.scanned });
         }
         if (config.deliverReminders)
