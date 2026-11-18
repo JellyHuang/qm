@@ -327,6 +327,31 @@ test("a configured ceiling stops further reminders for a person that day and is 
   assert.equal(out.ceilingHit, 2);
 });
 
+test("scanning again on the same day creates nothing new and a ceiling never drops a reminder already stored", async (t) => {
+  const h = await harness(t);
+  const live = h.service({ ZQ_SCANNER: "1", ZQ_REMINDER_DAILY_CEILING: "1" });
+  const first = (await live.tick()).scanned!;
+  const stored = await h.reminders.countForDay("mm-bob", DAY_KEY);
+  assert.deepEqual([first.created, stored, first.ceilingHit], [2, 1, 2]);
+  h.clock.now += 5 * 60_000;
+  const second = (await live.tick()).scanned!;
+  assert.equal(second.created, 0);
+  assert.equal(second.alreadyKnown, 2);
+  assert.equal(second.ceilingHit, 2, "the same two stay held back, none is lost or duplicated");
+  assert.equal(await h.reminders.countForDay("mm-bob", DAY_KEY), stored);
+});
+
+test("a ceiling counts per person and per day, so the held-back reminders are created the next day", async (t) => {
+  const h = await harness(t);
+  const live = h.service({ ZQ_SCANNER: "1", ZQ_REMINDER_DAILY_CEILING: "1" });
+  await live.tick();
+  h.clock.now = NOON_SHANGHAI + DAY;
+  const next = (await live.tick()).scanned!;
+  assert.equal(await h.reminders.countForDay("mm-bob", "2026-11-15"), 1);
+  assert.equal(await h.reminders.countForDay("mm-alice", "2026-11-15"), 1);
+  assert.equal(next.created, 2);
+});
+
 test("an unlinked recipient and a duty without holders are counted, not guessed", async (t) => {
   const h = await harness(t);
   const out = (
