@@ -8,7 +8,7 @@ export interface OnboardingRecord {
   mmUserId: string;
   startedAt: number;
   email?: { value: string; confirmedAt: number };
-  gitlab?: { username: string; confirmedAt: number };
+  gitlab?: { username: string; confirmedAt: number; verified: boolean };
   awaitingGitlab?: boolean;
 }
 
@@ -56,7 +56,7 @@ export function createOnboarding(opts: {
   now?: () => number;
 }): ZqOnboarding {
   const now = opts.now ?? (() => Date.now());
-  const gitlabRequired = opts.checkGitlab !== undefined;
+  const gitlabRequired = true;
 
   async function status(mmUserId: string): Promise<OnboardingStatus> {
     const record = await opts.map.get(mmUserId);
@@ -109,14 +109,19 @@ export function createOnboarding(opts: {
     if (s.complete) return false;
     const record = await ensure(mmUserId);
     const name = text.trim().replace(/^@/, "");
-    if (record.awaitingGitlab && opts.checkGitlab && !s.gitlab) {
+    if (record.awaitingGitlab && !s.gitlab) {
       if (!USERNAME.test(name)) {
         await opts.sendText(mmUserId, "这不像 GitLab 用户名。请只回复用户名,例如 zhangsan。");
         return true;
       }
-      const found = await opts.checkGitlab(name).catch((): GitlabCheck => "unavailable");
+      const found: GitlabCheck = opts.checkGitlab
+        ? await opts.checkGitlab(name).catch((): GitlabCheck => "unavailable")
+        : "found";
       if (found === "found") {
-        await opts.map.merge(mmUserId, { gitlab: { username: name, confirmedAt: now() }, awaitingGitlab: false });
+        await opts.map.merge(mmUserId, {
+          gitlab: { username: name, confirmedAt: now(), verified: opts.checkGitlab !== undefined },
+          awaitingGitlab: false,
+        });
         await opts.sendText(mmUserId, `已记录你的 GitLab 账号:${name}。`);
         const after = await status(mmUserId);
         if (!after.complete) await guide(mmUserId);

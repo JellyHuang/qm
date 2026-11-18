@@ -87,7 +87,7 @@ test("the email step needs the person's own confirmation, an empty profile must 
   assert.equal((await h.onboarding.status("mm-ann")).email, false);
   assert.match(await h.onboarding.decide("email:mm-ann", true, "mm-ann"), /已确认邮箱:ann@igg\.com/);
   const s = await h.onboarding.status("mm-ann");
-  assert.deepEqual([s.op, s.email, s.complete], [true, true, true]);
+  assert.deepEqual([s.op, s.email, s.complete], [true, true, false], "the GitLab step is still open");
 });
 
 test("a GitLab user name is checked, a missing one is asked for again, an unreachable GitLab records nothing, and a found one is kept", async () => {
@@ -119,13 +119,20 @@ test("a GitLab user name is checked, a missing one is asked for again, an unreac
   assert.equal(await h.onboarding.gate("mm-ann", "now a normal message"), false, "a finished person is no longer held");
 });
 
-test("with no GitLab host configured the GitLab step is not required, and an administrator can reset one step without touching the others", async () => {
+test("with no way to check GitLab the user name is recorded as given and marked unverified, and an administrator can reset one step without touching the others", async () => {
   const h = harness();
   await h.identity.propose(PROPOSAL);
   await h.identity.confirm("mm-ann", "mm-ann");
   await h.onboarding.decide("email:mm-ann", true, "mm-ann");
-  const s = await h.onboarding.status("mm-ann");
-  assert.deepEqual([s.gitlabRequired, s.complete], [false, true]);
+  assert.equal((await h.onboarding.status("mm-ann")).complete, false, "the GitLab step is still required");
+  await h.onboarding.gate("mm-ann", "hi");
+  await h.onboarding.gate("mm-ann", "ann.zhang");
+  const done = await h.onboarding.status("mm-ann");
+  assert.deepEqual([done.gitlabRequired, done.gitlab, done.complete], [true, true, true]);
+  assert.equal(await h.onboarding.mmUserOfGitlab("ann.zhang"), "mm-ann");
+  await h.onboarding.reset("mm-ann", "gitlab");
+  const afterGitlab = await h.onboarding.status("mm-ann");
+  assert.deepEqual([afterGitlab.op, afterGitlab.email, afterGitlab.gitlab], [true, true, false]);
   await h.onboarding.reset("mm-ann", "email");
   assert.deepEqual(
     [(await h.onboarding.status("mm-ann")).op, (await h.onboarding.status("mm-ann")).email],
@@ -222,11 +229,16 @@ test("from the runtime, a message from an allowed unfinished person gets cards a
   assert.ok(sent.some((m) => m.kind === "card:onboard/是这个,onboard/我要改" && /jelly@igg\.com/.test(m.text)));
   assert.equal(await runtime.decide("link", "mm-jelly", true, "mm-jelly"), "已关联 OpenProject 账号。");
   assert.match(await runtime.decide("onboard", "email:mm-jelly", true, "mm-jelly"), /已确认邮箱/);
-  assert.equal(await runtime.onboardingGate!("mm-jelly", "hello again"), false);
+  assert.equal(await runtime.onboardingGate!("mm-jelly", "hello again"), true);
   const people = await runtime.identityAdmin.onboardingList!();
   assert.deepEqual(
-    people.map((p) => [p.mmUserId, p.op, p.email, p.complete]),
-    [["mm-jelly", true, true, true]],
+    people.map((p) => [p.mmUserId, p.op, p.email, p.gitlab, p.complete]),
+    [["mm-jelly", true, true, false, false]],
+  );
+  assert.equal(await runtime.onboardingGate!("mm-jelly", "jelly.huang"), true);
+  assert.deepEqual(
+    (await runtime.identityAdmin.onboardingList!()).map((p) => p.complete),
+    [true],
   );
   await runtime.identityAdmin.onboardingReset!("mm-jelly", "email");
   assert.equal(await runtime.onboardingGate!("mm-jelly", "again"), true);
