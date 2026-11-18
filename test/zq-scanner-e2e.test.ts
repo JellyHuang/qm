@@ -71,7 +71,7 @@ const DETAILS = [
     assignee: asUser(ALICE_OP),
     due_date: "2026-12-31",
   }),
-  detail(21, { parent_id: 20, assignee: asUser(BOB_OP) }),
+  detail(21, { parent_id: 20, assignee: asUser(BOB_OP), due_date: "2026-12-30" }),
   detail(22, {
     parent_id: 20,
     assignee: asUser(BOB_OP),
@@ -250,7 +250,7 @@ test("a dry-run scan walks the pages, stores what it would send per rule, target
   ]);
   const missing = (await h.reminders.pendingFor("mm-bob")).find((r) => r.rule === "production-missing-plan")!;
   assert.equal(missing.id, `production-missing-plan:wp:21:mm-bob:${DAY_KEY}`);
-  assert.match(missing.text, /预计工时、计划开始时间、计划结束时间/);
+  assert.match(missing.text, /预计工时、计划开始时间/);
   assert.equal(
     await h.reminders.has(`planner-unassigned:wp:30:mm-alice:${DAY_KEY}`),
     false,

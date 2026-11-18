@@ -38,6 +38,7 @@ const WHY: Record<RuleId, string> = {
   "meeting-follow-up": "宣讲会议已过计划结束时间还没有关闭",
   "production-missing-plan": "研发制作中的执行单缺少预计工时或计划时间",
   "task-overdue": "执行单已超过计划结束时间",
+  "task-dates-missing": "执行单还没有截止日期,按开始日期和状态催办",
   "task-overdue-escalation": "执行单超期已满升级天数",
   "task-unassigned": "有执行单还没有指定执行人",
   "optimization-unassigned": "优化单还没有指派",

@@ -139,6 +139,7 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
   const acceptor = personAt("acceptor");
   const regressionOwner = personAt("regressionOwner");
   const dueAt = time(item["due_date"], "end");
+  const startAt = time(item["start_date"], "start");
   const estimateHours = hours(item[contract.fields.estimate]);
   const plannedStart = time(item[contract.fields.plannedStart], "start");
   const plannedEnd = time(item[contract.fields.plannedEnd], "end");
@@ -170,6 +171,7 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
     ...(acceptor ? { acceptor } : {}),
     ...(regressionOwner ? { regressionOwner } : {}),
     ...(dueAt !== undefined ? { dueAt } : {}),
+    ...(startAt !== undefined ? { startAt } : {}),
     ...(estimateHours !== undefined ? { estimateHours } : {}),
     ...(plannedStart !== undefined ? { plannedStart } : {}),
     ...(plannedEnd !== undefined ? { plannedEnd } : {}),

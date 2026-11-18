@@ -26,6 +26,7 @@ export interface WorkView {
   acceptor?: OpUserRef;
   regressionOwner?: OpUserRef;
   dueAt?: number;
+  startAt?: number;
   estimateHours?: number;
   plannedStart?: number;
   plannedEnd?: number;
@@ -76,6 +77,7 @@ export type RuleId =
   | "meeting-follow-up"
   | "production-missing-plan"
   | "task-overdue"
+  | "task-dates-missing"
   | "task-overdue-escalation"
   | "task-unassigned"
   | "optimization-unassigned"
@@ -103,6 +105,7 @@ export interface RuleOptions {
   now: number;
   day: (at: number) => string;
   meetingGraceMs: number;
+  staleAfterMs: number;
   escalateAfterMs: number;
   escalationDuties: readonly Duty[];
   unsetDuties: readonly Duty[];
@@ -112,6 +115,7 @@ const DAY = 86_400_000;
 export const DEFAULT_RULE_OPTIONS = {
   day: (at: number) => new Date(at).toISOString().slice(0, 10),
   meetingGraceMs: 10 * 60_000,
+  staleAfterMs: 3 * DAY,
   escalateAfterMs: 2 * DAY,
   escalationDuties: [] as readonly Duty[],
   unsetDuties: [] as readonly Duty[],
@@ -130,6 +134,30 @@ const isOpen = (contract: ZqContract, w: WorkView) => w.statusKey !== contract.s
 
 function stageOwners(contract: ZqContract, stage: string): Target[] {
   return [...(contract.stageOwners[stage] ?? [])];
+}
+
+function datesNudge(
+  contract: ZqContract,
+  c: WorkView,
+  opts: RuleOptions,
+  at: (rule: RuleId, to: Target[], text: string, subject?: WorkView) => RuleAction,
+  parent: string,
+): RuleAction[] {
+  if (!isOpen(contract, c) || c.completionSubmitted || !c.assignee || c.dueAt !== undefined) return [];
+  const status = label(contract, c.statusKey);
+  const running =
+    c.startAt !== undefined && opts.now - c.startAt >= opts.staleAfterMs
+      ? `已从 ${opts.day(c.startAt)} 开始 ${Math.floor((opts.now - c.startAt) / DAY)} 天,还在「${status}」。`
+      : `现在在「${status}」。`;
+  const missing = c.startAt === undefined ? "开始日期和截止日期" : "截止日期";
+  return [
+    at(
+      "task-dates-missing",
+      [{ kind: "user", user: c.assignee }],
+      `${where(c)}${parent}还没有${missing}。${running}请回复今天的进度,并补上${missing}(直接回复预计完成日期也行)。`,
+      c,
+    ),
+  ];
 }
 
 function missingPlan(w: WorkView): string[] {
@@ -358,6 +386,7 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
         ),
       );
     for (const c of children.filter((c) => isOpen(contract, c))) {
+      out.push(...datesNudge(contract, c, opts, at, `(功能${where(feature)})`));
       const missing = missingPlan(c);
       if (missing.length && c.assignee)
         out.push(

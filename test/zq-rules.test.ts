@@ -119,7 +119,9 @@ test("in production, missing estimates and dates go to the assignee until filled
     work(5, { assignee: BOB, lifecycle: "suspended" }),
     work(6),
   ];
-  const a = rules({ feature: feature("feature.development", PLANNED), children });
+  const a = rules({ feature: feature("feature.development", PLANNED), children }).filter(
+    (x) => x.rule !== "task-dates-missing",
+  );
   assert.deepEqual(ids(a), ["production-missing-plan"]);
   assert.deepEqual(a[0]!.to, [{ kind: "user", user: BOB }]);
   assert.match(a[0]!.text, /预计工时、计划开始时间、计划结束时间/);
@@ -579,4 +581,29 @@ test("the drafted key table sends each trade's unassigned orders to its lead and
   assert.deepEqual(ids("qa_test"), ["38"]);
   assert.deepEqual(ids("fgui"), ["41"]);
   assert.deepEqual(ids("mystery_trade"), ["5"]);
+});
+
+test("an assigned open order without a due date is asked each day for progress and the missing dates, using its start date and status", () => {
+  const dated = work(2, {
+    assignee: BOB,
+    dueAt: NOW + DAY,
+    plannedStart: NOW,
+    plannedEnd: NOW + DAY,
+    estimateHours: 1,
+  });
+  const asked = (c: WorkView) =>
+    rules({ feature: feature("feature.development", PLANNED), children: [c] }).filter(
+      (a) => a.rule === "task-dates-missing",
+    );
+  assert.equal(asked(dated).length, 0);
+  const fresh = asked({ ...dated, dueAt: undefined, startAt: NOW - DAY });
+  assert.deepEqual(fresh[0]!.to, [{ kind: "user", user: BOB }]);
+  assert.match(fresh[0]!.text, /还没有截止日期/);
+  assert.doesNotMatch(fresh[0]!.text, /天,还在/);
+  const stale = asked({ ...dated, dueAt: undefined, startAt: NOW - 5 * DAY });
+  assert.match(stale[0]!.text, /已从 .* 开始 5 天,还在「/);
+  assert.match(asked({ ...dated, dueAt: undefined })[0]!.text, /开始日期和截止日期/);
+  assert.equal(asked({ ...dated, dueAt: undefined, assignee: undefined }).length, 0);
+  assert.equal(asked({ ...dated, dueAt: undefined, completionSubmitted: true }).length, 0);
+  assert.equal(asked({ ...dated, dueAt: undefined, statusKey: "execution.done" }).length, 0);
 });
