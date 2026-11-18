@@ -26,7 +26,12 @@ const toolContract = JSON.parse(
 const keyTable = JSON.parse(
   readFileSync(new URL("./fixtures/zq-contract-keys.json", import.meta.url), "utf8"),
 ) as Record<string, unknown>;
-const contract: ZqContract = parseContract({ ...keyTable, tools: { dutyHolders: "zq_duty_holders" } });
+const contract: ZqContract = parseContract({
+  ...keyTable,
+  typeLeads: {},
+  defaultLead: undefined,
+  tools: { dutyHolders: "zq_duty_holders" },
+});
 
 const DAY = 86_400_000;
 const NOON_SHANGHAI = Date.UTC(2026, 10, 14, 4, 0);

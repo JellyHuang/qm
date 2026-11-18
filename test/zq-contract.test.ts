@@ -108,9 +108,18 @@ test("the 0.4 key table is read: bug type, art resource flags, auto-advance stag
 });
 
 test("the leads of each type are read from the key table, and a lead without a name is refused", () => {
-  const base = JSON.parse(readFileSync(new URL("./fixtures/zq-contract-keys.json", import.meta.url), "utf8"));
+  const drafted = JSON.parse(readFileSync(new URL("./fixtures/zq-contract-keys.json", import.meta.url), "utf8"));
+  assert.deepEqual(parseContract(drafted).typeLeads["backend"], [{ id: "5", name: "栋黄" }]);
+  assert.deepEqual(parseContract(drafted).defaultLead, { id: "5", name: "栋黄" });
+  const { typeLeads: _leads, defaultLead: _lead, ...base } = drafted;
   assert.deepEqual(parseContract(base).typeLeads, {});
   const led = parseContract({ ...base, typeLeads: { backend: [{ id: "31", name: "Lead L" }] } });
   assert.deepEqual(led.typeLeads, { backend: [{ id: "31", name: "Lead L" }] });
   assert.throws(() => parseContract({ ...base, typeLeads: { backend: [{ id: "31" }] } }), /typeLeads/);
+  assert.equal(parseContract(base).defaultLead, undefined);
+  assert.deepEqual(parseContract({ ...base, defaultLead: { id: "5", name: "Lead L" } }).defaultLead, {
+    id: "5",
+    name: "Lead L",
+  });
+  assert.throws(() => parseContract({ ...base, defaultLead: { id: "5" } }), /defaultLead/);
 });

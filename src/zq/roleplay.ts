@@ -172,9 +172,10 @@ export function createRoleplay(opts: {
           );
           await remember(
             facts,
-            Object.values(opts.contract?.typeLeads ?? {}).flatMap((users) =>
-              users.map((u): [OpUserRef, string] => [u, "专业负责人"]),
-            ),
+            [
+              ...Object.values(opts.contract?.typeLeads ?? {}).flat(),
+              ...(opts.contract?.defaultLead ? [opts.contract.defaultLead] : []),
+            ].map((u): [OpUserRef, string] => [u, "专业负责人"]),
           );
           return { ...read, facts };
         },

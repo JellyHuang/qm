@@ -10,9 +10,11 @@ import {
   type WorkView,
 } from "../src/zq/rules.ts";
 
-const contract = parseContract(
+const keyTable = parseContract(
   JSON.parse(readFileSync(new URL("./fixtures/zq-contract-keys.json", import.meta.url), "utf8")),
 );
+const { defaultLead: _drafted, ...undrafted } = keyTable;
+const contract: ZqContract = { ...undrafted, typeLeads: {} };
 const DAY = 86_400_000;
 const NOW = Date.UTC(2026, 10, 14, 4, 0);
 const OPTS = { ...DEFAULT_RULE_OPTIONS, now: NOW };
@@ -542,8 +544,39 @@ test("an unassigned optimization order and an unassigned bug go to the leads of 
   assert.deepEqual(routed[0]!.to, [{ kind: "user", user: LEAD }]);
   assert.match(routed[0]!.text, /还没有指定处理人/);
   assert.equal(rules(facts).filter((a) => a.rule === "bug-unassigned").length, 0);
+  const fallback = rules(facts, { ...contract, defaultLead: LEAD }).filter((a) => a.rule === "bug-unassigned");
+  assert.deepEqual(fallback[0]!.to, [{ kind: "user", user: LEAD }]);
   assert.equal(
     rules({ ...facts, bugs: [{ ...bug, assignee: BOB }] }, leads).filter((a) => a.rule === "bug-unassigned").length,
     0,
   );
+});
+
+test("an order with no named lead and no duty holder goes to the default lead, and a mapped lead still wins", () => {
+  const other = { id: "32", name: "Other O" };
+  const open = work(5, { typeKey: "planning", statusKey: "execution.unassigned" });
+  const facts = { feature: feature("feature.development", PLANNED), children: [open] };
+  const dispatched = (c: ZqContract) => rules(facts, c).filter((a) => a.rule === "task-unassigned");
+  const stripped: ZqContract = { ...contract, typeOwners: {}, defaultLead: LEAD };
+  assert.deepEqual(dispatched(stripped)[0]!.to, [{ kind: "user", user: LEAD }]);
+  assert.deepEqual(dispatched({ ...stripped, typeLeads: { planning: [other] } })[0]!.to, [
+    { kind: "user", user: other },
+  ]);
+  assert.equal(dispatched({ ...contract, typeOwners: {} }).length, 0);
+});
+
+test("the drafted key table sends each trade's unassigned orders to its lead and everything else to the default lead", () => {
+  const to = (typeKey: string) => {
+    const open = work(5, { typeKey, statusKey: "execution.unassigned" });
+    const facts = { feature: feature("feature.development", PLANNED), children: [open] };
+    return rules(facts, keyTable).filter((a) => a.rule === "task-unassigned")[0]!.to;
+  };
+  const ids = (typeKey: string) => to(typeKey).map((t) => (t.kind === "user" ? t.user.id : t.kind));
+  assert.deepEqual(ids("character_model"), ["45"]);
+  assert.deepEqual(ids("vfx"), ["29"]);
+  assert.deepEqual(ids("frontend"), ["35"]);
+  assert.deepEqual(ids("backend"), ["5"]);
+  assert.deepEqual(ids("qa_test"), ["38"]);
+  assert.deepEqual(ids("fgui"), ["41"]);
+  assert.deepEqual(ids("mystery_trade"), ["5"]);
 });

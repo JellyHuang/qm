@@ -152,6 +152,9 @@ const FIELD_LABEL: Record<PersonField, string> = {
 const leadsOf = (contract: ZqContract, typeKey: string): Target[] =>
   (contract.typeLeads[typeKey] ?? []).map((user): Target => ({ kind: "user", user }));
 
+const fallbackLead = (contract: ZqContract): Target[] =>
+  contract.defaultLead ? [{ kind: "user", user: contract.defaultLead }] : [];
+
 function unassignedDispatch(
   children: readonly WorkView[],
   contract: ZqContract,
@@ -165,7 +168,7 @@ function unassignedDispatch(
     const leads = leadsOf(contract, c.typeKey);
     const own: Target[] = person ? [{ kind: "user", user: person }] : [];
     if (owner?.kind === "duty") own.splice(0, own.length, { kind: "duty", duty: owner.duty });
-    const to = leads.length ? leads : own;
+    const to = [leads, own, fallbackLead(contract)].find((list) => list.length) ?? [];
     if (!to.length) continue;
     const key = to
       .map((t) => (t.kind === "duty" ? `duty:${t.duty}` : `user:${t.kind === "user" ? t.user.id : ""}`))
@@ -417,7 +420,8 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
   }
 
   for (const bug of (facts.bugs ?? []).filter((b) => active(b) && !b.assignee && b.statusKey !== closed)) {
-    const to = leadsOf(contract, bug.typeKey);
+    const leads = leadsOf(contract, bug.typeKey);
+    const to = leads.length ? leads : fallbackLead(contract);
     if (to.length)
       out.push(at("bug-unassigned", to, `BUG ${where(bug)}(功能${where(feature)})还没有指定处理人。请指派。`, bug));
   }

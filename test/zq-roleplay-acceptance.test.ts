@@ -18,7 +18,12 @@ import { testMap } from "./support/test-database.ts";
 const keyTable = JSON.parse(
   readFileSync(new URL("./fixtures/zq-contract-keys.json", import.meta.url), "utf8"),
 ) as Record<string, unknown>;
-const contract = parseContract({ ...keyTable, tools: { dutyHolders: "zq_duty_holders" } });
+const contract = parseContract({
+  ...keyTable,
+  typeLeads: {},
+  defaultLead: undefined,
+  tools: { dutyHolders: "zq_duty_holders" },
+});
 
 const JELLY = "mm-jelly";
 const PROJECT = "test-p";

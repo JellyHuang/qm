@@ -43,6 +43,7 @@ export interface ZqContract {
   bugType?: string;
   optimizationType?: string;
   typeLeads: Readonly<Record<string, ReadonlyArray<{ id: string; name: string }>>>;
+  defaultLead?: { id: string; name: string };
   artResource: (typeKey: string) => boolean;
   autoAdvanceStages: readonly string[];
   stages: {
@@ -180,16 +181,14 @@ export function parseContract(value: unknown): ZqContract {
     Object.entries(rawOwners).map(([type, raw]) => [type, typeOwner(type, raw, knownDuties, personFieldNames)]),
   );
   const rawLeads = isRecord(value["typeLeads"]) ? value["typeLeads"] : {};
+  const leadUser = (u: unknown, where: string): { id: string; name: string } => {
+    if (!isRecord(u)) throw new Error(`contract key table: ${where} must name a user`);
+    return { id: text(u["id"], `${where}.id`), name: text(u["name"], `${where}.name`) };
+  };
   const typeLeads = Object.fromEntries(
     Object.entries(rawLeads).map(([type, list]) => [
       type,
-      (Array.isArray(list) ? list : []).map((u, i) => {
-        if (!isRecord(u)) throw new Error(`contract key table: typeLeads.${type}[${i}] must name a user`);
-        return {
-          id: text(u["id"], `typeLeads.${type}[${i}].id`),
-          name: text(u["name"], `typeLeads.${type}[${i}].name`),
-        };
-      }),
+      (Array.isArray(list) ? list : []).map((u, i) => leadUser(u, `typeLeads.${type}[${i}]`)),
     ]),
   );
   const bug = stringMap(stages["bug"] ?? {}, "stages.bug");
@@ -210,6 +209,7 @@ export function parseContract(value: unknown): ZqContract {
     featureType: text(value["featureType"], "featureType"),
     typeOwners,
     typeLeads,
+    ...(value["defaultLead"] === undefined ? {} : { defaultLead: leadUser(value["defaultLead"], "defaultLead") }),
     ...(value["bugType"] === undefined ? {} : { bugType: text(value["bugType"], "bugType") }),
     ...(value["optimizationType"] === undefined
       ? {}

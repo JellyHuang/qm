@@ -39,7 +39,11 @@ A feature with responsible planners but no assignee asks its producer (`reviewer
 
 ## Who is asked for an order nobody holds
 
-`typeLeads` (optional) maps a type key to the people who answer for it: `{ "backend": [{ "id": "12", "name": "…" }] }`. An unassigned order of that type, an unassigned optimization order (`optimization`) and an unassigned bug (`bug`, new rule `bug-unassigned`) are addressed to those people. A type with no entry keeps the old behavior: the duty holders for its type, the planner for an optimization order, and nobody for a bug. A feature without an assignee is addressed to its producer, as above. The table starts empty; the operator fills it.
+`typeLeads` (optional) maps a type key to the people who answer for it: `{ "backend": [{ "id": "12", "name": "…" }] }`. An unassigned order of that type, an unassigned optimization order (`optimization`) and an unassigned bug (`bug`, rule `bug-unassigned`) are addressed to those people. A type with no entry falls back to the duty holders for its type (the planner for an optimization order), and when there are none, to `defaultLead`.
+
+`defaultLead` (optional, one `{ "id", "name" }` user, empty by default) is addressed by every "nobody is assigned" reminder that finds no lead: an unmapped type, no duty holder, an unassigned bug of a type with no lead. QM only reminds; it never picks an assignee. A feature without an assignee is still addressed to its producer.
+
+The draft in `test/fixtures/zq-contract-keys.json` maps art types (character/scene concept and model, level art, animation) to 闫文 (45), `vfx` to 朱升 (29), `frontend` to 朱毅 (35), `backend` to 栋黄 (5), `qa_test` to 林凯 (38), `ui` and `fgui` to 胡西尧 (41), and `defaultLead` to 栋黄 (5). The `qa_test`, `ui` and `fgui` entries are a draft from the OP role holders, not yet confirmed by jelly.
 
 ## Empty responsibility fields
 
