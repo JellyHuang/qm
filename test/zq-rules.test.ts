@@ -128,7 +128,7 @@ test("in production, missing estimates and dates go to the assignee until filled
 });
 
 test("an overdue order asks its assignee, and escalates only to the configured duties after the configured time", () => {
-  const plan = { estimateHours: 1, plannedStart: NOW - 5 * DAY, plannedEnd: NOW - DAY };
+  const plan = { estimateHours: 1, plannedStart: NOW - 5 * DAY, plannedEnd: NOW - DAY, startAt: NOW - 5 * DAY };
   const late = work(2, { assignee: BOB, dueAt: NOW - 3 * DAY, ...plan });
   const plain = rules({ feature: feature("feature.development", PLANNED), children: [late] });
   assert.deepEqual(ids(plain), ["task-overdue"]);
@@ -583,27 +583,29 @@ test("the drafted key table sends each trade's unassigned orders to its lead and
   assert.deepEqual(ids("mystery_trade"), ["5"]);
 });
 
-test("an assigned open order without a due date is asked each day for progress and the missing dates, using its start date and status", () => {
-  const dated = work(2, {
-    assignee: BOB,
-    dueAt: NOW + DAY,
-    plannedStart: NOW,
-    plannedEnd: NOW + DAY,
-    estimateHours: 1,
-  });
+test("an order is asked for its start and expected end dates once, only when it is being executed", () => {
+  const running = work(2, { assignee: BOB, plannedStart: NOW, plannedEnd: NOW + DAY, estimateHours: 1 });
   const asked = (c: WorkView) =>
     rules({ feature: feature("feature.development", PLANNED), children: [c] }).filter(
       (a) => a.rule === "task-dates-missing",
     );
-  assert.equal(asked(dated).length, 0);
-  const fresh = asked({ ...dated, dueAt: undefined, startAt: NOW - DAY });
-  assert.deepEqual(fresh[0]!.to, [{ kind: "user", user: BOB }]);
-  assert.match(fresh[0]!.text, /还没有截止日期/);
-  assert.doesNotMatch(fresh[0]!.text, /天,还在/);
-  const stale = asked({ ...dated, dueAt: undefined, startAt: NOW - 5 * DAY });
-  assert.match(stale[0]!.text, /已从 .* 开始 5 天,还在「/);
-  assert.match(asked({ ...dated, dueAt: undefined })[0]!.text, /开始日期和截止日期/);
-  assert.equal(asked({ ...dated, dueAt: undefined, assignee: undefined }).length, 0);
-  assert.equal(asked({ ...dated, dueAt: undefined, completionSubmitted: true }).length, 0);
-  assert.equal(asked({ ...dated, dueAt: undefined, statusKey: "execution.done" }).length, 0);
+  assert.equal(asked({ ...running, startAt: NOW, dueAt: NOW + DAY }).length, 0);
+  const both = asked(running);
+  assert.deepEqual(both[0]!.to, [{ kind: "user", user: BOB }]);
+  assert.match(both[0]!.text, /已经开始执行,还没有开始日期和预计结束日期/);
+  assert.equal(both[0]!.once, true);
+  assert.match(asked({ ...running, startAt: NOW })[0]!.text, /还没有预计结束日期/);
+  assert.match(asked({ ...running, dueAt: NOW + DAY })[0]!.text, /还没有开始日期。/);
+  for (const statusKey of ["execution.waiting", "execution.unassigned", "execution.done"])
+    assert.equal(asked({ ...running, statusKey }).length, 0, statusKey);
+  assert.equal(asked({ ...running, assignee: undefined }).length, 0);
+  assert.equal(asked({ ...running, completionSubmitted: true }).length, 0);
+  assert.equal(asked({ ...running, lifecycle: "suspended" }).length, 0);
+  const noRole = { ...contract, stageRoles: { ...contract.stageRoles, taskActive: undefined } };
+  assert.equal(
+    rules({ feature: feature("feature.development", PLANNED), children: [running] }, noRole).filter(
+      (a) => a.rule === "task-dates-missing",
+    ).length,
+    0,
+  );
 });

@@ -105,7 +105,6 @@ export interface RuleOptions {
   now: number;
   day: (at: number) => string;
   meetingGraceMs: number;
-  staleAfterMs: number;
   escalateAfterMs: number;
   escalationDuties: readonly Duty[];
   unsetDuties: readonly Duty[];
@@ -115,7 +114,6 @@ const DAY = 86_400_000;
 export const DEFAULT_RULE_OPTIONS = {
   day: (at: number) => new Date(at).toISOString().slice(0, 10),
   meetingGraceMs: 10 * 60_000,
-  staleAfterMs: 3 * DAY,
   escalateAfterMs: 2 * DAY,
   escalationDuties: [] as readonly Duty[],
   unsetDuties: [] as readonly Duty[],
@@ -139,24 +137,31 @@ function stageOwners(contract: ZqContract, stage: string): Target[] {
 function datesNudge(
   contract: ZqContract,
   c: WorkView,
-  opts: RuleOptions,
   at: (rule: RuleId, to: Target[], text: string, subject?: WorkView) => RuleAction,
   parent: string,
 ): RuleAction[] {
-  if (!isOpen(contract, c) || c.completionSubmitted || !c.assignee || c.dueAt !== undefined) return [];
-  const status = label(contract, c.statusKey);
-  const running =
-    c.startAt !== undefined && opts.now - c.startAt >= opts.staleAfterMs
-      ? `已从 ${opts.day(c.startAt)} 开始 ${Math.floor((opts.now - c.startAt) / DAY)} 天,还在「${status}」。`
-      : `现在在「${status}」。`;
-  const missing = c.startAt === undefined ? "开始日期和截止日期" : "截止日期";
+  const missing = [c.startAt === undefined ? "开始日期" : "", c.dueAt === undefined ? "预计结束日期" : ""].filter(
+    Boolean,
+  );
+  if (
+    !contract.stageRoles.taskActive ||
+    c.statusKey !== contract.stageRoles.taskActive ||
+    !active(c) ||
+    c.completionSubmitted ||
+    !c.assignee ||
+    !missing.length
+  )
+    return [];
   return [
-    at(
-      "task-dates-missing",
-      [{ kind: "user", user: c.assignee }],
-      `${where(c)}${parent}还没有${missing}。${running}请回复今天的进度,并补上${missing}(直接回复预计完成日期也行)。`,
-      c,
-    ),
+    {
+      ...at(
+        "task-dates-missing",
+        [{ kind: "user", user: c.assignee }],
+        `${where(c)}${parent}已经开始执行,还没有${missing.join("和")}。请补上;之后只需要更新进度。`,
+        c,
+      ),
+      once: true,
+    },
   ];
 }
 
@@ -386,7 +391,7 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
         ),
       );
     for (const c of children.filter((c) => isOpen(contract, c))) {
-      out.push(...datesNudge(contract, c, opts, at, `(功能${where(feature)})`));
+      out.push(...datesNudge(contract, c, at, `(功能${where(feature)})`));
       const missing = missingPlan(c);
       if (missing.length && c.assignee)
         out.push(
