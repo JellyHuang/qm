@@ -61,7 +61,7 @@ export function composeWeeklyBriefs(opts: {
   const byLead = new Map<string, { name: string; sections: Map<string, Entry[]> }>();
   for (const entry of ordersOf(opts.facts, contract)) {
     const label = contract.weeklyLabels[entry.order.typeKey] ?? OTHER;
-    const named = contract.typeLeads[entry.order.typeKey] ?? [];
+    const named = contract.weeklyLeads[label] ?? contract.typeLeads[entry.order.typeKey] ?? [];
     for (const lead of named.length ? named : fallback) {
       const slot = byLead.get(lead.id) ?? { name: lead.name, sections: new Map() };
       slot.sections.set(label, [...(slot.sections.get(label) ?? []), entry]);

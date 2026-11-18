@@ -116,3 +116,19 @@ test("orders are grouped by the feature they belong to, numbered through the sec
     ].join("\n"),
   );
 });
+
+test("a section's weekly recipient can be overridden by label, without moving the trade's unassigned-order reminders", () => {
+  const OLIVIA = { id: "77", name: "Zhou Olivia" };
+  const routed = { ...contract, weeklyLeads: { 策划内容: [OLIVIA] } };
+  const briefs = composeWeeklyBriefs({
+    facts: facts([order(2, "planning", { subject: "礼包规划" }), order(3, "backend", { subject: "接口" })]),
+    contract: routed,
+    now: WEDNESDAY,
+    timezone: "Asia/Shanghai",
+  });
+  const textOf = (id: string) => briefs.find((b) => b.leadOpUserId === id)?.text ?? "";
+  assert.match(textOf("77"), /策划内容:\n【功能】\n1\. 礼包规划/);
+  assert.doesNotMatch(textOf("5"), /礼包规划/);
+  assert.match(textOf("5"), /后台内容:/);
+  assert.deepEqual(routed.typeLeads["planning"], undefined);
+});

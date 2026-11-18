@@ -48,6 +48,7 @@ export interface ZqContract {
   typeLeads: Readonly<Record<string, ReadonlyArray<{ id: string; name: string }>>>;
   defaultLead?: { id: string; name: string };
   weeklyLabels: Readonly<Record<string, string>>;
+  weeklyLeads: Readonly<Record<string, ReadonlyArray<{ id: string; name: string }>>>;
   artResource: (typeKey: string) => boolean;
   autoAdvanceStages: readonly string[];
   stages: {
@@ -196,6 +197,12 @@ export function parseContract(value: unknown): ZqContract {
     ]),
   );
   const weeklyLabels = isRecord(value["weeklyLabels"]) ? stringMap(value["weeklyLabels"], "weeklyLabels") : {};
+  const weeklyLeads = Object.fromEntries(
+    Object.entries(isRecord(value["weeklyLeads"]) ? value["weeklyLeads"] : {}).map(([label, list]) => [
+      label,
+      (Array.isArray(list) ? list : []).map((u, i) => leadUser(u, `weeklyLeads.${label}[${i}]`)),
+    ]),
+  );
   const bug = stringMap(stages["bug"] ?? {}, "stages.bug");
   const autoAdvance =
     value["autoAdvanceStages"] === undefined ? [] : strings(value["autoAdvanceStages"], "autoAdvanceStages");
@@ -215,6 +222,7 @@ export function parseContract(value: unknown): ZqContract {
     typeOwners,
     typeLeads,
     weeklyLabels,
+    weeklyLeads,
     ...(value["defaultLead"] === undefined ? {} : { defaultLead: leadUser(value["defaultLead"], "defaultLead") }),
     ...(value["bugType"] === undefined ? {} : { bugType: text(value["bugType"], "bugType") }),
     ...(value["optimizationType"] === undefined
