@@ -11,6 +11,7 @@ export interface ZqReminderDraft {
   recipientMmUserId: string;
   target?: string;
   text: string;
+  batch?: { heading: string; line: string };
   dayKey: string;
   dueAt: number;
 }

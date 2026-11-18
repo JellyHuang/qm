@@ -98,6 +98,7 @@ export interface RuleAction {
   subjectTitle: string;
   to: Target[];
   text: string;
+  batch?: { heading: string; line: string };
   once?: boolean;
 }
 
@@ -160,6 +161,10 @@ function datesNudge(
         `${where(c)}${parent}已经开始执行,还没有${missing.join("和")}。请补上;之后只需要更新进度。`,
         c,
       ),
+      batch: {
+        heading: "下面的单子已经开始执行,还缺日期。请补上;之后只需要更新进度:",
+        line: `${where(c)}${parent}缺${missing.join("和")}`,
+      },
       once: true,
     },
   ];

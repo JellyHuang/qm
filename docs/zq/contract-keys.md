@@ -49,4 +49,4 @@ The draft in `test/fixtures/zq-contract-keys.json` maps art types (character/sce
 
 A person field named by `stageOwners` that is empty on the feature is never replaced by a duty group. QM sends no reminder for it and instead emits `responsibility-not-set` to the duties in `ZQ_UNSET_RESPONSIBILITY_DUTIES` (none by default, so it is only counted in the scan report).
 
-`stageRoles.taskActive` (optional) names the execution stage that means "being executed", for example `execution.active`. An assigned order in that stage that has no start date or no expected end date (`due_date`) is asked for the missing one once (`task-dates-missing`); it is never asked while waiting, unassigned or done. Without the key the rule is off.
+`stageRoles.taskActive` (optional) names the execution stage that means "being executed", for example `execution.active`. An assigned order in that stage that has no start date or no expected end date (`due_date`) is asked for the missing one once (`task-dates-missing`); one person's such questions of a day go out as one numbered message; it is never asked while waiting, unassigned or done. Without the key the rule is off.

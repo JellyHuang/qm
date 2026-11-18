@@ -192,6 +192,7 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
               recipientMmUserId: mm,
               target,
               text: action.text,
+              ...(action.batch ? { batch: action.batch } : {}),
               dayKey,
               dueAt: opts.now,
             },
