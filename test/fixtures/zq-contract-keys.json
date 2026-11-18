@@ -21,7 +21,8 @@
     "fgui": "ui_lead",
     "frontend": "client_lead",
     "backend": "server_lead",
-    "qa_test": "qa_lead"
+    "qa_test": "qa_lead",
+    "art_general": "art_lead"
   },
   "stages": {
     "feature": {
@@ -120,7 +121,7 @@
     "bugVerified": "bug.closed",
     "qaTesting": "feature.qa"
   },
-  "lifecycleValues": ["normal", "suspended", "cancelled"],
+  "lifecycleValues": ["normal", "delayed", "suspended", "cancelled"],
   "bugType": "bug",
   "typeFlags": {
     "feature": {
@@ -157,6 +158,9 @@
       "artResource": true
     },
     "vfx": {
+      "artResource": true
+    },
+    "art_general": {
       "artResource": true
     },
     "fgui": {
@@ -202,6 +206,12 @@
     "retainEveryChange": true
   },
   "typeLeads": {
+    "art_general": [
+      {
+        "id": "45",
+        "name": "闫文"
+      }
+    ],
     "character_concept": [
       {
         "id": "45",
@@ -294,7 +304,8 @@
     "character_model": "美术内容",
     "scene_model": "美术内容",
     "level_art": "美术内容",
-    "animation": "美术内容"
+    "animation": "美术内容",
+    "art_general": "美术内容"
   },
   "weeklyLeads": {
     "策划内容": [
