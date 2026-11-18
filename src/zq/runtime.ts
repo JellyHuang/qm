@@ -101,7 +101,7 @@ export function createZqRuntime(deps: {
       }),
     );
     const all = resolved.flat();
-    return roleplay ? roleplay.people(all) : all;
+    return (roleplay ? roleplay.people(all) : all).filter((p) => isAllowed(p.mmUserId));
   }
 
   const contract = deps.contract ?? (config.contractFile ? loadZqContract(config.contractFile) : undefined);
@@ -123,7 +123,28 @@ export function createZqRuntime(deps: {
         cursors: deps.map<ZqChangeCursor>("zq_change_cursors"),
       })
     : undefined;
-  const chat = roleplay ? roleplay.chat(deps.chat) : deps.chat;
+  const allowed = new Set(config.recipientAllowlist);
+  const isAllowed = (mmUserId: string) => allowed.size === 0 || allowed.has(mmUserId);
+  const refuse = (mmUserId: string) =>
+    Promise.reject(new Error(`recipient ${mmUserId} is not on ZQ_RECIPIENT_ALLOWLIST`));
+  const unrestricted = roleplay ? roleplay.chat(deps.chat) : deps.chat;
+  const chat: ZqChat = allowed.size
+    ? {
+        sendDm: (mm, ...rest) => (isAllowed(mm) ? unrestricted.sendDm(mm, ...rest) : refuse(mm)),
+        sendButtons: (mm, ...rest) => (isAllowed(mm) ? unrestricted.sendButtons(mm, ...rest) : refuse(mm)),
+        mmUserIdOf: (principalId) => unrestricted.mmUserIdOf(principalId),
+        principalOf: (mm) => unrestricted.principalOf(mm),
+        ...(unrestricted.mmUserIdsOfEmail
+          ? { mmUserIdsOfEmail: unrestricted.mmUserIdsOfEmail.bind(unrestricted) }
+          : {}),
+        ...(unrestricted.createGroup
+          ? {
+              createGroup: (feature, members) => unrestricted.createGroup!(feature, members.filter(isAllowed)),
+            }
+          : {}),
+        ...(unrestricted.postToChannel ? { postToChannel: unrestricted.postToChannel.bind(unrestricted) } : {}),
+      }
+    : unrestricted;
   const remarkWriter =
     (tool: string, principalId: string) =>
     async (input: { featureId: number; channelId: string; participantOpUserIds: string[] }) => {
@@ -178,9 +199,12 @@ export function createZqRuntime(deps: {
   const service = createZqService({
     config,
     ...(contract && reader ? { contract, reader } : { reader: noReader }),
-    mmUserIdOfOpUser: roleplay
-      ? roleplay.mmUserIdOfOpUser
-      : async (opUserId) => (await identity.byOpenProject(opUserId))?.mmUserId,
+    mmUserIdOfOpUser: async (opUserId) => {
+      const mm = roleplay
+        ? await roleplay.mmUserIdOfOpUser(opUserId)
+        : (await identity.byOpenProject(opUserId))?.mmUserId;
+      return mm !== undefined && isAllowed(mm) ? mm : undefined;
+    },
     ...(groups ? { groups } : {}),
     ...(changes ? { changes } : {}),
     people,

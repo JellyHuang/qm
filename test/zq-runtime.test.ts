@@ -139,3 +139,18 @@ test("adding orders is off by default, and when on the card click goes through t
   ]);
   await assert.rejects(build({}).decide("children", "x", true, "mm-alice"), /没有开启/);
 });
+
+test("with a recipient allowlist, nobody else is sent a card, and an empty allowlist limits no one", async () => {
+  const outside = setup({ ZQ_IDENTITY_MAP: "1", ZQ_RECIPIENT_ALLOWLIST: "mm-bob" });
+  await outside.runtime.connectorConnected("openproject", "internal:alice").catch(() => {});
+  assert.deepEqual(outside.buttons, []);
+  const inside = setup({ ZQ_IDENTITY_MAP: "1", ZQ_RECIPIENT_ALLOWLIST: " mm-bob , mm-alice " });
+  await inside.runtime.connectorConnected("openproject", "internal:alice");
+  assert.deepEqual(
+    inside.buttons.map((b) => b.to),
+    ["mm-alice"],
+  );
+  const open = setup({ ZQ_IDENTITY_MAP: "1", ZQ_RECIPIENT_ALLOWLIST: "" });
+  await open.runtime.connectorConnected("openproject", "internal:alice");
+  assert.equal(open.buttons.length, 1);
+});

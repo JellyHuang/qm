@@ -15,6 +15,7 @@ export interface ZqConfig {
   opBaseUrl?: string;
   featureChannels: boolean;
   roleplay?: { mmUserId: string; projectIds: readonly string[] };
+  recipientAllowlist: readonly string[];
   changeDigest: boolean;
   childOrders: boolean;
   remarkPrincipal?: string;
@@ -139,6 +140,10 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
     throw new Error("ZQ_ROLEPLAY_MM_USER and ZQ_ROLEPLAY_PROJECTS must be set together");
   return {
     ...(roleplayUser ? { roleplay: { mmUserId: roleplayUser, projectIds: roleplayProjects } } : {}),
+    recipientAllowlist: (env.ZQ_RECIPIENT_ALLOWLIST ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
     identityMap: on(env.ZQ_IDENTITY_MAP),
     scanner: { enabled: scannerEnabled, cron, timezone },
     deliverReminders: on(env.ZQ_REMINDER_DELIVERY),
