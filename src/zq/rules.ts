@@ -96,6 +96,7 @@ export type RuleId =
   | "bug-unassigned"
   | "bug-awaiting-retest"
   | "bug-verified-notice"
+  | "qa-stage-entered"
   | "responsibility-not-set";
 
 export interface RuleAction {
@@ -349,6 +350,20 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
     out.push(
       at("review-pending", stageOwners(contract, stage), `功能${where(feature)}的策划案等待审核,请审核通过或退回。`),
     );
+
+  if (r.qaTesting && stage === r.qaTesting) {
+    const live = children.filter(active);
+    const done = live.filter((c) => c.statusKey === contract.stageRoles.taskDone).length;
+    out.push({
+      ...at(
+        "qa-stage-entered",
+        [{ kind: "field", field: "qaOwner" }],
+        `总单${where(feature)}已进入「${stageName}」,可以开始测试。负责策划:${planners.length ? planners.map((u) => u.name).join("、") : "未指定"}。子单共 ${live.length} 张,已完成 ${done} 张,未完成 ${live.length - done} 张。`,
+      ),
+      subjectId: `wp:${feature.id}:qa-entered`,
+      once: true,
+    });
+  }
 
   if (stage === r.staffing) {
     const planner: Target[] = [{ kind: "field", field: "responsiblePlanner" }];

@@ -37,6 +37,7 @@ interface StageRoles {
   bugRetest?: string;
   bugVerified?: string;
   featureDone?: string;
+  qaTesting?: string;
 }
 
 export interface ZqContract {
@@ -245,6 +246,7 @@ export function parseContract(value: unknown): ZqContract {
       ...(roles["bugRetest"] ? { bugRetest: stageRole("bugRetest", bug) } : {}),
       ...(roles["bugVerified"] ? { bugVerified: stageRole("bugVerified", bug) } : {}),
       ...(roles["featureDone"] ? { featureDone: stageRole("featureDone", feature) } : {}),
+      ...(roles["qaTesting"] ? { qaTesting: stageRole("qaTesting", feature) } : {}),
     },
     stageOwners,
     fields: {

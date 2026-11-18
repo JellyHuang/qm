@@ -54,6 +54,7 @@ const WHY: Record<RuleId, string> = {
   "bug-unassigned": "BUG 还没有指定处理人",
   "bug-awaiting-retest": "BUG 已修好,等 QA 确认人复测",
   "bug-verified-notice": "你提的 BUG 已验证通过",
+  "qa-stage-entered": "总单进入 QA 测试,可以开始测试",
   "responsibility-not-set": "阶段需要的负责人字段还没有设置",
 };
 

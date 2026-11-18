@@ -219,7 +219,7 @@ test("an open blocking bug reminds its owner and the QA owner, a closed or non-b
       bug(9, { blocking: false }),
       bug(10, { lifecycle: "cancelled" }),
     ],
-  });
+  }).filter((x) => x.rule !== "qa-stage-entered");
   assert.deepEqual(ids(a), ["blocking-bug-open"]);
   assert.deepEqual(a[0]!.to, [
     { kind: "user", user: BOB },
@@ -692,4 +692,26 @@ test("a blocking bug waiting for retest gets one message that says both, and a n
     ],
   );
   assert.match(out[0]!.text, /还没有关闭.*等 QA 确认人复测.*退回给 Bob B/);
+});
+
+test("a feature in the QA stage tells its QA owner testing can start, with its planners and how many orders are done", () => {
+  const QA = { id: "31", name: "Qa Q" };
+  const qa = feature("feature.qa", { qaOwner: QA });
+  const fired = (f: WorkView, children: WorkView[] = [], c: ZqContract = contract) =>
+    rules({ feature: f, children }, c).filter((a) => a.rule === "qa-stage-entered");
+  const hit = fired(qa, [
+    work(2, { statusKey: "execution.done" }),
+    work(3, { statusKey: "execution.active" }),
+    work(4, { statusKey: "execution.done", lifecycle: "cancelled" }),
+  ]);
+  assert.equal(hit.length, 1);
+  assert.deepEqual(hit[0]!.to, [{ kind: "field", field: "qaOwner" }]);
+  assert.equal(hit[0]!.subjectId, "wp:1:qa-entered");
+  assert.equal(hit[0]!.once, true);
+  assert.match(
+    hit[0]!.text,
+    /总单「单1」\(#1\)已进入「QA 测试中」,可以开始测试。负责策划:Alice A。子单共 2 张,已完成 1 张,未完成 1 张/,
+  );
+  assert.equal(fired(feature("feature.development", PLANNED)).length, 0);
+  assert.equal(fired(qa, [], { ...contract, stageRoles: { ...contract.stageRoles, qaTesting: undefined } }).length, 0);
 });

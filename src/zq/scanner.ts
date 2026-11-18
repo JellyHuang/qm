@@ -169,6 +169,13 @@ export async function scanOnce(opts: ScanOptions): Promise<ScanReport> {
       if (handled.has(fact.feature.id)) continue;
       handled.add(fact.feature.id);
       report.featuresSeen++;
+      const qaStage = opts.contract.stageRoles.qaTesting;
+      const qaOwner = fact.feature.qaOwner;
+      if (qaStage && qaOwner && fact.feature.statusKey !== qaStage) {
+        const mm = await opts.mmUserIdOfOpUser(qaOwner.id);
+        if (mm)
+          await opts.reminders.forget(reminderId("qa-stage-entered", `wp:${fact.feature.id}:qa-entered`, mm, "once"));
+      }
       for (const action of evaluateRules(fact, opts.contract, ruleOptions)) {
         if (action.rule === "responsibility-not-set") report.unsetResponsibility++;
         const recipients = new Map<string, string>();

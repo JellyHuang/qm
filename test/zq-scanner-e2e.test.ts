@@ -655,3 +655,52 @@ test("the first scan with a verified stage named writes the baseline once, and a
   await without.tick();
   assert.equal(await bare.state.get("bug-verified-baseline"), null);
 });
+
+test("features already in QA at the first scan are known and silent, later arrivals tell the QA owner once, and leaving and coming back tells again", async () => {
+  const { scanOnce } = await import("../src/zq/scanner.ts");
+  const qaOwner = { id: "31", name: "Qa Q" };
+  const feature = (id: number, statusKey: string) => ({
+    id,
+    subject: `功能${id}`,
+    typeKey: "feature",
+    statusKey,
+    assignee: { id: "11", name: "Alice A" },
+    responsiblePlanner: { id: "11", name: "Alice A" },
+    qaOwner,
+  });
+  let features = [feature(1, "feature.qa"), feature(2, "feature.development")];
+  const reader = {
+    features: async () => ({ facts: features.map((f) => ({ feature: f, children: [] })), problems: [] }),
+    dutyHolders: async () => undefined,
+  } as never;
+  const reminders = createZqReminderStore({ map: testMap<ZqReminder>(), now: () => NOON_SHANGHAI });
+  const scan = (baseline: boolean) =>
+    scanOnce({
+      reader,
+      contract,
+      people: [ALICE],
+      mmUserIdOfOpUser: async (id) => (id === "31" ? "mm-qa" : MM_OF[id]),
+      reminders,
+      mode: "live",
+      now: NOON_SHANGHAI,
+      timezone: "Asia/Shanghai",
+      dailyCeiling: 100,
+      escalation: { duties: [], afterDays: 2 },
+      ...(baseline ? { baseline: ["qa-stage-entered" as const] } : {}),
+    });
+  const asked = async () =>
+    (await reminders.pendingFor("mm-qa")).filter((r) => r.rule === "qa-stage-entered").map((r) => r.subjectId);
+  await scan(true);
+  assert.deepEqual(await asked(), []);
+  features = [feature(1, "feature.qa"), feature(2, "feature.qa")];
+  await scan(false);
+  assert.deepEqual(await asked(), ["wp:2:qa-entered"]);
+  await scan(false);
+  assert.equal((await asked()).length, 1, "once per entry");
+  for (const r of await reminders.pendingFor("mm-qa")) await reminders.markSent(r.id);
+  features = [feature(1, "feature.qa"), feature(2, "feature.development")];
+  await scan(false);
+  features = [feature(1, "feature.qa"), feature(2, "feature.qa")];
+  await scan(false);
+  assert.deepEqual(await asked(), ["wp:2:qa-entered"], "a new entry after leaving is announced again");
+});

@@ -28,6 +28,7 @@ export interface ZqReminderStore {
   due(now: number, limit?: number): Promise<ZqReminder[]>;
   markSent(id: string): Promise<ZqReminder | null>;
   has(id: string): Promise<boolean>;
+  forget(id: string): Promise<void>;
   countForDay(recipientMmUserId: string, dayKey: string): Promise<number>;
   cancelForSubject(subjectId: string): Promise<number>;
   pendingFor(recipientMmUserId: string): Promise<ZqReminder[]>;
@@ -58,6 +59,7 @@ export function createZqReminderStore(opts: { map: DurableMap<ZqReminder>; now?:
     },
     markSent: (id) =>
       opts.map.update(id, (r) => (r.status === "pending" ? { ...r, status: "sent", sentAt: now() } : r)),
+    forget: (id) => opts.map.delete(id),
     async has(id) {
       return (await opts.map.get(id)) !== null;
     },
