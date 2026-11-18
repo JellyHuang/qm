@@ -275,5 +275,22 @@
   "defaultLead": {
     "id": "5",
     "name": "栋黄"
+  },
+  "weeklyLabels": {
+    "planning": "策划内容",
+    "acceptance": "策划内容",
+    "configuration": "策划内容",
+    "frontend": "前端内容",
+    "backend": "后台内容",
+    "vfx": "特效内容",
+    "qa_test": "QA 内容",
+    "ui": "UI 内容",
+    "fgui": "UI 内容",
+    "character_concept": "美术内容",
+    "scene_concept": "美术内容",
+    "character_model": "美术内容",
+    "scene_model": "美术内容",
+    "level_art": "美术内容",
+    "animation": "美术内容"
   }
 }

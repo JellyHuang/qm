@@ -5,6 +5,7 @@ import type { ZqConfig } from "./config.ts";
 import type { FlushResult, ZqChangeLine, ZqChanges } from "./changes.ts";
 import { deliverDue } from "./delivery.ts";
 import { composeMorning } from "./morning.ts";
+import { composeWeeklyBriefs } from "./weekly.ts";
 import { DAILY_ASK, type ZqDaily } from "./daily.ts";
 import type { ReminderMode, ZqReminderStore } from "./reminders.ts";
 import {
@@ -78,6 +79,7 @@ export interface ZqService {
     weeklyCardFailed: number;
     morningSent?: number;
     dailyAsked?: number;
+    weeklyBriefsSent?: number;
   }>;
 }
 
@@ -261,6 +263,37 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
     return asked;
   }
 
+  async function weeklyBriefTick(at: number): Promise<number> {
+    const cron = config.weeklyBriefCron;
+    if (!cron || !deps.contract || !config.deliverReminders) return 0;
+    if (!(await claim("weekly-brief", cron, at, false))) return 0;
+    const facts = new Map<number, FeatureFacts>();
+    for (const person of await deps.people()) {
+      try {
+        for (const f of (await deps.reader.features(person)).facts) facts.set(f.feature.id, f);
+      } catch (e) {
+        reportFailureAs(`zq: weekly brief read for ${person.mmUserId}`, undefined)(e);
+      }
+    }
+    let sent = 0;
+    for (const brief of composeWeeklyBriefs({
+      facts: [...facts.values()],
+      contract: deps.contract,
+      now: at,
+      timezone: config.scanner.timezone,
+    })) {
+      try {
+        const to = await deps.mmUserIdOfOpUser(brief.leadOpUserId);
+        if (!to) continue;
+        await deps.send(to, brief.text, "weekly-brief");
+        sent++;
+      } catch (e) {
+        reportFailureAs(`zq: weekly brief for ${brief.leadName}`, undefined)(e);
+      }
+    }
+    return sent;
+  }
+
   async function reportsTick(at: number): Promise<WeeklyOutcome> {
     const reports = deps.reports;
     const out: WeeklyOutcome = { sent: 0, failed: 0 };
@@ -342,6 +375,7 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
       }
       if (config.morningCron) out.morningSent = await morningTick(at);
       if (config.dailyAskCron) out.dailyAsked = await dailyAskTick(at);
+      if (config.weeklyBriefCron) out.weeklyBriefsSent = await weeklyBriefTick(at);
       const reported = await reportsTick(at);
       out.reportsSent = reported.sent;
       out.weeklyCardFailed = reported.failed;

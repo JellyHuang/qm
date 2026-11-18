@@ -27,6 +27,7 @@ export interface WorkView {
   regressionOwner?: OpUserRef;
   dueAt?: number;
   startAt?: number;
+  percent?: number;
   estimateHours?: number;
   plannedStart?: number;
   plannedEnd?: number;

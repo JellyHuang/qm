@@ -566,3 +566,24 @@ test("the daily question goes out once on each weekday at the configured time, o
   const off = h.service({ ZQ_SCANNER: "1", ZQ_REMINDER_DELIVERY: "1" }, { daily });
   assert.equal((await off.tick()).dailyAsked, undefined);
 });
+
+test("the weekly brief goes out once on Wednesday at the configured time, only to a lead who may be written to", async (t) => {
+  const h = await harness(t);
+  const live = h.service(
+    { ZQ_SCANNER: "1", ZQ_REMINDER_DELIVERY: "1", ZQ_WEEKLY_BRIEF_AT: "09:00" },
+    { mmUserIdOfOpUser: async (id) => (id === "5" ? "mm-jelly" : undefined) },
+  );
+  const at = (day: number, hour: number) => Date.UTC(2026, 10, day, hour, 5);
+  h.clock.now = at(17, 0);
+  assert.equal((await live.tick()).weeklyBriefsSent, 0);
+  h.clock.now = at(18, 1);
+  const out = await live.tick();
+  assert.ok(out.weeklyBriefsSent !== undefined);
+  const briefs = h.sent.filter((m) => /^\d{4}\.\d{2}\.\d{2}-\d{4}\.\d{2}\.\d{2}\n/.test(m.text));
+  assert.ok(briefs.every((m) => m.to === "mm-jelly"));
+  assert.equal(briefs.length, out.weeklyBriefsSent);
+  h.clock.now = at(18, 2);
+  assert.equal((await live.tick()).weeklyBriefsSent, 0, "once a week");
+  const off = h.service({ ZQ_SCANNER: "1", ZQ_REMINDER_DELIVERY: "1" });
+  assert.equal((await off.tick()).weeklyBriefsSent, undefined);
+});
