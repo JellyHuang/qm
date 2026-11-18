@@ -2634,7 +2634,8 @@ export function buildApp(
         claimPrincipalDeliveries: mattermostOwnsDirectMessages(config),
         zqDecision: (op, id, approve, clicker) =>
           zq ? zq.decide(op, id, approve, clicker) : Promise.reject(new Error("OpenProject follow-up is off")),
-        zqDailyReply: async (mmUserId, text) => (await zq?.dailyReply?.(mmUserId, text)) ?? false,
+        zqDailyReply: async (mmUserId, text) =>
+          (await zq?.onboardingGate?.(mmUserId, text)) || ((await zq?.dailyReply?.(mmUserId, text)) ?? false),
       })
     : null;
   const openAgents = config.openAgents
@@ -2661,6 +2662,7 @@ export function buildApp(
     (config.zq.scanner.enabled ||
       config.zq.reports.enabled ||
       config.zq.dailyAskCron ||
+      config.zq.onboarding ||
       config.zq.identityMap ||
       config.zq.childOrders ||
       config.zq.git.enabled)
@@ -2683,6 +2685,7 @@ export function buildApp(
             createGroup: (feature, members) => mattermost!.createFeatureChannel(feature, members),
             postToChannel: (channelId, text) => mattermost!.postToChannel(channelId, text),
             mmUserIdsOfEmail: (email) => mattermost!.mmUserIdsOfEmail(email),
+            emailOf: (mmUserId) => mattermost!.emailOf(mmUserId),
           },
           readKey: async () => {
             const key = await serviceCreds.getServiceCredentialSecret(scopeId("org", config.orgId), GIT_KEY_SLUG);

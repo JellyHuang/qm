@@ -19,6 +19,7 @@ import { createZqDaily, matchOrders, type ZqDailyEntry } from "./daily.ts";
 import { ordersOf } from "./morning.ts";
 import { readFile } from "node:fs/promises";
 import { createBindCards, parseCandidates } from "./bind-cards.ts";
+import { createOnboarding, gitlabUserCheck, type OnboardingRecord, type OnboardingStep } from "./onboarding.ts";
 import { createRoleplay, type RoleplayPersona } from "./roleplay.ts";
 import { createZqReports, type ZqReportDraft } from "./reports.ts";
 import { createReportSource } from "./report-source.ts";
@@ -38,13 +39,14 @@ export interface ZqChat {
       id: string;
       name: string;
       style?: "primary" | "danger" | "good" | "default";
-      op: "report" | "link" | "children" | "daily";
+      op: "report" | "link" | "children" | "daily" | "onboard";
       ref: string;
       approve: boolean;
     }>,
     why?: string,
   ): Promise<void>;
   mmUserIdOf(principalId: string): Promise<string | undefined>;
+  emailOf?(mmUserId: string): Promise<string>;
   principalOf(mmUserId: string): Promise<string | undefined>;
   mmUserIdsOfEmail?(email: string): Promise<string[]>;
   createGroup?(feature: ZqFeatureRef, memberMmUserIds: string[]): Promise<string>;
@@ -53,6 +55,17 @@ export interface ZqChat {
 
 export type ZqIdentityAdmin = Pick<ZqIdentityMap, "enabled" | "list" | "confirm" | "unlink"> & {
   resend?: (mmUserId: string) => Promise<boolean>;
+  onboardingList?: () => Promise<
+    Array<{
+      mmUserId: string;
+      op: boolean;
+      email: boolean;
+      gitlab: boolean;
+      gitlabRequired: boolean;
+      complete: boolean;
+    }>
+  >;
+  onboardingReset?: (mmUserId: string, step: OnboardingStep) => Promise<void>;
 };
 
 export interface ZqRuntime {
@@ -63,7 +76,7 @@ export interface ZqRuntime {
   git?: GitReadonly;
   commitAuthors?: AuthorResolver;
   decide(
-    op: "report" | "link" | "children" | "daily",
+    op: "report" | "link" | "children" | "daily" | "onboard",
     id: string,
     approve: boolean,
     clickerMmUserId: string,
@@ -71,6 +84,7 @@ export interface ZqRuntime {
   connectorConnected(provider: string, principalId: string): Promise<void>;
   roleplayReset?: () => Promise<Record<string, number>>;
   dailyReply?: (mmUserId: string, text: string) => Promise<boolean>;
+  onboardingGate?: (mmUserId: string, text: string) => Promise<boolean>;
 }
 
 const noReader = {
@@ -116,7 +130,9 @@ export function createZqRuntime(deps: {
       }),
     );
     const all = resolved.flat();
-    return (roleplay ? roleplay.people(all) : all).filter((p) => isAllowed(p.mmUserId));
+    const scoped = (roleplay ? roleplay.people(all) : all).filter((p) => isAllowed(p.mmUserId));
+    const ready = await Promise.all(scoped.map((p) => (onboarding ? onboarding.ready(p.mmUserId) : true)));
+    return scoped.filter((_, i) => ready[i]);
   }
 
   const contract = deps.contract ?? (config.contractFile ? loadZqContract(config.contractFile) : undefined);
@@ -148,6 +164,7 @@ export function createZqRuntime(deps: {
         sendDm: (mm, ...rest) => (isAllowed(mm) ? unrestricted.sendDm(mm, ...rest) : refuse(mm)),
         sendButtons: (mm, ...rest) => (isAllowed(mm) ? unrestricted.sendButtons(mm, ...rest) : refuse(mm)),
         mmUserIdOf: (principalId) => unrestricted.mmUserIdOf(principalId),
+        ...(unrestricted.emailOf ? { emailOf: unrestricted.emailOf.bind(unrestricted) } : {}),
         principalOf: (mm) => unrestricted.principalOf(mm),
         ...(unrestricted.mmUserIdsOfEmail
           ? { mmUserIdsOfEmail: unrestricted.mmUserIdsOfEmail.bind(unrestricted) }
@@ -196,6 +213,32 @@ export function createZqRuntime(deps: {
             : {}),
         })
       : undefined;
+  const onboarding = config.onboarding
+    ? createOnboarding({
+        map: deps.map<OnboardingRecord>("zq_onboarding"),
+        identity,
+        emailOf: async (mm) => (chat.emailOf ? chat.emailOf(mm) : ""),
+        ...(config.gitlabUrl
+          ? {
+              checkGitlab: gitlabUserCheck({
+                baseUrl: config.gitlabUrl,
+                ...(config.gitlabToken ? { token: config.gitlabToken } : {}),
+              }),
+            }
+          : {}),
+        isAllowed,
+        candidates: async () => (bindFile ? parseCandidates(await readFile(bindFile, "utf8")) : []),
+        sendText: (mm, text) => chat.sendDm(mm, text, "onboarding"),
+        sendCard: (mm, text, buttons) =>
+          chat.sendButtons(
+            mm,
+            text,
+            buttons.map((b) => ({ ...b, op: "onboard" as const })),
+            "onboarding",
+          ),
+        opCard: async (mm) => (bindCards ? bindCards.resend(mm) : false),
+      })
+    : undefined;
   const remarkWriter =
     (tool: string, principalId: string) =>
     async (input: { featureId: number; channelId: string; participantOpUserIds: string[] }) => {
@@ -254,13 +297,14 @@ export function createZqRuntime(deps: {
       const mm = roleplay
         ? await roleplay.mmUserIdOfOpUser(opUserId)
         : (await identity.byOpenProject(opUserId))?.mmUserId;
-      return mm !== undefined && isAllowed(mm) ? mm : undefined;
+      return mm !== undefined && isAllowed(mm) && (!onboarding || (await onboarding.ready(mm))) ? mm : undefined;
     },
     ...(groups ? { groups } : {}),
     ...(changes ? { changes } : {}),
     people,
     ...(daily ? { daily } : {}),
     ...(bindCards ? { bindCards } : {}),
+    ...(onboarding ? { onboarding } : {}),
     reminders,
     state: deps.map<ZqRunState>("zq_run_state"),
     send: (to, text, why, target) => chat.sendDm(to, text, why, target),
@@ -342,11 +386,13 @@ export function createZqRuntime(deps: {
       confirm: identity.confirm.bind(identity),
       unlink: identity.unlink.bind(identity),
       ...(bindCards ? { resend: bindCards.resend } : {}),
+      ...(onboarding ? { onboardingList: onboarding.list, onboardingReset: onboarding.reset } : {}),
     },
     ...(children ? { children } : {}),
     ...(git ? { git } : {}),
     ...(roleplay ? { roleplayReset: roleplay.reset } : {}),
     ...(commitAuthors ? { commitAuthors } : {}),
+    ...(onboarding ? { onboardingGate: onboarding.gate } : {}),
     ...(daily && contract && reader
       ? {
           async dailyReply(mmUserId: string, text: string) {
@@ -392,10 +438,14 @@ export function createZqRuntime(deps: {
         }
       : {}),
     start() {
-      if (config.scanner.enabled || config.reports.enabled || bindCards) sweeper.start();
+      if (config.scanner.enabled || config.reports.enabled || bindCards || onboarding) sweeper.start();
     },
     stop: () => sweeper.stop(),
     async decide(op, id, approve, clickerMmUserId) {
+      if (op === "onboard") {
+        if (!onboarding) throw new Error("绑定引导没有开启");
+        return onboarding.decide(id, approve, clickerMmUserId);
+      }
       if (op === "daily") {
         const [entryId, orderRef] = id.split("|");
         const orderId = Number(orderRef);

@@ -25,12 +25,14 @@ async function start(
   t: { after(fn: () => Promise<void>): void },
   enabled: boolean,
   resend?: (mmUserId: string) => Promise<boolean>,
+  extra: Record<string, unknown> = {},
 ) {
   const dir = await mkdtemp(join(tmpdir(), "zq-identity-"));
   const built = buildApp(testConfig({ dataDir: dir }));
   const zqIdentity = {
     ...createZqIdentityMap({ map: testMap<ZqIdentityLink>(), enabled }),
     ...(resend ? { resend } : {}),
+    ...extra,
   };
   const server = createInsecureTestServer(built.app, { admin: built.admin, auditLog: built.auditLog, zqIdentity });
   server.listen(0, "127.0.0.1");
@@ -85,4 +87,31 @@ test("an administrator can resend an identity card, which is 404 when bind cards
   assert.equal((await fetch(`${on.base}/mm1/resend`, { method: "POST", headers: ADMIN })).status, 200);
   assert.equal((await fetch(`${on.base}/mm2/resend`, { method: "POST", headers: ADMIN })).status, 404);
   assert.deepEqual(sent, ["mm1", "mm2"]);
+});
+
+test("an administrator lists onboarding and resets one step, which is 404 when onboarding is off and 400 for an unknown step", async (t) => {
+  const off = await start(t, true);
+  const root = off.base.replace("/identity-links", "/onboarding");
+  assert.equal((await fetch(root, { headers: ADMIN })).status, 404);
+  const resets: string[] = [];
+  const on = await start(t, true, undefined, {
+    onboardingList: async () => [
+      { mmUserId: "mm1", op: true, email: false, gitlab: false, gitlabRequired: true, complete: false },
+    ],
+    onboardingReset: async (mm: string, step: string) => void resets.push(`${mm}:${step}`),
+  });
+  const base = on.base.replace("/identity-links", "/onboarding");
+  const stranger = { ...ADMIN, "x-admin-actor": "nobody@default-org" };
+  assert.equal((await fetch(base, { headers: stranger })).status, 403);
+  const listed = (await (await fetch(base, { headers: ADMIN })).json()) as {
+    people: Array<{ mmUserId: string; email: boolean }>;
+  };
+  assert.deepEqual(
+    listed.people.map((p) => [p.mmUserId, p.email]),
+    [["mm1", false]],
+  );
+  assert.equal((await fetch(`${base}/mm1/email/reset`, { method: "POST", headers: ADMIN })).status, 200);
+  assert.equal((await fetch(`${base}/mm1/nope/reset`, { method: "POST", headers: ADMIN })).status, 400);
+  assert.equal((await fetch(`${base}/mm1/gitlab/reset`, { method: "POST", headers: stranger })).status, 403);
+  assert.deepEqual(resets, ["mm1:email"]);
 });

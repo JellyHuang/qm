@@ -17,6 +17,9 @@ export interface ZqConfig {
   roleplay?: { mmUserId: string; projectIds: readonly string[] };
   recipientAllowlist: readonly string[];
   bindCards: boolean;
+  onboarding: boolean;
+  gitlabUrl?: string;
+  gitlabToken?: string;
   bindCandidatesFile?: string;
   bindNotifyMmUser?: string;
   changeDigest: boolean;
@@ -140,6 +143,10 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   const outside = rerunJobs.filter((job) => !jenkinsJobs.includes(job));
   if (outside.length > 0)
     throw new Error(`ZQ_JENKINS_RERUN_JOBS names jobs outside ZQ_JENKINS_JOBS: ${outside.join(", ")}`);
+  const onboarding = on(env.ZQ_ONBOARDING);
+  if (onboarding && !on(env.ZQ_IDENTITY_MAP)) throw new Error("ZQ_ONBOARDING needs ZQ_IDENTITY_MAP=1");
+  const gitlabUrl = env.ZQ_GITLAB_URL?.trim().replace(/\/+$/, "");
+  if (gitlabUrl && !/^https?:\/\//.test(gitlabUrl)) throw new Error("ZQ_GITLAB_URL must be an http(s) URL");
   const bindCards = on(env.ZQ_BIND_CARDS);
   const bindFile = env.ZQ_BIND_CANDIDATES_FILE?.trim();
   if (bindCards && !on(env.ZQ_IDENTITY_MAP)) throw new Error("ZQ_BIND_CARDS needs ZQ_IDENTITY_MAP=1");
@@ -158,6 +165,9 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
       .map((s) => s.trim())
       .filter(Boolean),
     bindCards,
+    onboarding,
+    ...(gitlabUrl ? { gitlabUrl } : {}),
+    ...(env.ZQ_GITLAB_TOKEN?.trim() ? { gitlabToken: env.ZQ_GITLAB_TOKEN.trim() } : {}),
     ...(bindFile ? { bindCandidatesFile: bindFile } : {}),
     ...(env.ZQ_BIND_NOTIFY_MM_USER?.trim() ? { bindNotifyMmUser: env.ZQ_BIND_NOTIFY_MM_USER.trim() } : {}),
     identityMap: on(env.ZQ_IDENTITY_MAP),

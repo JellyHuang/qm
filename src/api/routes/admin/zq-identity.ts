@@ -69,3 +69,29 @@ export async function resendIdentityCard(ctx: ApiCtx): Promise<void> {
     sent ? { ok: true } : { error: "not_found", message: "not a candidate, or not allowed" },
   );
 }
+
+export async function getOnboarding(ctx: ApiCtx): Promise<void> {
+  const found = await admin(ctx);
+  if (!found) return;
+  if (!found.links.onboardingList) return sendJson(ctx.res, 404, { error: "not_found", message: "onboarding is off" });
+  return sendJson(ctx.res, 200, { people: await found.links.onboardingList() });
+}
+
+const STEPS = new Set(["op", "email", "gitlab"]);
+
+export async function resetOnboardingStep(ctx: ApiCtx): Promise<void> {
+  const found = await admin(ctx);
+  if (!found) return;
+  if (!found.links.onboardingReset) return sendJson(ctx.res, 404, { error: "not_found", message: "onboarding is off" });
+  const mmUserId = ctx.params.mmUserId ?? "";
+  const step = ctx.params.step ?? "";
+  if (!STEPS.has(step)) return sendJson(ctx.res, 400, { error: "bad_request", message: "step is op, email or gitlab" });
+  await found.links.onboardingReset(mmUserId, step as "op" | "email" | "gitlab");
+  audit(ctx.deps, {
+    principalId: found.id,
+    action: `zq-onboarding.reset.${step}`,
+    resource: mmUserId,
+    scopeLabel: orgScope(ctx.deps),
+  });
+  return sendJson(ctx.res, 200, { ok: true });
+}

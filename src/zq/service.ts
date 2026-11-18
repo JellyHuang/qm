@@ -59,6 +59,7 @@ export interface ZqServiceDeps {
   people: () => Promise<ScanPerson[]>;
   daily?: ZqDaily;
   bindCards?: { tick(): Promise<number> };
+  onboarding?: { tick(): Promise<number> };
   reminders: ZqReminderStore;
   state: DurableMap<ZqRunState>;
   send: (mmUserId: string, text: string, why?: string, target?: string) => Promise<void>;
@@ -82,6 +83,7 @@ export interface ZqService {
     dailyAsked?: number;
     weeklyBriefsSent?: number;
     bindCardsSent?: number;
+    onboardingStarted?: number;
   }>;
 }
 
@@ -391,6 +393,7 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
       if (config.dailyAskCron) out.dailyAsked = await dailyAskTick(at);
       if (config.weeklyBriefCron) out.weeklyBriefsSent = await weeklyBriefTick(at);
       if (deps.bindCards) out.bindCardsSent = await deps.bindCards.tick();
+      if (deps.onboarding) out.onboardingStarted = await deps.onboarding.tick();
       const reported = await reportsTick(at);
       out.reportsSent = reported.sent;
       out.weeklyCardFailed = reported.failed;

@@ -291,6 +291,9 @@ export function createMattermost(deps: MattermostDeps) {
     async mmUserIdOf(principalId: string): Promise<string | undefined> {
       return (await rt.mmUserForPrincipal(principalId))?.id;
     },
+    async emailOf(mmUserId: string): Promise<string> {
+      return (await client.user(mmUserId)).email.trim();
+    },
     async mmUserIdsOfEmail(email: string): Promise<string[]> {
       const wanted = email.trim().toLowerCase();
       return (await rt.allUsers()).filter((u) => verifiedEmail(u) === wanted).map((u) => u.id);
