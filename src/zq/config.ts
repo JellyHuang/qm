@@ -22,6 +22,7 @@ export interface ZqConfig {
   escalation: { duties: readonly Duty[]; afterDays: number };
   unsetResponsibilityDuties: readonly Duty[];
   reports: { enabled: boolean; dailyCron?: string; weeklyCron?: string };
+  morningCron?: string;
   jenkins: { url?: string; rerun: boolean; jobs: readonly string[]; rerunJobs: readonly string[]; hourlyCap: number };
   git: {
     enabled: boolean;
@@ -112,6 +113,7 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
     throw new Error("ZQ_SCANNER_CRON or ZQ_SCANNER_TZ is invalid", { cause: e });
   }
   const dailyCron = clock("ZQ_REPORT_DAILY_AT", env.ZQ_REPORT_DAILY_AT, "*");
+  const morningCron = clock("ZQ_MORNING_AT", env.ZQ_MORNING_AT, "1-5");
   const weeklyCron = clock("ZQ_REPORT_WEEKLY_AT", env.ZQ_REPORT_WEEKLY_AT, String(WEDNESDAY));
   const contractFile = env.ZQ_CONTRACT_FILE?.trim();
   const opBaseUrl = env.ZQ_OP_BASE_URL?.trim().replace(/\/+$/, "");
@@ -165,6 +167,7 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
       afterDays: integer("ZQ_ESCALATION_AFTER_DAYS", env.ZQ_ESCALATION_AFTER_DAYS, DEFAULT_ESCALATION_DAYS, 1, 365),
     },
     unsetResponsibilityDuties: duties("ZQ_UNSET_RESPONSIBILITY_DUTIES", env.ZQ_UNSET_RESPONSIBILITY_DUTIES),
+    ...(morningCron ? { morningCron } : {}),
     reports: {
       enabled: on(env.ZQ_REPORTS),
       ...(dailyCron ? { dailyCron } : {}),

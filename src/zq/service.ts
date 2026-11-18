@@ -4,6 +4,7 @@ import { reportFailureAs } from "../util/errors.ts";
 import type { ZqConfig } from "./config.ts";
 import type { FlushResult, ZqChangeLine, ZqChanges } from "./changes.ts";
 import { deliverDue } from "./delivery.ts";
+import { composeMorning } from "./morning.ts";
 import type { ReminderMode, ZqReminderStore } from "./reminders.ts";
 import {
   sectionForProject,
@@ -73,6 +74,7 @@ export interface ZqService {
     changes?: FlushResult;
     reportsSent: number;
     weeklyCardFailed: number;
+    morningSent?: number;
   }>;
 }
 
@@ -218,6 +220,26 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
     return out;
   }
 
+  async function morningTick(at: number): Promise<number> {
+    const cron = config.morningCron;
+    if (!cron || !deps.contract || !config.deliverReminders) return 0;
+    if (!(await claim("morning", cron, at, false))) return 0;
+    let sent = 0;
+    for (const person of await deps.people()) {
+      if (!person.opUserId) continue;
+      try {
+        const { facts } = await deps.reader.features(person);
+        const text = composeMorning(person.opUserId, facts, deps.contract);
+        if (!text) continue;
+        await deps.send(person.mmUserId, text, "morning-plan");
+        sent++;
+      } catch (e) {
+        reportFailureAs(`zq: morning message for ${person.mmUserId}`, undefined)(e);
+      }
+    }
+    return sent;
+  }
+
   async function reportsTick(at: number): Promise<WeeklyOutcome> {
     const reports = deps.reports;
     const out: WeeklyOutcome = { sent: 0, failed: 0 };
@@ -297,6 +319,7 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
             ...(deps.changes.lineLabel ? { lineLabel: deps.changes.lineLabel } : {}),
           });
       }
+      if (config.morningCron) out.morningSent = await morningTick(at);
       const reported = await reportsTick(at);
       out.reportsSent = reported.sent;
       out.weeklyCardFailed = reported.failed;

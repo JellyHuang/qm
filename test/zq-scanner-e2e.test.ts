@@ -511,3 +511,31 @@ test("the dedup day is the Shanghai calendar day", () => {
   assert.equal(dayKeyIn("Asia/Shanghai", Date.UTC(2026, 10, 14, 15, 59)), "2026-11-14");
   assert.equal(dayKeyIn("Asia/Shanghai", Date.UTC(2026, 10, 14, 16, 0)), "2026-11-15");
 });
+
+test("the morning message goes out once on a weekday at the configured time to each person with orders, and never on a weekend", async (t) => {
+  const h = await harness(t, { bob: [20, 21, 22] });
+  const live = h.service({ ZQ_SCANNER: "1", ZQ_REMINDER_DELIVERY: "1", ZQ_MORNING_AT: "09:30" });
+  const monday = Date.UTC(2026, 10, 16, 1, 0);
+  h.clock.now = monday;
+  assert.equal((await live.tick()).morningSent, 0);
+  h.clock.now = monday + 31 * 60_000;
+  assert.equal((await live.tick()).morningSent, 1);
+  const morning = h.sent.filter((m) => /这是你今天的单子/.test(m.text));
+  assert.deepEqual(
+    morning.map((m) => m.to),
+    ["mm-bob"],
+  );
+  h.clock.now += 5 * 60_000;
+  assert.equal((await live.tick()).morningSent, 0, "once a day");
+  const at = (day: number) => Date.UTC(2026, 10, day, 1, 31);
+  const sentOn = async (day: number) => {
+    h.clock.now = at(day);
+    return (await live.tick()).morningSent;
+  };
+  assert.equal(await sentOn(20), 1, "Friday");
+  assert.equal(await sentOn(21), 0, "Saturday");
+  assert.equal(await sentOn(22), 0, "Sunday");
+  assert.equal(await sentOn(23), 1, "Monday");
+  const off = h.service({ ZQ_SCANNER: "1", ZQ_REMINDER_DELIVERY: "1" });
+  assert.equal((await off.tick()).morningSent, undefined);
+});
