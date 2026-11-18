@@ -52,23 +52,22 @@ test("each order goes under its trade's section to that trade's lead, numbered, 
   const of = (id: string) => briefs.find((b) => b.leadOpUserId === id)!.text;
   assert.equal(
     of("35"),
-    "2026.11.13-2026.11.19\n\n前端内容:\n1. 排行榜 进行中(未取到完成百分比)(备注:已延期)\n2. 登录页 50% 进行中",
+    "2026.11.13-2026.11.19\n\n前端内容:\n【功能】\n1. 排行榜 进行中(未取到完成百分比)(备注:已延期)\n2. 登录页 50% 进行中",
   );
-  assert.equal(of("5"), "2026.11.13-2026.11.19\n\n后台内容:\n1. 接口 100% 等待开发");
-  assert.equal(of("45"), "2026.11.13-2026.11.19\n\n美术内容:\n1. 角色 20% 进行中\n2. 场景 40% 进行中");
+  assert.equal(of("5"), "2026.11.13-2026.11.19\n\n后台内容:\n【功能】\n1. 接口 100% 等待开发");
+  assert.equal(of("45"), "2026.11.13-2026.11.19\n\n美术内容:\n【功能】\n1. 角色 20% 进行中\n2. 场景 40% 进行中");
   assert.deepEqual(briefs.map((b) => b.leadOpUserId).sort(), ["35", "45", "5"]);
 });
 
-test("planning orders have no lead of their own yet and go to the default lead, and done, paused or unlabelled orders are left out", () => {
+test("planning orders have no lead of their own yet and go to the default lead, and done, closed and paused orders are left out", () => {
   const briefs = brief([
     order(2, "planning", { percent: 30, subject: "礼包规划" }),
     order(3, "frontend", { statusKey: "execution.done" }),
     order(4, "frontend", { lifecycle: "suspended" }),
-    order(5, "mystery"),
     order(6, "frontend", { closed: true }),
   ]);
   assert.deepEqual(
-    briefs.map((b) => [b.leadOpUserId, b.text.includes("策划内容:\n1. 礼包规划 30% 进行中")]),
+    briefs.map((b) => [b.leadOpUserId, b.text.includes("策划内容:\n【功能】\n1. 礼包规划 30% 进行中")]),
     [["5", true]],
   );
 });
@@ -76,6 +75,44 @@ test("planning orders have no lead of their own yet and go to the default lead, 
 test("an order that leads and the default lead share are listed under its own section, ordered by the first order number, and nothing means no brief", () => {
   const both = brief([order(2, "backend"), order(3, "planning")]);
   assert.equal(both.length, 1);
-  assert.match(both[0]!.text, /后台内容:\n1\. 单2[\s\S]*策划内容:\n1\. 单3/);
+  assert.match(both[0]!.text, /后台内容:\n【功能】\n1\. 单2[\s\S]*策划内容:\n【功能】\n1\. 单3/);
   assert.deepEqual(brief([]), []);
+});
+
+test("orders are grouped by the feature they belong to, numbered through the section, and a type without a section goes last under Other", () => {
+  const two: FeatureFacts[] = [
+    {
+      feature: { id: 1, subject: "联盟争霸赛", typeKey: "feature", statusKey: "feature.development" },
+      children: [order(2, "backend", { subject: "报名" }), order(4, "backend", { subject: "结算" })],
+    },
+    {
+      feature: { id: 9, subject: "世界BOSS", typeKey: "feature", statusKey: "feature.development" },
+      children: [order(5, "backend", { subject: "掉落" }), order(6, "mystery", { subject: "杂项" })],
+    },
+    {
+      feature: order(7, "optimization", { subject: "独立优化", assignee: { id: "12", name: "Bob" } }),
+      children: [],
+    },
+  ];
+  const [lead] = composeWeeklyBriefs({ facts: two, contract, now: WEDNESDAY, timezone: "Asia/Shanghai" });
+  assert.equal(lead!.leadOpUserId, "5");
+  assert.equal(
+    lead!.text,
+    [
+      "2026.11.13-2026.11.19",
+      "",
+      "后台内容:",
+      "【联盟争霸赛】",
+      "1. 报名 进行中(未取到完成百分比)",
+      "2. 结算 进行中(未取到完成百分比)",
+      "【世界BOSS】",
+      "3. 掉落 进行中(未取到完成百分比)",
+      "",
+      "其他:",
+      "【世界BOSS】",
+      "1. 杂项 进行中(未取到完成百分比)",
+      "【(没有上级总单)】",
+      "2. 独立优化 进行中(未取到完成百分比)",
+    ].join("\n"),
+  );
 });

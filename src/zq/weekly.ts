@@ -20,15 +20,27 @@ function weekOf(at: number, timezone: string): { start: string; end: string } {
   return { start: dotted(start), end: dotted(start + 6 * DAY) };
 }
 
-function ordersOf(facts: readonly FeatureFacts[], contract: ZqContract): WorkView[] {
-  const seen = new Map<number, WorkView>();
+interface Entry {
+  order: WorkView;
+  parent: string;
+}
+
+const OTHER = "其他";
+const NO_PARENT = "(没有上级总单)";
+
+function ordersOf(facts: readonly FeatureFacts[], contract: ZqContract): Entry[] {
+  const seen = new Map<number, Entry>();
   for (const { feature, children } of facts) {
-    const candidates = contract.optimizationType === feature.typeKey ? [feature, ...children] : children;
-    for (const w of candidates) if (!seen.has(w.id)) seen.set(w.id, w);
+    const standalone = contract.optimizationType === feature.typeKey;
+    const entries = [
+      ...(standalone ? [{ order: feature, parent: NO_PARENT }] : []),
+      ...children.map((order) => ({ order, parent: feature.subject })),
+    ];
+    for (const entry of entries) if (!seen.has(entry.order.id)) seen.set(entry.order.id, entry);
   }
   return [...seen.values()]
-    .sort((a, b) => a.id - b.id)
-    .filter((w) => !paused(w.lifecycle) && !w.closed && w.statusKey !== contract.stageRoles.taskDone);
+    .sort((a, b) => a.order.id - b.order.id)
+    .filter(({ order: w }) => !paused(w.lifecycle) && !w.closed && w.statusKey !== contract.stageRoles.taskDone);
 }
 
 function line(w: WorkView, contract: ZqContract): string {
@@ -46,16 +58,14 @@ export function composeWeeklyBriefs(opts: {
 }): WeeklyBrief[] {
   const { contract } = opts;
   const fallback = contract.defaultLead ? [contract.defaultLead] : [];
-  const orders = ordersOf(opts.facts, contract);
-  const byLead = new Map<string, { name: string; sections: Map<string, WorkView[]> }>();
-  for (const w of orders) {
-    const label = contract.weeklyLabels[w.typeKey];
-    if (!label) continue;
-    const named = contract.typeLeads[w.typeKey] ?? [];
+  const byLead = new Map<string, { name: string; sections: Map<string, Entry[]> }>();
+  for (const entry of ordersOf(opts.facts, contract)) {
+    const label = contract.weeklyLabels[entry.order.typeKey] ?? OTHER;
+    const named = contract.typeLeads[entry.order.typeKey] ?? [];
     for (const lead of named.length ? named : fallback) {
-      const entry = byLead.get(lead.id) ?? { name: lead.name, sections: new Map() };
-      entry.sections.set(label, [...(entry.sections.get(label) ?? []), w]);
-      byLead.set(lead.id, entry);
+      const slot = byLead.get(lead.id) ?? { name: lead.name, sections: new Map() };
+      slot.sections.set(label, [...(slot.sections.get(label) ?? []), entry]);
+      byLead.set(lead.id, slot);
     }
   }
   const { start, end } = weekOf(opts.now, opts.timezone);
@@ -64,11 +74,20 @@ export function composeWeeklyBriefs(opts: {
     leadName: name,
     text: [
       `${start}-${end}`,
-      ...[...sections].flatMap(([label, list]) => [
-        "",
-        `${label}:`,
-        ...list.sort((a, b) => a.id - b.id).map((w, i) => `${i + 1}. ${line(w, contract)}`),
-      ]),
+      ...[...sections]
+        .sort(([a], [b]) => Number(a === OTHER) - Number(b === OTHER))
+        .flatMap(([label, entries]) => {
+          const parents = [...new Set(entries.map((e) => e.parent))];
+          let n = 0;
+          return [
+            "",
+            `${label}:`,
+            ...parents.flatMap((parent) => [
+              `【${parent}】`,
+              ...entries.filter((e) => e.parent === parent).map((e) => `${++n}. ${line(e.order, contract)}`),
+            ]),
+          ];
+        }),
     ].join("\n"),
   }));
 }
