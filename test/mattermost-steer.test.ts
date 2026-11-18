@@ -107,6 +107,49 @@ test("a reply to a message that joined a running turn is a new post after that m
   );
 });
 
+test("a placeholder that already showed streamed text is kept as that text, not deleted, when the reply is posted fresh", async () => {
+  const world = chat();
+  let streamed = "";
+  const live = createLivePresenter({
+    rt: world.rt,
+    runs: { get: async () => ({ status: "running" }) as never },
+    turnStream: { snapshot: () => streamed },
+  });
+  const sender = createMattermostSender({
+    rt: world.rt,
+    live,
+    blobs: { open: async () => null },
+    openArtifact: async () => null,
+  });
+  const first = world.post(pad(1), "first question");
+  await live.begin(RUN, { channel: CHANNEL, triggerPostId: first.id }, { placeholder: true });
+  const placeholder = [...world.posts.values()].find((p) => p.user_id === BOT)!;
+  streamed = "answer to the first question";
+  await new Promise((r) => setTimeout(r, 1_500));
+  world.post(pad(1), "second message while the turn runs");
+  live.steer(RUN);
+  await sender({
+    id: "d1",
+    destination: { type: "mattermost", target: CHANNEL, editRef: placeholder.id } as Delivery["destination"],
+    text: "final answer",
+    idempotencyKey: `run:${RUN}`,
+    createdAt: 0,
+    deliveredAt: null,
+  });
+  assert.equal(
+    world.calls.some((c) => c.startsWith("delete:")),
+    false,
+  );
+  const replies = [...world.posts.values()].filter((p) => p.user_id === BOT);
+  assert.deepEqual(
+    replies.map((p) => [p.id, p.message]),
+    [
+      [placeholder.id, "answer to the first question"],
+      [replies[1]?.id, "final answer"],
+    ],
+  );
+});
+
 test("a turn that nobody joined still finishes by editing its placeholder in place", async () => {
   const { world, sender, placeholder, delivery } = await setup();
   await sender(delivery(placeholder.id));
