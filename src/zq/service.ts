@@ -373,7 +373,8 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
             unsetDuties: config.unsetResponsibilityDuties,
             ...(pending.length ? { baseline: pending.map((a) => a.rule) } : {}),
           });
-          for (const a of pending) await deps.state.put(a.marker, { lastRunAt: at });
+          if (out.scanned.peopleScanned > 0 && out.scanned.peopleFailed === 0)
+            for (const a of pending) await deps.state.put(a.marker, { lastRunAt: at });
           await deps.state.merge("scanner", { lastReport: out.scanned });
         }
         if (config.deliverReminders)

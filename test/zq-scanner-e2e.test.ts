@@ -380,6 +380,27 @@ test("a person whose OpenProject read fails is skipped without stopping the rest
   assert.deepEqual([out.scanned?.peopleScanned, out.scanned?.peopleFailed, out.scanned?.featuresSeen], [1, 1, 1]);
 });
 
+test("a scan in which a person could not be read leaves the baselines unwritten until a clean scan", async (t) => {
+  const h = await harness(t, { alice: [1, 2, 20, 21, 22, 30, 50], bob: [20, 21, 22] });
+  let broken = true;
+  const flaky = createMcpOpReader({
+    call: async (tool, args, principalId) => {
+      if (broken && principalId === "internal:alice") throw new Error("token revoked");
+      return h.oa.call(tool, args, principalId);
+    },
+    contract,
+  });
+  const service = h.service({ ZQ_SCANNER: "1" }, { reader: flaky });
+  await service.tick();
+  assert.equal(await h.state.get("bug-verified-baseline"), null);
+  assert.equal(await h.state.get("qa-stage-baseline"), null);
+  broken = false;
+  h.clock.now += 5 * 60_000;
+  await service.tick();
+  assert.ok(await h.state.get("bug-verified-baseline"));
+  assert.ok(await h.state.get("qa-stage-baseline"));
+});
+
 test("the group for a feature in the briefing stage is made once, only when every live order has an assignee", async () => {
   const feature = parseWork(
     detail(40, {
