@@ -609,3 +609,27 @@ test("an order is asked for its start and expected end dates once, only when it 
     0,
   );
 });
+
+test("a briefing meeting about to start reminds its planner once, and only inside the lead time", () => {
+  const f = feature("feature.briefing", PLANNED);
+  const meeting = (startMinutes: number, state = "open") => ({
+    id: "m",
+    title: "宣讲",
+    startAt: NOW + startMinutes * 60_000,
+    endAt: NOW + (startMinutes + 60) * 60_000,
+    state,
+  });
+  const upcoming = (m: ReturnType<typeof meeting>) =>
+    rules({ feature: f, children: [], meetings: [m] }).filter((a) => a.rule === "meeting-upcoming");
+  const soon = upcoming(meeting(20));
+  assert.equal(soon.length, 1);
+  assert.deepEqual(soon[0]!.to, [{ kind: "field", field: "responsiblePlanner" }]);
+  assert.match(soon[0]!.text, /20 分钟后开始/);
+  assert.equal(soon[0]!.once, true);
+  assert.equal(soon[0]!.subjectId, "meeting:m:upcoming");
+  assert.equal(upcoming(meeting(31)).length, 0);
+  assert.equal(upcoming(meeting(-5)).length, 0);
+  assert.equal(upcoming(meeting(20, "closed")).length, 0);
+  assert.equal(upcoming(meeting(20, "cancelled")).length, 0);
+  assert.equal(upcoming({ ...meeting(20), startAt: undefined } as unknown as ReturnType<typeof meeting>).length, 0);
+});

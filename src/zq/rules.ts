@@ -50,6 +50,7 @@ export interface AwaitedChild {
 export interface MeetingView {
   id: string;
   title: string;
+  startAt?: number;
   endAt: number;
   state: string;
 }
@@ -75,6 +76,7 @@ export type RuleId =
   | "staffing-trades"
   | "briefing-meeting-missing"
   | "meeting-follow-up"
+  | "meeting-upcoming"
   | "production-missing-plan"
   | "task-overdue"
   | "task-dates-missing"
@@ -106,6 +108,7 @@ export interface RuleOptions {
   now: number;
   day: (at: number) => string;
   meetingGraceMs: number;
+  meetingLeadMs: number;
   escalateAfterMs: number;
   escalationDuties: readonly Duty[];
   unsetDuties: readonly Duty[];
@@ -115,6 +118,7 @@ const DAY = 86_400_000;
 export const DEFAULT_RULE_OPTIONS = {
   day: (at: number) => new Date(at).toISOString().slice(0, 10),
   meetingGraceMs: 10 * 60_000,
+  meetingLeadMs: 30 * 60_000,
   escalateAfterMs: 2 * DAY,
   escalationDuties: [] as readonly Duty[],
   unsetDuties: [] as readonly Duty[],
@@ -375,6 +379,21 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
         ),
       );
     for (const m of valid) {
+      const state = m.state.trim().toLowerCase();
+      if (
+        m.startAt !== undefined &&
+        (state === "draft" || state === "open") &&
+        m.startAt > opts.now &&
+        m.startAt - opts.now <= opts.meetingLeadMs
+      )
+        out.push({
+          rule: "meeting-upcoming",
+          subjectId: `meeting:${m.id}:upcoming`,
+          subjectTitle: m.title,
+          to: [{ kind: "field", field: "responsiblePlanner" }],
+          text: `宣讲会议「${m.title}」(功能${where(feature)})${Math.max(1, Math.round((m.startAt - opts.now) / 60_000))} 分钟后开始。请确认议程和参会人已就绪。`,
+          once: true,
+        });
       if (m.state.trim().toLowerCase() === "closed" || opts.now < m.endAt + opts.meetingGraceMs) continue;
       out.push({
         rule: "meeting-follow-up",

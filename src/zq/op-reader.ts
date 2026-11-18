@@ -190,7 +190,14 @@ function parseMeeting(item: Json): MeetingView | undefined {
   const id = str(item["id"]);
   const endAt = time(item["end_time"]);
   if (!id || endAt === undefined) return undefined;
-  return { id, title: str(item["title"]) ?? `会议 ${id}`, endAt, state: str(item["state"]) ?? "open" };
+  const startAt = time(item["start_time"]);
+  return {
+    id,
+    title: str(item["title"]) ?? `会议 ${id}`,
+    ...(startAt === undefined ? {} : { startAt }),
+    endAt,
+    state: str(item["state"]) ?? "open",
+  };
 }
 
 function parseExit(text: string): ExitCheck | undefined {

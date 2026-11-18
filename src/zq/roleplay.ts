@@ -36,6 +36,7 @@ const WHY: Record<RuleId, string> = {
   "staffing-trades": "人员安排阶段还没有专业执行单",
   "briefing-meeting-missing": "宣讲对齐阶段还没有宣讲会议",
   "meeting-follow-up": "宣讲会议已过计划结束时间还没有关闭",
+  "meeting-upcoming": "宣讲会议马上开始",
   "production-missing-plan": "研发制作中的执行单缺少预计工时或计划时间",
   "task-overdue": "执行单已超过计划结束时间",
   "task-dates-missing": "执行单已开始执行,还没有开始日期或预计结束日期",

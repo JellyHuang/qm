@@ -130,7 +130,13 @@ test("pages follow next_offset to the end, children are grouped under their pare
   );
   assert.deepEqual(facts[0]!.exit, { ready: false, blockers: ["P0 不放行"] });
   assert.deepEqual(facts[0]!.meetings, [
-    { id: "9", title: "宣讲", endAt: Date.parse("2026-11-14T08:00:00Z"), state: "open" },
+    {
+      id: "9",
+      title: "宣讲",
+      startAt: Date.parse("2026-11-14T07:00:00Z"),
+      endAt: Date.parse("2026-11-14T08:00:00Z"),
+      state: "open",
+    },
   ]);
   assert.ok(f.calls.includes('openproject_zq_list_work_packages:{"limit":100,"offset":1}'));
   assert.ok(f.calls.includes('openproject_zq_check_exit:{"id":1}'));
