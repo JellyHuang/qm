@@ -656,3 +656,31 @@ test("a bug waiting for retest asks its QA owner once, and nobody when there is 
   const unnamed = { ...contract, stageRoles: { ...contract.stageRoles, bugRetest: undefined } };
   assert.equal(asked({ ...base, bugs: [bug(7)] }, unnamed).length, 0);
 });
+
+test("a bug just verified tells the person who reported it once, and stays silent for old, unreported or unnamed ones", () => {
+  const REPORTER = { id: "41", name: "Rep R" };
+  const bug = (id: number, over: Partial<WorkView> = {}) =>
+    work(id, {
+      typeKey: "bug",
+      statusKey: "bug.closed",
+      author: REPORTER,
+      updatedAt: NOW - 3_600_000,
+      ...over,
+    });
+  const told = (bugs: WorkView[], c: ZqContract = contract) =>
+    rules({ feature: feature("feature.qa"), children: [], bugs }, c).filter((a) => a.rule === "bug-verified-notice");
+  const hit = told([
+    bug(7),
+    bug(8, { updatedAt: NOW - 3 * DAY }),
+    bug(9, { author: undefined }),
+    bug(10, { updatedAt: undefined }),
+  ]);
+  assert.equal(hit.length, 1);
+  assert.deepEqual(hit[0]!.to, [{ kind: "user", user: REPORTER }]);
+  assert.equal(hit[0]!.subjectId, "wp:7:verified");
+  assert.equal(hit[0]!.once, true);
+  assert.match(hit[0]!.text, /已经修好并验证通过/);
+  assert.equal(told([bug(11, { statusKey: "bug.fixing" }), bug(12, { lifecycle: "cancelled" })]).length, 0);
+  const unnamed = { ...contract, stageRoles: { ...contract.stageRoles, bugVerified: undefined } };
+  assert.equal(told([bug(7)], unnamed).length, 0);
+});

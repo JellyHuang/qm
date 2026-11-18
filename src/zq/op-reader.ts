@@ -140,6 +140,8 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
   const regressionOwner = personAt("regressionOwner");
   const dueAt = time(item["due_date"], "end");
   const startAt = time(item["start_date"], "start");
+  const updatedAt = time(item["updated_at"]);
+  const author = individual(item["author"]);
   const rawPercent = item["percentage_done"] ?? item["done_ratio"] ?? item["percent_complete"];
   const percent =
     typeof rawPercent === "number" && Number.isFinite(rawPercent) && rawPercent >= 0 && rawPercent <= 100
@@ -177,6 +179,8 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
     ...(regressionOwner ? { regressionOwner } : {}),
     ...(dueAt !== undefined ? { dueAt } : {}),
     ...(startAt !== undefined ? { startAt } : {}),
+    ...(updatedAt !== undefined ? { updatedAt } : {}),
+    ...(author ? { author } : {}),
     ...(percent !== undefined ? { percent } : {}),
     ...(estimateHours !== undefined ? { estimateHours } : {}),
     ...(plannedStart !== undefined ? { plannedStart } : {}),

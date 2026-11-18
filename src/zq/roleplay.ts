@@ -53,6 +53,7 @@ const WHY: Record<RuleId, string> = {
   "assignee-unconfirmed": "总单有多位负责策划,还没有确认受理人",
   "bug-unassigned": "BUG 还没有指定处理人",
   "bug-awaiting-retest": "BUG 已修好,等 QA 确认人复测",
+  "bug-verified-notice": "你提的 BUG 已验证通过",
   "responsibility-not-set": "阶段需要的负责人字段还没有设置",
 };
 

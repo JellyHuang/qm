@@ -27,6 +27,8 @@ export interface WorkView {
   regressionOwner?: OpUserRef;
   dueAt?: number;
   startAt?: number;
+  updatedAt?: number;
+  author?: OpUserRef;
   percent?: number;
   estimateHours?: number;
   plannedStart?: number;
@@ -94,6 +96,7 @@ export type RuleId =
   | "assignee-unconfirmed"
   | "bug-unassigned"
   | "bug-awaiting-retest"
+  | "bug-verified-notice"
   | "responsibility-not-set";
 
 export interface RuleAction {
@@ -111,6 +114,7 @@ export interface RuleOptions {
   day: (at: number) => string;
   meetingGraceMs: number;
   meetingLeadMs: number;
+  freshMs: number;
   escalateAfterMs: number;
   escalationDuties: readonly Duty[];
   unsetDuties: readonly Duty[];
@@ -121,6 +125,7 @@ export const DEFAULT_RULE_OPTIONS = {
   day: (at: number) => new Date(at).toISOString().slice(0, 10),
   meetingGraceMs: 10 * 60_000,
   meetingLeadMs: 30 * 60_000,
+  freshMs: 2 * DAY,
   escalateAfterMs: 2 * DAY,
   escalationDuties: [] as readonly Duty[],
   unsetDuties: [] as readonly Duty[],
@@ -498,6 +503,21 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
         bug,
       ),
       subjectId: `wp:${bug.id}:retest`,
+      once: true,
+    });
+  }
+
+  const verified = contract.stageRoles.bugVerified;
+  for (const bug of (facts.bugs ?? []).filter((b) => verified && active(b) && b.statusKey === verified)) {
+    if (!bug.author || bug.updatedAt === undefined || opts.now - bug.updatedAt > opts.freshMs) continue;
+    out.push({
+      ...at(
+        "bug-verified-notice",
+        [{ kind: "user", user: bug.author }],
+        `你提的 BUG ${where(bug)}(功能${where(feature)})已经修好并验证通过。`,
+        bug,
+      ),
+      subjectId: `wp:${bug.id}:verified`,
       once: true,
     });
   }

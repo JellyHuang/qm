@@ -116,7 +116,8 @@
     "taskDone": "execution.done",
     "featureDone": "feature.done",
     "taskActive": "execution.active",
-    "bugRetest": "bug.retest"
+    "bugRetest": "bug.retest",
+    "bugVerified": "bug.closed"
   },
   "lifecycleValues": ["normal", "suspended", "cancelled"],
   "bugType": "bug",
