@@ -503,6 +503,7 @@ test("several responsible planners and the participants are read as lists, the f
 
 test("a work package whose status is closed carries the closed flag, an open one does not", () => {
   assert.equal(parseWorkView(wp({ is_closed: true }), contract)!.closed, true);
+  assert.equal(parseWorkView(wp({ isClosed: true }), contract)!.closed, true);
   assert.equal(parseWorkView(wp({ is_closed: false }), contract)!.closed, undefined);
   assert.equal(parseWorkView(wp(), contract)!.closed, undefined);
 });

@@ -145,7 +145,7 @@ export function parseWorkView(item: unknown, contract: ZqContract): WorkView | u
   const delayMarked = item[contract.fields.delayMarked];
   const delayedSince = time(item[contract.fields.delayedSince]);
   const blocking = item["blocking"];
-  const closed = item["is_closed"];
+  const closed = item["is_closed"] ?? item["isClosed"];
   const awaited = awaitedChildren(item[contract.fields.awaitedChildren]);
   const awaitingNote = str(item[contract.fields.awaitingNote]);
   const completionSubmitted = item[contract.fields.completionSubmitted];

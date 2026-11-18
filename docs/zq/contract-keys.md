@@ -35,7 +35,7 @@ Called with `{ limit: 100, offset }` and paged by `next_offset` until it is `nul
 
 `fields.responsiblePlanner` may hold several users; every one of them gets what is addressed to the planner, and the first is the main one in digests and roles. `fields.participants` (default `participants`, a list of users; shown as the developers, derived by OpenProject from the executors of the feature's live orders) is, with all the planners and the producer, the membership of the feature group; QM no longer adds the order executors itself. `reviewer` is the producer who reviews the plan. The acceptance stage is addressed to the planner through `stageOwners`; QM no longer needs a separate acceptor or regression owner, and those two keys stay readable only for key tables that still name them.
 
-A feature with responsible planners but no assignee asks its producer (`reviewer`) once which planner takes it as the assignee; a different set of planners asks again. QM never picks the assignee itself. The feature is not asked while it is finished: its stage is `stageRoles.featureDone` (optional) or OpenProject marks it closed (`is_closed`). QM does not read any separate "owner" property: the assignee is the one who handles the order.
+A feature with responsible planners but no assignee asks its producer (`reviewer`) once which planner takes it as the assignee; a different set of planners asks again. QM never picks the assignee itself. The feature is not asked while it is finished: its stage is `stageRoles.featureDone` (optional) or OpenProject marks it closed (`is_closed` or `isClosed` on the work package). QM does not read any separate "owner" property: the assignee is the one who handles the order.
 
 ## Who is asked for an order nobody holds
 
