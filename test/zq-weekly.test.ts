@@ -5,9 +5,10 @@ import { parseContract } from "../src/zq/contract.ts";
 import type { FeatureFacts, WorkView } from "../src/zq/rules.ts";
 import { composeWeeklyBriefs } from "../src/zq/weekly.ts";
 
-const contract = parseContract(
+const drafted = parseContract(
   JSON.parse(readFileSync(new URL("./fixtures/zq-contract-keys.json", import.meta.url), "utf8")),
 );
+const contract = { ...drafted, weeklyLeads: {} };
 const order = (id: number, typeKey: string, over: Partial<WorkView> = {}): WorkView => ({
   id,
   subject: `单${id}`,
@@ -131,4 +132,25 @@ test("a section's weekly recipient can be overridden by label, without moving th
   assert.doesNotMatch(textOf("5"), /礼包规划/);
   assert.match(textOf("5"), /后台内容:/);
   assert.deepEqual(routed.typeLeads["planning"], undefined);
+});
+
+test("the drafted key table sends the planning, numbers and Other sections to Zhou Olivia and the rest to the trade leads", () => {
+  const briefs = composeWeeklyBriefs({
+    facts: facts([
+      order(2, "planning", { subject: "礼包规划" }),
+      order(3, "mystery", { subject: "杂项" }),
+      order(4, "backend", { subject: "接口" }),
+      order(5, "frontend", { subject: "页面" }),
+    ]),
+    contract: drafted,
+    now: WEDNESDAY,
+    timezone: "Asia/Shanghai",
+  });
+  const textOf = (id: string) => briefs.find((b) => b.leadOpUserId === id)?.text ?? "";
+  assert.deepEqual(briefs.map((b) => b.leadOpUserId).sort(), ["35", "5", "62"]);
+  assert.match(textOf("62"), /策划内容:[\s\S]*礼包规划[\s\S]*其他:[\s\S]*杂项/);
+  assert.doesNotMatch(textOf("62"), /接口|页面/);
+  assert.match(textOf("5"), /后台内容:[\s\S]*接口/);
+  assert.doesNotMatch(textOf("5"), /礼包规划|杂项/);
+  assert.match(textOf("35"), /前端内容:[\s\S]*页面/);
 });

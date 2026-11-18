@@ -294,5 +294,25 @@
     "scene_model": "美术内容",
     "level_art": "美术内容",
     "animation": "美术内容"
+  },
+  "weeklyLeads": {
+    "策划内容": [
+      {
+        "id": "62",
+        "name": "Zhou Olivia"
+      }
+    ],
+    "数值内容": [
+      {
+        "id": "62",
+        "name": "Zhou Olivia"
+      }
+    ],
+    "其他": [
+      {
+        "id": "62",
+        "name": "Zhou Olivia"
+      }
+    ]
   }
 }
