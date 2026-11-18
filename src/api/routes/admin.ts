@@ -53,7 +53,7 @@ import {
 } from "./admin/slack-installation.ts";
 import { deleteModelProvider, getModelProviders, putModelProvider } from "./admin/model-providers.ts";
 import { deleteCustomProvider, getCustomProviders, putCustomProvider } from "./admin/custom-providers.ts";
-import { confirmIdentityLink, deleteIdentityLink, getIdentityLinks } from "./admin/zq-identity.ts";
+import { confirmIdentityLink, deleteIdentityLink, getIdentityLinks, resendIdentityCard } from "./admin/zq-identity.ts";
 import { deleteMcpServer, getMcpServers, putMcpServer } from "./admin/mcp-servers.ts";
 import {
   deleteMemoryBinding,
@@ -143,6 +143,13 @@ const routes: Route<ApiCtx>[] = [
       auth: "either",
       admin: { agent: { portalOnly: MCP_SERVERS } },
       handle: deleteIdentityLink,
+    },
+    {
+      method: "POST",
+      path: "/v1/admin/zq/identity-links/:mmUserId/resend",
+      auth: "either",
+      admin: { agent: { portalOnly: MCP_SERVERS } },
+      handle: resendIdentityCard,
     },
     { method: "DELETE", path: "/v1/admin/model-providers/:provider", auth: "either", handle: deleteModelProvider },
     { method: "POST", path: "/v1/admin/model-registry/lookup", auth: "either", handle: lookupRegistryModel },

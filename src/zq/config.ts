@@ -16,6 +16,9 @@ export interface ZqConfig {
   featureChannels: boolean;
   roleplay?: { mmUserId: string; projectIds: readonly string[] };
   recipientAllowlist: readonly string[];
+  bindCards: boolean;
+  bindCandidatesFile?: string;
+  bindNotifyMmUser?: string;
   changeDigest: boolean;
   childOrders: boolean;
   remarkPrincipal?: string;
@@ -137,6 +140,10 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
   const outside = rerunJobs.filter((job) => !jenkinsJobs.includes(job));
   if (outside.length > 0)
     throw new Error(`ZQ_JENKINS_RERUN_JOBS names jobs outside ZQ_JENKINS_JOBS: ${outside.join(", ")}`);
+  const bindCards = on(env.ZQ_BIND_CARDS);
+  const bindFile = env.ZQ_BIND_CANDIDATES_FILE?.trim();
+  if (bindCards && !on(env.ZQ_IDENTITY_MAP)) throw new Error("ZQ_BIND_CARDS needs ZQ_IDENTITY_MAP=1");
+  if (bindCards && !bindFile) throw new Error("ZQ_BIND_CARDS needs ZQ_BIND_CANDIDATES_FILE (the people to ask)");
   const roleplayUser = env.ZQ_ROLEPLAY_MM_USER?.trim();
   const roleplayProjects = (env.ZQ_ROLEPLAY_PROJECTS ?? "")
     .split(",")
@@ -150,6 +157,9 @@ export function zqConfigFromEnv(env: NodeJS.ProcessEnv): ZqConfig {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
+    bindCards,
+    ...(bindFile ? { bindCandidatesFile: bindFile } : {}),
+    ...(env.ZQ_BIND_NOTIFY_MM_USER?.trim() ? { bindNotifyMmUser: env.ZQ_BIND_NOTIFY_MM_USER.trim() } : {}),
     identityMap: on(env.ZQ_IDENTITY_MAP),
     scanner: { enabled: scannerEnabled, cron, timezone },
     deliverReminders: on(env.ZQ_REMINDER_DELIVERY),

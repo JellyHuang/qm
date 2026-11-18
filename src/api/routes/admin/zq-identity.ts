@@ -50,3 +50,22 @@ export async function deleteIdentityLink(ctx: ApiCtx): Promise<void> {
   });
   return sendJson(ctx.res, 200, { ok: true });
 }
+
+export async function resendIdentityCard(ctx: ApiCtx): Promise<void> {
+  const found = await admin(ctx);
+  if (!found) return;
+  if (!found.links.resend) return sendJson(ctx.res, 404, { error: "not_found", message: "bind cards are off" });
+  const mmUserId = ctx.params.mmUserId ?? "";
+  const sent = await found.links.resend(mmUserId);
+  audit(ctx.deps, {
+    principalId: found.id,
+    action: "zq-identity.resend",
+    resource: mmUserId,
+    scopeLabel: orgScope(ctx.deps),
+  });
+  return sendJson(
+    ctx.res,
+    sent ? 200 : 404,
+    sent ? { ok: true } : { error: "not_found", message: "not a candidate, or not allowed" },
+  );
+}

@@ -21,10 +21,17 @@ const PROPOSAL = {
   proposedBy: "internal:alice",
 };
 
-async function start(t: { after(fn: () => Promise<void>): void }, enabled: boolean) {
+async function start(
+  t: { after(fn: () => Promise<void>): void },
+  enabled: boolean,
+  resend?: (mmUserId: string) => Promise<boolean>,
+) {
   const dir = await mkdtemp(join(tmpdir(), "zq-identity-"));
   const built = buildApp(testConfig({ dataDir: dir }));
-  const zqIdentity = createZqIdentityMap({ map: testMap<ZqIdentityLink>(), enabled });
+  const zqIdentity = {
+    ...createZqIdentityMap({ map: testMap<ZqIdentityLink>(), enabled }),
+    ...(resend ? { resend } : {}),
+  };
   const server = createInsecureTestServer(built.app, { admin: built.admin, auditLog: built.auditLog, zqIdentity });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -63,4 +70,19 @@ test("the routes do not exist while identity mapping is off", async (t) => {
   const { base } = await start(t, false);
   assert.equal((await fetch(base, { headers: ADMIN })).status, 404);
   assert.equal((await fetch(`${base}/mm1`, { method: "DELETE", headers: ADMIN })).status, 404);
+});
+
+test("an administrator can resend an identity card, which is 404 when bind cards are off or the person is not a candidate", async (t) => {
+  const off = await start(t, true);
+  assert.equal((await fetch(`${off.base}/mm1/resend`, { method: "POST", headers: ADMIN })).status, 404);
+  const sent: string[] = [];
+  const on = await start(t, true, async (mm) => {
+    sent.push(mm);
+    return mm === "mm1";
+  });
+  const stranger = { ...ADMIN, "x-admin-actor": "nobody@default-org" };
+  assert.equal((await fetch(`${on.base}/mm1/resend`, { method: "POST", headers: stranger })).status, 403);
+  assert.equal((await fetch(`${on.base}/mm1/resend`, { method: "POST", headers: ADMIN })).status, 200);
+  assert.equal((await fetch(`${on.base}/mm2/resend`, { method: "POST", headers: ADMIN })).status, 404);
+  assert.deepEqual(sent, ["mm1", "mm2"]);
 });

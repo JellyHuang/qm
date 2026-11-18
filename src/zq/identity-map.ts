@@ -6,12 +6,13 @@ export interface ZqIdentityLink {
   opLogin: string;
   opName?: string;
   emailHint?: string;
-  source: "signin" | "admin";
-  status: "pending" | "confirmed";
+  source: "signin" | "admin" | "card";
+  status: "pending" | "confirmed" | "declined";
   proposedAt: number;
   proposedBy: string;
   confirmedAt?: number;
   confirmedBy?: string;
+  declinedAt?: number;
 }
 
 interface ZqIdentityProposal {
@@ -28,6 +29,8 @@ export interface ZqIdentityMap {
   enabled: boolean;
   propose(input: ZqIdentityProposal): Promise<ZqIdentityLink>;
   confirm(mmUserId: string, confirmedBy: string): Promise<ZqIdentityLink>;
+  decline(mmUserId: string): Promise<ZqIdentityLink>;
+  get(mmUserId: string): Promise<ZqIdentityLink | undefined>;
   byMattermost(mmUserId: string): Promise<ZqIdentityLink | undefined>;
   byOpenProject(opUserId: string): Promise<ZqIdentityLink | undefined>;
   pending(): Promise<ZqIdentityLink[]>;
@@ -71,6 +74,18 @@ export function createZqIdentityMap(opts: {
       );
       if (!updated) throw new Error(`no proposed link for Mattermost user ${mmUserId}`);
       return updated;
+    },
+    async decline(mmUserId) {
+      if (!opts.enabled) throw off();
+      const updated = await opts.map.update(mmUserId, (l) =>
+        l.status === "pending" ? { ...l, status: "declined", declinedAt: now() } : l,
+      );
+      if (!updated) throw new Error(`no proposed link for Mattermost user ${mmUserId}`);
+      return updated;
+    },
+    async get(mmUserId) {
+      if (!opts.enabled) return undefined;
+      return (await opts.map.get(mmUserId)) ?? undefined;
     },
     async byMattermost(mmUserId) {
       if (!opts.enabled) return undefined;

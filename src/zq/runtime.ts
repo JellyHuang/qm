@@ -17,6 +17,8 @@ import { createMcpOpReader, type OpCall } from "./op-reader.ts";
 import { createZqReminderStore, type ZqReminder } from "./reminders.ts";
 import { createZqDaily, matchOrders, type ZqDailyEntry } from "./daily.ts";
 import { ordersOf } from "./morning.ts";
+import { readFile } from "node:fs/promises";
+import { createBindCards, parseCandidates } from "./bind-cards.ts";
 import { createRoleplay, type RoleplayPersona } from "./roleplay.ts";
 import { createZqReports, type ZqReportDraft } from "./reports.ts";
 import { createReportSource } from "./report-source.ts";
@@ -49,7 +51,9 @@ export interface ZqChat {
   postToChannel?(channelId: string, text: string): Promise<void>;
 }
 
-export type ZqIdentityAdmin = Pick<ZqIdentityMap, "enabled" | "list" | "confirm" | "unlink">;
+export type ZqIdentityAdmin = Pick<ZqIdentityMap, "enabled" | "list" | "confirm" | "unlink"> & {
+  resend?: (mmUserId: string) => Promise<boolean>;
+};
 
 export interface ZqRuntime {
   identityAdmin: ZqIdentityAdmin;
@@ -156,6 +160,42 @@ export function createZqRuntime(deps: {
         ...(unrestricted.postToChannel ? { postToChannel: unrestricted.postToChannel.bind(unrestricted) } : {}),
       }
     : unrestricted;
+  const bindFile = config.bindCandidatesFile;
+  const bindCards =
+    config.bindCards && bindFile
+      ? createBindCards({
+          identity,
+          candidates: async () => parseCandidates(await readFile(bindFile, "utf8")),
+          isAllowed,
+          sendCard: (c, text) =>
+            chat.sendButtons(
+              c.mmUserId,
+              text,
+              [
+                {
+                  id: `bind-yes-${c.mmUserId}`,
+                  name: "是我",
+                  style: "good",
+                  op: "link",
+                  ref: c.mmUserId,
+                  approve: true,
+                },
+                {
+                  id: `bind-no-${c.mmUserId}`,
+                  name: "不是我",
+                  style: "danger",
+                  op: "link",
+                  ref: c.mmUserId,
+                  approve: false,
+                },
+              ],
+              "bind-card",
+            ),
+          ...(config.bindNotifyMmUser
+            ? { notify: (text: string) => chat.sendDm(config.bindNotifyMmUser!, text, "bind-declined") }
+            : {}),
+        })
+      : undefined;
   const remarkWriter =
     (tool: string, principalId: string) =>
     async (input: { featureId: number; channelId: string; participantOpUserIds: string[] }) => {
@@ -220,6 +260,7 @@ export function createZqRuntime(deps: {
     ...(changes ? { changes } : {}),
     people,
     ...(daily ? { daily } : {}),
+    ...(bindCards ? { bindCards } : {}),
     reminders,
     state: deps.map<ZqRunState>("zq_run_state"),
     send: (to, text, why, target) => chat.sendDm(to, text, why, target),
@@ -295,7 +336,13 @@ export function createZqRuntime(deps: {
   );
 
   return {
-    identityAdmin: identity,
+    identityAdmin: {
+      enabled: identity.enabled,
+      list: identity.list.bind(identity),
+      confirm: identity.confirm.bind(identity),
+      unlink: identity.unlink.bind(identity),
+      ...(bindCards ? { resend: bindCards.resend } : {}),
+    },
     ...(children ? { children } : {}),
     ...(git ? { git } : {}),
     ...(roleplay ? { roleplayReset: roleplay.reset } : {}),
@@ -345,7 +392,7 @@ export function createZqRuntime(deps: {
         }
       : {}),
     start() {
-      if (config.scanner.enabled || config.reports.enabled) sweeper.start();
+      if (config.scanner.enabled || config.reports.enabled || bindCards) sweeper.start();
     },
     stop: () => sweeper.stop(),
     async decide(op, id, approve, clickerMmUserId) {
@@ -376,6 +423,12 @@ export function createZqRuntime(deps: {
       }
       if (id !== clickerMmUserId) throw new Error("只有被关联的本人可以回答");
       if (!approve) {
+        const link = await identity.get(id);
+        if (link?.source === "card") {
+          await identity.decline(id);
+          await bindCards?.declined(id);
+          return "已记录,没有关联。管理员会收到通知。";
+        }
         await identity.unlink(id);
         return "已取消,没有关联 OpenProject 账号。";
       }
