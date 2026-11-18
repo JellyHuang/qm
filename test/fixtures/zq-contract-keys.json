@@ -115,7 +115,8 @@
     "taskUnassigned": "execution.unassigned",
     "taskDone": "execution.done",
     "featureDone": "feature.done",
-    "taskActive": "execution.active"
+    "taskActive": "execution.active",
+    "bugRetest": "bug.retest"
   },
   "lifecycleValues": ["normal", "suspended", "cancelled"],
   "bugType": "bug",

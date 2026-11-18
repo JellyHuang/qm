@@ -93,6 +93,7 @@ export type RuleId =
   | "formal-assets-pending"
   | "assignee-unconfirmed"
   | "bug-unassigned"
+  | "bug-awaiting-retest"
   | "responsibility-not-set";
 
 export interface RuleAction {
@@ -483,6 +484,22 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
     const to = leads.length ? leads : fallbackLead(contract);
     if (to.length)
       out.push(at("bug-unassigned", to, `BUG ${where(bug)}(功能${where(feature)})还没有指定处理人。请指派。`, bug));
+  }
+
+  const retest = contract.stageRoles.bugRetest;
+  for (const bug of (facts.bugs ?? []).filter((b) => retest && active(b) && b.statusKey === retest)) {
+    const qa = bug.qaOwner ?? feature.qaOwner;
+    if (!qa) continue;
+    out.push({
+      ...at(
+        "bug-awaiting-retest",
+        [{ kind: "user", user: qa }],
+        `BUG ${where(bug)}(功能${where(feature)})已修好,等你复测。通过请关闭,不通过请退回给${bug.assignee ? ` ${bug.assignee.name} ` : "原处理人"}继续修。`,
+        bug,
+      ),
+      subjectId: `wp:${bug.id}:retest`,
+      once: true,
+    });
   }
 
   if (feature.delayMarked) {

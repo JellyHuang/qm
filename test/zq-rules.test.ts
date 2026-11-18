@@ -633,3 +633,26 @@ test("a briefing meeting about to start reminds its planner once, and only insid
   assert.equal(upcoming(meeting(20, "cancelled")).length, 0);
   assert.equal(upcoming({ ...meeting(20), startAt: undefined } as unknown as ReturnType<typeof meeting>).length, 0);
 });
+
+test("a bug waiting for retest asks its QA owner once, and nobody when there is no QA owner or the stage is not named", () => {
+  const QA = { id: "31", name: "Qa Q" };
+  const bug = (id: number, over: Partial<WorkView> = {}) =>
+    work(id, { typeKey: "bug", statusKey: "bug.retest", assignee: BOB, ...over });
+  const asked = (facts: Parameters<typeof rules>[0], c: ZqContract = contract) =>
+    rules(facts, c).filter((a) => a.rule === "bug-awaiting-retest");
+  const base = { feature: feature("feature.qa", { qaOwner: QA }), children: [] };
+  const hit = asked({
+    ...base,
+    bugs: [bug(7), bug(8, { statusKey: "bug.fixing" }), bug(9, { lifecycle: "cancelled" })],
+  });
+  assert.equal(hit.length, 1);
+  assert.deepEqual(hit[0]!.to, [{ kind: "user", user: QA }]);
+  assert.equal(hit[0]!.subjectId, "wp:7:retest");
+  assert.equal(hit[0]!.once, true);
+  assert.match(hit[0]!.text, /等你复测.*退回给 Bob B/);
+  const own = asked({ ...base, bugs: [bug(7, { qaOwner: BOB })] });
+  assert.deepEqual(own[0]!.to, [{ kind: "user", user: BOB }]);
+  assert.equal(asked({ feature: feature("feature.qa"), children: [], bugs: [bug(7)] }).length, 0);
+  const unnamed = { ...contract, stageRoles: { ...contract.stageRoles, bugRetest: undefined } };
+  assert.equal(asked({ ...base, bugs: [bug(7)] }, unnamed).length, 0);
+});

@@ -34,6 +34,7 @@ interface StageRoles {
   taskDone: string;
   taskActive?: string;
   bugClosed?: string;
+  bugRetest?: string;
   featureDone?: string;
 }
 
@@ -232,6 +233,7 @@ export function parseContract(value: unknown): ZqContract {
       taskDone: stageRole("taskDone", task),
       ...(roles["taskActive"] ? { taskActive: stageRole("taskActive", task) } : {}),
       ...(bugClosed ? { bugClosed } : {}),
+      ...(roles["bugRetest"] ? { bugRetest: stageRole("bugRetest", bug) } : {}),
       ...(roles["featureDone"] ? { featureDone: stageRole("featureDone", feature) } : {}),
     },
     stageOwners,
