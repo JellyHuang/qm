@@ -226,6 +226,7 @@ test("an open blocking bug reminds its owner and the QA owner, a closed or non-b
     { kind: "user", user: QA },
   ]);
   assert.equal(a[0]!.subjectId, "wp:7");
+  assert.match(a[0]!.text, /不能推进到验收通过.*只提醒,不会拦截/);
   const dev = rules({
     feature: feature("feature.development", PLANNED),
     children: [],

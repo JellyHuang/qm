@@ -478,7 +478,7 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
       at(
         "blocking-bug-open",
         to,
-        `阻断 BUG ${where(bug)}(功能${where(feature)})还没有关闭,功能不能完成。请跟进修复和复测。`,
+        `阻断 BUG ${where(bug)}(功能${where(feature)})还没有关闭,功能不能推进到验收通过。请跟进修复和验证(QM 只提醒,不会拦截)。`,
         bug,
       ),
     );
