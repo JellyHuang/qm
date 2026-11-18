@@ -113,7 +113,12 @@
     "inProduction": "feature.development",
     "formalAssets": "feature.resources",
     "taskUnassigned": "execution.unassigned",
-    "taskDone": "execution.done"
+    "taskDone": "execution.done",
+    "featureDone": "feature.done",
+    "taskActive": "execution.active",
+    "bugRetest": "bug.retest",
+    "bugVerified": "bug.closed",
+    "qaTesting": "feature.qa"
   },
   "lifecycleValues": ["normal", "suspended", "cancelled"],
   "bugType": "bug",
@@ -195,5 +200,120 @@
     "actionRequests": "personal_dm",
     "digestSeconds": 300,
     "retainEveryChange": true
+  },
+  "typeLeads": {
+    "character_concept": [
+      {
+        "id": "45",
+        "name": "闫文"
+      }
+    ],
+    "scene_concept": [
+      {
+        "id": "45",
+        "name": "闫文"
+      }
+    ],
+    "character_model": [
+      {
+        "id": "45",
+        "name": "闫文"
+      }
+    ],
+    "scene_model": [
+      {
+        "id": "45",
+        "name": "闫文"
+      }
+    ],
+    "level_art": [
+      {
+        "id": "45",
+        "name": "闫文"
+      }
+    ],
+    "animation": [
+      {
+        "id": "45",
+        "name": "闫文"
+      }
+    ],
+    "vfx": [
+      {
+        "id": "29",
+        "name": "朱升"
+      }
+    ],
+    "frontend": [
+      {
+        "id": "35",
+        "name": "朱毅"
+      }
+    ],
+    "backend": [
+      {
+        "id": "5",
+        "name": "栋黄"
+      }
+    ],
+    "qa_test": [
+      {
+        "id": "38",
+        "name": "林凯"
+      }
+    ],
+    "ui": [
+      {
+        "id": "41",
+        "name": "胡西尧"
+      }
+    ],
+    "fgui": [
+      {
+        "id": "41",
+        "name": "胡西尧"
+      }
+    ]
+  },
+  "defaultLead": {
+    "id": "5",
+    "name": "栋黄"
+  },
+  "weeklyLabels": {
+    "planning": "策划内容",
+    "acceptance": "策划内容",
+    "configuration": "策划内容",
+    "frontend": "前端内容",
+    "backend": "后台内容",
+    "vfx": "特效内容",
+    "qa_test": "QA 内容",
+    "ui": "UI 内容",
+    "fgui": "UI 内容",
+    "character_concept": "美术内容",
+    "scene_concept": "美术内容",
+    "character_model": "美术内容",
+    "scene_model": "美术内容",
+    "level_art": "美术内容",
+    "animation": "美术内容"
+  },
+  "weeklyLeads": {
+    "策划内容": [
+      {
+        "id": "62",
+        "name": "Zhou Olivia"
+      }
+    ],
+    "数值内容": [
+      {
+        "id": "62",
+        "name": "Zhou Olivia"
+      }
+    ],
+    "其他": [
+      {
+        "id": "62",
+        "name": "Zhou Olivia"
+      }
+    ]
   }
 }
