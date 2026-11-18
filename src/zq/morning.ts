@@ -3,7 +3,7 @@ import type { FeatureFacts, WorkView } from "./rules.ts";
 
 const where = (w: WorkView) => `「${w.subject}」(#${w.id})`;
 
-function ordersOf(opUserId: string, facts: readonly FeatureFacts[], contract: ZqContract): WorkView[] {
+export function ordersOf(opUserId: string, facts: readonly FeatureFacts[], contract: ZqContract): WorkView[] {
   const seen = new Map<number, WorkView>();
   for (const { feature, children } of facts) {
     const candidates = contract.optimizationType === feature.typeKey ? [feature, ...children] : children;

@@ -15,6 +15,8 @@ import { checkConfiguredDuties, type ZqContract } from "./contract.ts";
 import { channelRemarkArgs, createZqGroups, type ZqGroup } from "./groups.ts";
 import { createMcpOpReader, type OpCall } from "./op-reader.ts";
 import { createZqReminderStore, type ZqReminder } from "./reminders.ts";
+import { createZqDaily, matchOrders, type ZqDailyEntry } from "./daily.ts";
+import { ordersOf } from "./morning.ts";
 import { createRoleplay, type RoleplayPersona } from "./roleplay.ts";
 import { createZqReports, type ZqReportDraft } from "./reports.ts";
 import { createReportSource } from "./report-source.ts";
@@ -34,7 +36,7 @@ export interface ZqChat {
       id: string;
       name: string;
       style?: "primary" | "danger" | "good" | "default";
-      op: "report" | "link" | "children";
+      op: "report" | "link" | "children" | "daily";
       ref: string;
       approve: boolean;
     }>,
@@ -56,9 +58,15 @@ export interface ZqRuntime {
   children?: Pick<ZqChildren, "propose">;
   git?: GitReadonly;
   commitAuthors?: AuthorResolver;
-  decide(op: "report" | "link" | "children", id: string, approve: boolean, clickerMmUserId: string): Promise<string>;
+  decide(
+    op: "report" | "link" | "children" | "daily",
+    id: string,
+    approve: boolean,
+    clickerMmUserId: string,
+  ): Promise<string>;
   connectorConnected(provider: string, principalId: string): Promise<void>;
   roleplayReset?: () => Promise<Record<string, number>>;
+  dailyReply?: (mmUserId: string, text: string) => Promise<boolean>;
 }
 
 const noReader = {
@@ -83,6 +91,9 @@ export function createZqRuntime(deps: {
     enabled: config.identityMap,
   });
   const reminders = createZqReminderStore({ map: deps.map<ZqReminder>("zq_reminders") });
+  const daily = config.dailyAskCron
+    ? createZqDaily({ map: deps.map<ZqDailyEntry>("zq_daily"), now: deps.now ?? (() => Date.now()) })
+    : undefined;
   const reportDrafts = deps.map<ZqReportDraft>("zq_report_drafts");
   const reports = createZqReports({
     map: reportDrafts,
@@ -208,6 +219,7 @@ export function createZqRuntime(deps: {
     ...(groups ? { groups } : {}),
     ...(changes ? { changes } : {}),
     people,
+    ...(daily ? { daily } : {}),
     reminders,
     state: deps.map<ZqRunState>("zq_run_state"),
     send: (to, text, why, target) => chat.sendDm(to, text, why, target),
@@ -288,11 +300,66 @@ export function createZqRuntime(deps: {
     ...(git ? { git } : {}),
     ...(roleplay ? { roleplayReset: roleplay.reset } : {}),
     ...(commitAuthors ? { commitAuthors } : {}),
+    ...(daily && contract && reader
+      ? {
+          async dailyReply(mmUserId: string, text: string) {
+            const entry = await daily.openFor(mmUserId);
+            if (!entry) return false;
+            const person = (await people()).find((p) => p.mmUserId === mmUserId);
+            const found = person?.opUserId
+              ? matchOrders(text, ordersOf(person.opUserId, (await reader.features(person)).facts, contract))
+              : [];
+            await daily.record(
+              entry.id,
+              text,
+              found.map((w) => w.id),
+            );
+            if (found.length === 0)
+              await chat.sendDm(mmUserId, "收到,已记录你今天的日报。没有对上你名下的单子。", "daily-reply");
+            for (const w of found)
+              await chat.sendButtons(
+                mmUserId,
+                `你提到了「${w.subject}」(#${w.id})。这张单是不是已经完成、可以关闭?`,
+                [
+                  {
+                    id: `done-${w.id}`,
+                    name: "是,已完成",
+                    style: "good",
+                    op: "daily",
+                    ref: `${entry.id}|${w.id}`,
+                    approve: true,
+                  },
+                  {
+                    id: `open-${w.id}`,
+                    name: "还没有",
+                    style: "default",
+                    op: "daily",
+                    ref: `${entry.id}|${w.id}`,
+                    approve: false,
+                  },
+                ],
+                "daily-reply",
+              );
+            return true;
+          },
+        }
+      : {}),
     start() {
       if (config.scanner.enabled || config.reports.enabled) sweeper.start();
     },
     stop: () => sweeper.stop(),
     async decide(op, id, approve, clickerMmUserId) {
+      if (op === "daily") {
+        const [entryId, orderRef] = id.split("|");
+        const orderId = Number(orderRef);
+        const entry = entryId ? await daily?.get(entryId) : undefined;
+        if (!daily || !entry || !Number.isSafeInteger(orderId)) throw new Error("这个日报问题已经失效");
+        if (entry.mmUserId !== clickerMmUserId) throw new Error("只有被问到的本人可以回答");
+        if (!(await daily.answer(entry.id, orderId, approve))) throw new Error("这个日报问题已经失效");
+        return approve
+          ? `已记录。请你自己在 OpenProject 里把 #${orderId} 改成「已完成」,QM 不会替你改。`
+          : `好的,#${orderId} 保持不变。`;
+      }
       if (op === "children") {
         if (!children) throw new Error("增加子单的功能没有开启");
         return children.decide(id, approve, clickerMmUserId);

@@ -2634,6 +2634,7 @@ export function buildApp(
         claimPrincipalDeliveries: mattermostOwnsDirectMessages(config),
         zqDecision: (op, id, approve, clicker) =>
           zq ? zq.decide(op, id, approve, clicker) : Promise.reject(new Error("OpenProject follow-up is off")),
+        zqDailyReply: async (mmUserId, text) => (await zq?.dailyReply?.(mmUserId, text)) ?? false,
       })
     : null;
   const openAgents = config.openAgents
@@ -2659,6 +2660,7 @@ export function buildApp(
     mattermost &&
     (config.zq.scanner.enabled ||
       config.zq.reports.enabled ||
+      config.zq.dailyAskCron ||
       config.zq.identityMap ||
       config.zq.childOrders ||
       config.zq.git.enabled)

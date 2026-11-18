@@ -85,6 +85,7 @@ export interface MattermostDeps {
   keychainApprovals?: KeychainApprovals;
   claimPrincipalDeliveries: boolean;
   zqDecision?: ZqDecision;
+  zqDailyReply?: (mmUserId: string, text: string) => Promise<boolean>;
 }
 
 export function createMattermost(deps: MattermostDeps) {
@@ -121,6 +122,7 @@ export function createMattermost(deps: MattermostDeps) {
     onboarding,
     blobs: deps.blobs,
     onQueued: (runId, postId) => resumer.track(runId, postId),
+    ...(deps.zqDailyReply ? { zqDailyReply: deps.zqDailyReply } : {}),
   });
   onboarding.attach(inbound);
   const actions = createActions({

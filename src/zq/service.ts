@@ -5,6 +5,7 @@ import type { ZqConfig } from "./config.ts";
 import type { FlushResult, ZqChangeLine, ZqChanges } from "./changes.ts";
 import { deliverDue } from "./delivery.ts";
 import { composeMorning } from "./morning.ts";
+import { DAILY_ASK, type ZqDaily } from "./daily.ts";
 import type { ReminderMode, ZqReminderStore } from "./reminders.ts";
 import {
   sectionForProject,
@@ -55,6 +56,7 @@ export interface ZqServiceDeps {
     lineLabel?: (line: ZqChangeLine) => Promise<string>;
   };
   people: () => Promise<ScanPerson[]>;
+  daily?: ZqDaily;
   reminders: ZqReminderStore;
   state: DurableMap<ZqRunState>;
   send: (mmUserId: string, text: string, why?: string, target?: string) => Promise<void>;
@@ -75,6 +77,7 @@ export interface ZqService {
     reportsSent: number;
     weeklyCardFailed: number;
     morningSent?: number;
+    dailyAsked?: number;
   }>;
 }
 
@@ -240,6 +243,24 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
     return sent;
   }
 
+  async function dailyAskTick(at: number): Promise<number> {
+    const cron = config.dailyAskCron;
+    if (!cron || !deps.daily || !config.deliverReminders) return 0;
+    if (!(await claim("daily-ask", cron, at, false))) return 0;
+    const day = dayKeyIn(config.scanner.timezone, at);
+    let asked = 0;
+    for (const person of await deps.people()) {
+      try {
+        if (!(await deps.daily.ask(person.mmUserId, day))) continue;
+        await deps.send(person.mmUserId, DAILY_ASK, "daily-ask");
+        asked++;
+      } catch (e) {
+        reportFailureAs(`zq: daily question for ${person.mmUserId}`, undefined)(e);
+      }
+    }
+    return asked;
+  }
+
   async function reportsTick(at: number): Promise<WeeklyOutcome> {
     const reports = deps.reports;
     const out: WeeklyOutcome = { sent: 0, failed: 0 };
@@ -320,6 +341,7 @@ export function createZqService(deps: ZqServiceDeps): ZqService {
           });
       }
       if (config.morningCron) out.morningSent = await morningTick(at);
+      if (config.dailyAskCron) out.dailyAsked = await dailyAskTick(at);
       const reported = await reportsTick(at);
       out.reportsSent = reported.sent;
       out.weeklyCardFailed = reported.failed;

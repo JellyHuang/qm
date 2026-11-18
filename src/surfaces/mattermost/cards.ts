@@ -11,7 +11,7 @@ export type ActionPayload =
   | { k: "keychain"; askId: string; choice: "once" | "standing" | "deny" }
   | { k: "deploy"; value: string; approve: boolean }
   | { k: "access"; email: string; approve: boolean }
-  | { k: "zq"; op: "report" | "link" | "children"; id: string; approve: boolean };
+  | { k: "zq"; op: "report" | "link" | "children" | "daily"; id: string; approve: boolean };
 
 export interface SignedContext {
   p: string;

@@ -78,6 +78,7 @@ export function createInbound(deps: {
   blobs: Pick<BlobTransferStore, "put">;
   /** A turn started from this post is now queued as runId. */
   onQueued?: (runId: string, postId: string) => void;
+  zqDailyReply?: (mmUserId: string, text: string) => Promise<boolean>;
 }) {
   const { rt, live } = deps;
   const rootCreatedAt = new Map<string, number>();
@@ -429,6 +430,7 @@ export function createInbound(deps: {
       unprompted = "thread";
     }
     const inc: Incoming = { post, kind, view, author, mentioned, text, ...(unprompted ? { unprompted } : {}) };
+    if (kind === "dm" && deps.zqDailyReply && (await deps.zqDailyReply(author.id, text))) return;
     if (!unprompted && (await command(inc))) return;
     const actor = await rt.actorFor(author);
     if (!actor) {

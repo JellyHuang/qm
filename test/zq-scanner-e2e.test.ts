@@ -539,3 +539,30 @@ test("the morning message goes out once on a weekday at the configured time to e
   const off = h.service({ ZQ_SCANNER: "1", ZQ_REMINDER_DELIVERY: "1" });
   assert.equal((await off.tick()).morningSent, undefined);
 });
+
+test("the daily question goes out once on each weekday at the configured time, only to linked people, and not when off", async (t) => {
+  const { createZqDaily } = await import("../src/zq/daily.ts");
+  const h = await harness(t);
+  const daily = createZqDaily({ map: testMap(), now: () => h.clock.now });
+  const live = h.service({ ZQ_SCANNER: "1", ZQ_REMINDER_DELIVERY: "1", ZQ_DAILY_ASK_AT: "17:30" }, { daily });
+  const at = (day: number, hour: number, minute: number) => Date.UTC(2026, 10, day, hour, minute);
+  h.clock.now = at(16, 8, 0);
+  assert.equal((await live.tick()).dailyAsked, 0);
+  h.clock.now = at(16, 9, 31);
+  assert.equal((await live.tick()).dailyAsked, 2);
+  assert.deepEqual(
+    h.sent
+      .filter((m) => /你今天做了什么/.test(m.text))
+      .map((m) => m.to)
+      .sort(),
+    ["mm-alice", "mm-bob"],
+  );
+  h.clock.now = at(16, 9, 40);
+  assert.equal((await live.tick()).dailyAsked, 0, "once a day");
+  h.clock.now = at(21, 9, 31);
+  assert.equal((await live.tick()).dailyAsked, 2, "caught up for the week days it missed, asked once");
+  h.clock.now = at(22, 9, 31);
+  assert.equal((await live.tick()).dailyAsked, 0, "not on a weekend");
+  const off = h.service({ ZQ_SCANNER: "1", ZQ_REMINDER_DELIVERY: "1" }, { daily });
+  assert.equal((await off.tick()).dailyAsked, undefined);
+});
