@@ -42,6 +42,7 @@ export interface ZqContract {
   typeOwners: Readonly<Record<string, TypeOwner>>;
   bugType?: string;
   optimizationType?: string;
+  typeLeads: Readonly<Record<string, ReadonlyArray<{ id: string; name: string }>>>;
   artResource: (typeKey: string) => boolean;
   autoAdvanceStages: readonly string[];
   stages: {
@@ -178,6 +179,19 @@ export function parseContract(value: unknown): ZqContract {
   const typeOwners = Object.fromEntries(
     Object.entries(rawOwners).map(([type, raw]) => [type, typeOwner(type, raw, knownDuties, personFieldNames)]),
   );
+  const rawLeads = isRecord(value["typeLeads"]) ? value["typeLeads"] : {};
+  const typeLeads = Object.fromEntries(
+    Object.entries(rawLeads).map(([type, list]) => [
+      type,
+      (Array.isArray(list) ? list : []).map((u, i) => {
+        if (!isRecord(u)) throw new Error(`contract key table: typeLeads.${type}[${i}] must name a user`);
+        return {
+          id: text(u["id"], `typeLeads.${type}[${i}].id`),
+          name: text(u["name"], `typeLeads.${type}[${i}].name`),
+        };
+      }),
+    ]),
+  );
   const bug = stringMap(stages["bug"] ?? {}, "stages.bug");
   const autoAdvance =
     value["autoAdvanceStages"] === undefined ? [] : strings(value["autoAdvanceStages"], "autoAdvanceStages");
@@ -195,6 +209,7 @@ export function parseContract(value: unknown): ZqContract {
     version: text(value["version"], "version"),
     featureType: text(value["featureType"], "featureType"),
     typeOwners,
+    typeLeads,
     ...(value["bugType"] === undefined ? {} : { bugType: text(value["bugType"], "bugType") }),
     ...(value["optimizationType"] === undefined
       ? {}

@@ -510,3 +510,40 @@ test("a finished or closed feature is not asked who its assignee is", () => {
   assert.equal(asked({ ...open, statusKey: "feature.done" }).length, 0);
   assert.equal(asked({ ...open, closed: true }).length, 0);
 });
+
+const LEAD = { id: "31", name: "Lead L" };
+const withLeads = (typeLeads: Record<string, Array<{ id: string; name: string }>>): ZqContract => ({
+  ...contract,
+  typeLeads,
+});
+
+test("an order nobody holds goes to the people the key table names for its type, and to the duty holders when it names none", () => {
+  const open = work(5, { typeKey: "backend", statusKey: "execution.unassigned" });
+  const routed = rules(
+    { feature: feature("feature.development", PLANNED), children: [open] },
+    withLeads({ backend: [LEAD] }),
+  ).filter((a) => a.rule === "task-unassigned");
+  assert.deepEqual(routed[0]!.to, [{ kind: "user", user: LEAD }]);
+  const plain = rules({ feature: feature("feature.development", PLANNED), children: [open] }).filter(
+    (a) => a.rule === "task-unassigned",
+  );
+  assert.deepEqual(plain[0]!.to, [{ kind: "duty", duty: "server_lead" }]);
+});
+
+test("an unassigned optimization order and an unassigned bug go to the leads of their type when the key table names them", () => {
+  const leads = withLeads({ optimization: [LEAD], bug: [LEAD] });
+  const opt = rules({ feature: optimization(), children: [] }, leads).filter(
+    (a) => a.rule === "optimization-unassigned",
+  );
+  assert.deepEqual(opt[0]!.to, [{ kind: "user", user: LEAD }]);
+  const bug = work(9, { typeKey: "bug", statusKey: "bug.unassigned", parentId: 1 });
+  const facts = { feature: feature("feature.development", PLANNED), children: [], bugs: [bug] };
+  const routed = rules(facts, leads).filter((a) => a.rule === "bug-unassigned");
+  assert.deepEqual(routed[0]!.to, [{ kind: "user", user: LEAD }]);
+  assert.match(routed[0]!.text, /还没有指定处理人/);
+  assert.equal(rules(facts).filter((a) => a.rule === "bug-unassigned").length, 0);
+  assert.equal(
+    rules({ ...facts, bugs: [{ ...bug, assignee: BOB }] }, leads).filter((a) => a.rule === "bug-unassigned").length,
+    0,
+  );
+});

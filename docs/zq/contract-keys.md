@@ -37,6 +37,10 @@ Called with `{ limit: 100, offset }` and paged by `next_offset` until it is `nul
 
 A feature with responsible planners but no assignee asks its producer (`reviewer`) once which planner takes it as the assignee; a different set of planners asks again. QM never picks the assignee itself. The feature is not asked while it is finished: its stage is `stageRoles.featureDone` (optional) or OpenProject marks it closed (`is_closed`). QM does not read any separate "owner" property: the assignee is the one who handles the order.
 
+## Who is asked for an order nobody holds
+
+`typeLeads` (optional) maps a type key to the people who answer for it: `{ "backend": [{ "id": "12", "name": "…" }] }`. An unassigned order of that type, an unassigned optimization order (`optimization`) and an unassigned bug (`bug`, new rule `bug-unassigned`) are addressed to those people. A type with no entry keeps the old behavior: the duty holders for its type, the planner for an optimization order, and nobody for a bug. A feature without an assignee is addressed to its producer, as above. The table starts empty; the operator fills it.
+
 ## Empty responsibility fields
 
 A person field named by `stageOwners` that is empty on the feature is never replaced by a duty group. QM sends no reminder for it and instead emits `responsibility-not-set` to the duties in `ZQ_UNSET_RESPONSIBILITY_DUTIES` (none by default, so it is only counted in the scan report).

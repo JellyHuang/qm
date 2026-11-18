@@ -49,6 +49,7 @@ const WHY: Record<RuleId, string> = {
   "exit-ready": "功能已满足当前阶段的出口条件",
   "formal-assets-pending": "待正式资源阶段还有执行单未完成",
   "assignee-unconfirmed": "总单有多位负责策划,还没有确认受理人",
+  "bug-unassigned": "BUG 还没有指定处理人",
   "responsibility-not-set": "阶段需要的负责人字段还没有设置",
 };
 
@@ -169,7 +170,12 @@ export function createRoleplay(opts: {
           const facts = read.facts.filter(
             (f) => f.feature.projectId !== undefined && projects.has(f.feature.projectId),
           );
-          await remember(facts);
+          await remember(
+            facts,
+            Object.values(opts.contract?.typeLeads ?? {}).flatMap((users) =>
+              users.map((u): [OpUserRef, string] => [u, "专业负责人"]),
+            ),
+          );
           return { ...read, facts };
         },
         async dutyHolders(person, projectId, duty) {

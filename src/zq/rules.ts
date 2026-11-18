@@ -87,6 +87,7 @@ export type RuleId =
   | "exit-ready"
   | "formal-assets-pending"
   | "assignee-unconfirmed"
+  | "bug-unassigned"
   | "responsibility-not-set";
 
 export interface RuleAction {
@@ -148,20 +149,27 @@ const FIELD_LABEL: Record<PersonField, string> = {
   regressionOwner: "回归确认人",
 };
 
+const leadsOf = (contract: ZqContract, typeKey: string): Target[] =>
+  (contract.typeLeads[typeKey] ?? []).map((user): Target => ({ kind: "user", user }));
+
 function unassignedDispatch(
   children: readonly WorkView[],
   contract: ZqContract,
-): Array<{ to: Target; list: WorkView[] }> {
-  const dispatch = new Map<string, { to: Target; list: WorkView[] }>();
+): Array<{ to: Target[]; list: WorkView[] }> {
+  const dispatch = new Map<string, { to: Target[]; list: WorkView[] }>();
   for (const c of children.filter(
     (c) => active(c) && c.statusKey === contract.stageRoles.taskUnassigned && !c.assignee,
   )) {
     const owner = contract.typeOwners[c.typeKey];
     const person = owner?.kind === "taskField" ? c[owner.field] : undefined;
-    const to: Target | undefined =
-      owner?.kind === "duty" ? { kind: "duty", duty: owner.duty } : person && { kind: "user", user: person };
-    if (!to) continue;
-    const key = to.kind === "duty" ? `duty:${to.duty}` : `user:${to.kind === "user" ? to.user.id : ""}`;
+    const leads = leadsOf(contract, c.typeKey);
+    const own: Target[] = person ? [{ kind: "user", user: person }] : [];
+    if (owner?.kind === "duty") own.splice(0, own.length, { kind: "duty", duty: owner.duty });
+    const to = leads.length ? leads : own;
+    if (!to.length) continue;
+    const key = to
+      .map((t) => (t.kind === "duty" ? `duty:${t.duty}` : `user:${t.kind === "user" ? t.user.id : ""}`))
+      .join("+");
     dispatch.set(key, { to, list: [...(dispatch.get(key)?.list ?? []), c] });
   }
   return [...dispatch.values()];
@@ -189,7 +197,7 @@ function optimizationRules(
     out.push(
       at(
         "optimization-unassigned",
-        planner,
+        leadsOf(contract, feature.typeKey).length ? leadsOf(contract, feature.typeKey) : planner,
         `优化单${where(feature)}还没有指派。请写明优化内容并指派:一个人处理就直接指派给他,多人处理请按专业增加子单。`,
       ),
     );
@@ -197,7 +205,7 @@ function optimizationRules(
     out.push(
       at(
         "task-unassigned",
-        [to],
+        to,
         `优化单${where(feature)}有 ${list.length} 张子单还没有指定执行人:${list.map(where).join("、")}。请指派。`,
       ),
     );
@@ -310,7 +318,7 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
     out.push(
       at(
         "task-unassigned",
-        [to],
+        to,
         `功能${where(feature)}在「${stageName}」,有 ${list.length} 张执行单还没有指定执行人:${list.map(where).join("、")}。请指派。`,
       ),
     );
@@ -406,6 +414,12 @@ function evaluateStage(facts: FeatureFacts, contract: ZqContract, opts: RuleOpti
         bug,
       ),
     );
+  }
+
+  for (const bug of (facts.bugs ?? []).filter((b) => active(b) && !b.assignee && b.statusKey !== closed)) {
+    const to = leadsOf(contract, bug.typeKey);
+    if (to.length)
+      out.push(at("bug-unassigned", to, `BUG ${where(bug)}(功能${where(feature)})还没有指定处理人。请指派。`, bug));
   }
 
   if (feature.delayMarked) {
